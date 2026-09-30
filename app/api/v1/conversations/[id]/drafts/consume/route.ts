@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { NextRequest } from "next/server";
 import { z } from "zod";
 
-import { resolveAuthDual } from "@/lib/api/auth-dual";
+import { resolveAuthDual, tetoDeEscritaDoToken } from "@/lib/api/auth-dual";
 import { ApiError } from "@/lib/api/types";
 import { ok, fail } from "@/lib/api/wrappers";
 import { audit } from "@/lib/audit";
@@ -40,6 +40,10 @@ export async function POST(req: NextRequest, ctx: Ctx): Promise<Response> {
     scope: "mcp:write",
   });
   if (!authz.ok) return authz.response;
+  // Esta rota aceita Bearer (PUBLIC_PATHS): o que não for contado aqui não é
+  // contado em lugar nenhum — mesmo teto das irmãs que já usam resolveAuthDual.
+  const teto = await tetoDeEscritaDoToken(authz, "drafts.consume", requestId);
+  if (teto) return teto;
   const t = (texto: string) => traduzir(texto, authz.idioma ?? IDIOMA_PADRAO);
 
   const { id } = await ctx.params;
