@@ -170,7 +170,7 @@ describe("S13 — concorrência: nenhuma cadeia enxerga o contexto da outra", ()
   });
 });
 
-describe("adaptador do Actor do Deskcomm", () => {
+describe("adaptador do Actor do host", () => {
   it("ai_agent leva id, agent_id e api_token_id; api_token leva o token; user vira system", () => {
     expect(
       greenActorFromActor(
