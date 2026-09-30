@@ -13,6 +13,9 @@
  */
 
 import { logger } from "@/lib/logger";
+// SPIKE Green: todo handler roda com a causalidade do evento corrente amarrada
+// ao contexto async — é o que o hook de banco carimba no evento canônico.
+import { withGreenMutationContext } from "@/lib/green/mutation-context";
 
 export interface EventRow {
   id: string;
@@ -87,7 +90,16 @@ export async function dispatchEvent(row: EventRow): Promise<HandlerResult[]> {
   const results: HandlerResult[] = [];
   for (const handler of matches) {
     try {
-      const r = await handler.handle(row);
+      const correlacao = row.metadata?.correlation_id;
+      const r = await withGreenMutationContext(
+        {
+          source: "event_handler",
+          actor: { kind: "system", id: handler.key },
+          causation_event_id: row.id,
+          correlation_id: typeof correlacao === "string" ? correlacao : row.id,
+        },
+        () => handler.handle(row),
+      );
       results.push(r);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);

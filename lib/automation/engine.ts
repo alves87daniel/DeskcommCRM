@@ -23,6 +23,9 @@ import { audit } from "@/lib/audit";
 import { regraDoEvento } from "@/lib/automation/gatilho-de-data-do-funil";
 import { ENTIDADE_ESPERADA_POR_GATILHO } from "@/lib/schemas/webhooks";
 import { logger } from "@/lib/logger";
+// SPIKE Green: a regra roda com `request_id=rule:<id>` + causation no contexto
+// async, para o evento canônico do hook de banco carregar a marca anti-loop.
+import { withGreenMutationContext } from "@/lib/green/mutation-context";
 
 export const AUTOMATION_CONSUMER_KEY = "automation-rules";
 
@@ -231,40 +234,66 @@ export async function runAutomationForEvent(
 
   for (const rule of applicable) {
     const results: ActionResultDetail[] = [];
-    // O índice é o da lista INTEIRA — a posição do resultado em
-    // `actions_result` e parte do id da entrega do webhook (#1529).
-    for (const [indiceDaAcao, action] of (rule.actions ?? []).entries()) {
-      const executor = getAction(action.type);
-      if (!executor) {
-        results.push({ type: action.type, status: "failed", error: "unknown_action" });
-        continue;
-      }
-      try {
-        results.push(
-          await executor.execute(
-            {
-              admin,
-              serviceBoundaries,
-              organizationId: row.organization_id,
-              ruleId: rule.id,
-              ruleName: rule.name,
-              event: row,
-              context,
-              requestId: row.id,
-              actionIndex: indiceDaAcao,
-              ruleActions: rule.actions ?? [],
-            },
-            action.config ?? {},
-          ),
-        );
-      } catch (err) {
-        results.push({
-          type: action.type,
-          status: "failed",
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    // SPIKE Green: o contato do contexto é o que ancora `service_origin.kind=event`;
+    // sem contato, o hook deriva a origem no banco.
+    const contatoDaRegra =
+      (context.lead as { contact_id?: string | null } | undefined)?.contact_id ??
+      (context.contact as { id?: string } | undefined)?.id ??
+      null;
+    await withGreenMutationContext(
+      {
+        source: "automation",
+        request_id: `rule:${rule.id}`,
+        causation_event_id: row.id,
+        actor: { kind: "webhook_source", id: rule.id },
+        ...(contatoDaRegra
+          ? {
+              service_origin: {
+                kind: "event" as const,
+                event_id: row.id,
+                organization_id: row.organization_id,
+                contact_id: contatoDaRegra,
+              },
+            }
+          : {}),
+      },
+      async () => {
+        // O índice é o da lista INTEIRA — a posição do resultado em
+        // `actions_result` e parte do id da entrega do webhook (#1529).
+        for (const [indiceDaAcao, action] of (rule.actions ?? []).entries()) {
+          const executor = getAction(action.type);
+          if (!executor) {
+            results.push({ type: action.type, status: "failed", error: "unknown_action" });
+            continue;
+          }
+          try {
+            results.push(
+              await executor.execute(
+                {
+                  admin,
+                  serviceBoundaries,
+                  organizationId: row.organization_id,
+                  ruleId: rule.id,
+                  ruleName: rule.name,
+                  event: row,
+                  context,
+                  requestId: row.id,
+                  actionIndex: indiceDaAcao,
+                  ruleActions: rule.actions ?? [],
+                },
+                action.config ?? {},
+              ),
+            );
+          } catch (err) {
+            results.push({
+              type: action.type,
+              status: "failed",
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      },
+    );
 
     // ═══ O AGREGADOR TAMBÉM PRECISA DIZER A VERDADE ═══
     //

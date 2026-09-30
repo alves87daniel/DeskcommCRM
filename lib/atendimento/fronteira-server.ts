@@ -4,6 +4,9 @@ import { assertMeetingDeliveryPg } from "@/lib/agenda/meet-delivery";
 import { claimOfJob } from "@/lib/agent-engine/queue/claim";
 import { withAgendaEffect, guardAgendaEffect } from "@/lib/agenda/efeito";
 import { AsyncLocalStorage } from "node:async_hooks";
+// SPIKE Green: a fronteira de atendimento vira `service_origin.kind=continuation`
+// no contexto async, para o hook de banco não perder a procedência do job.
+import { greenContinuation, withGreenMutationContext } from "@/lib/green/mutation-context";
 import type { Queryable, JobRow } from "@/lib/agent-engine/queue/queue";
 import type { ToolSet } from "@/lib/agent-engine/edge/llm/run-model-call";
 import {
@@ -87,7 +90,16 @@ export async function withServiceBoundary<T>(
   action: () => Promise<T>,
 ): Promise<T> {
   await requireCurrentServiceBoundary(db, boundary);
-  return execution.run({ db, boundary }, action);
+  return execution.run({ db, boundary }, () =>
+    withGreenMutationContext(
+      {
+        source: "service_boundary",
+        actor: { kind: "system", id: "service_boundary" },
+        ...(boundary ? { service_origin: greenContinuation(boundary) } : {}),
+      },
+      action,
+    ),
+  );
 }
 /** Trabalho legado é stale. Flywheel/watchdog sem contato não são atendimento. */
 export async function withServiceJob<T>(
@@ -114,24 +126,32 @@ export async function withServiceJob<T>(
     assertCurrentServiceBoundary(null, null);
   }
   await requireCurrentServiceBoundary(db, boundary);
+  const green = {
+    source: "agent_engine",
+    source_job_id: job.id,
+    actor: { kind: "system" as const, id: job.kind },
+    ...(boundary ? { service_origin: greenContinuation(boundary) } : {}),
+  };
   return execution.run({ db, boundary, job }, () =>
-    job.kind === "followup_turn" && job.contact_id
-      ? withAgendaEffect(
-          db,
-          {
-            organizationId: job.organization_id,
-            contactId: job.contact_id,
-            jobId: job.id,
-            jobClaim: claimOfJob(job),
-            enrollmentId:
-              typeof job.payload.followup_enrollment_id === "string"
-                ? job.payload.followup_enrollment_id
-                : undefined,
-            nodeId: typeof job.payload.node_id === "string" ? job.payload.node_id : undefined,
-          },
-          action,
-        )
-      : action(),
+    withGreenMutationContext(green, () =>
+      job.kind === "followup_turn" && job.contact_id
+        ? withAgendaEffect(
+            db,
+            {
+              organizationId: job.organization_id,
+              contactId: job.contact_id,
+              jobId: job.id,
+              jobClaim: claimOfJob(job),
+              enrollmentId:
+                typeof job.payload.followup_enrollment_id === "string"
+                  ? job.payload.followup_enrollment_id
+                  : undefined,
+              nodeId: typeof job.payload.node_id === "string" ? job.payload.node_id : undefined,
+            },
+            action,
+          )
+        : action(),
+    ),
   );
 }
 /** Guarda no execute real. Tools desconhecidas são mutáveis por default. */
