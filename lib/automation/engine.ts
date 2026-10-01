@@ -26,6 +26,7 @@ import { logger } from "@/lib/logger";
 // SPIKE Green: a regra roda com `request_id=rule:<id>` + causation no contexto
 // async, para o evento canônico do hook de banco carregar a marca anti-loop.
 import { withGreenMutationContext } from "@/lib/green/mutation-context";
+import { causadoPorRegra } from "@/lib/green/proveniencia";
 
 export const AUTOMATION_CONSUMER_KEY = "automation-rules";
 
@@ -159,10 +160,10 @@ export async function runAutomationForEvent(
   row: EventRow,
 ): Promise<HandlerResult> {
   const serviceBoundaries = new Map<string, Promise<ServiceBoundary>>();
-  const requestId = row.metadata?.request_id;
-  const causedByRule =
-    Boolean(row.metadata?.caused_by_rule) || (typeof requestId === "string" && requestId.startsWith("rule:"));
-  if (causedByRule) {
+  // SPIKE Green v3: em evento canônico Green o anti-loop decide SÓ pela
+  // proveniência confiável; `request_id` que um humano mandou no header é
+  // advisory e não desliga regra nenhuma. Evento não canônico: régua de sempre.
+  if (causadoPorRegra(row.metadata)) {
     return { consumer_key: AUTOMATION_CONSUMER_KEY, status: "skipped", detail: "caused_by_rule" };
   }
 

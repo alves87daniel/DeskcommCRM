@@ -15,6 +15,8 @@ import { encerrarRoteirosVencidos } from "@/lib/followup/atendimento";
 import { enviarTextoFixoPendente } from "@/lib/followup/enviar-texto-fixo";
 import type { EnrollmentRow } from "@/lib/followup/node-handlers";
 import { createSupabaseSilenceSweepDb, runSilenceSweep } from "@/lib/followup/silence-sweep";
+// SPIKE Green v3: o tick é trabalho de SISTEMA; corta o contexto de quem o disparou.
+import { withoutGreenMutationContext } from "@/lib/green/mutation-context";
 import { logger } from "@/lib/logger";
 import { runRoutingWorker } from "@/lib/routing/worker";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -78,7 +80,14 @@ async function aplicarRespostasQueChegaram(admin: SupabaseClient, deps: TickDeps
  * Roda as tarefas de minuto neste processo — sem depender do contêiner
  * `scheduler` do compose nem de um cron da hospedagem.
  */
-export async function executarTickDoRelogio(): Promise<{
+export function executarTickDoRelogio(): Promise<{
+  tarefas: ResultadoDeTarefa[];
+  mexeu: boolean;
+}> {
+  return withoutGreenMutationContext(executarTarefasDoRelogio);
+}
+
+async function executarTarefasDoRelogio(): Promise<{
   tarefas: ResultadoDeTarefa[];
   mexeu: boolean;
 }> {

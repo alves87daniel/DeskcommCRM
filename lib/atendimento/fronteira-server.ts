@@ -6,7 +6,11 @@ import { withAgendaEffect, guardAgendaEffect } from "@/lib/agenda/efeito";
 import { AsyncLocalStorage } from "node:async_hooks";
 // SPIKE Green: a fronteira de atendimento vira `service_origin.kind=continuation`
 // no contexto async, para o hook de banco não perder a procedência do job.
-import { greenContinuation, withGreenMutationContext } from "@/lib/green/mutation-context";
+import {
+  greenContinuation,
+  withGreenMutationContext,
+  withGreenSystemRoot,
+} from "@/lib/green/mutation-context";
 import type { Queryable, JobRow } from "@/lib/agent-engine/queue/queue";
 import type { ToolSet } from "@/lib/agent-engine/edge/llm/run-model-call";
 import {
@@ -132,8 +136,9 @@ export async function withServiceJob<T>(
     actor: { kind: "system" as const, id: job.kind },
     ...(boundary ? { service_origin: greenContinuation(boundary) } : {}),
   };
+  // v3: o job é raiz de sistema — não herda o contexto de quem o enfileirou/rodou.
   return execution.run({ db, boundary, job }, () =>
-    withGreenMutationContext(green, () =>
+    withGreenSystemRoot(green, () =>
       job.kind === "followup_turn" && job.contact_id
         ? withAgendaEffect(
             db,

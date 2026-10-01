@@ -75,7 +75,70 @@ export class GreenMutationContextError extends Error {
   }
 }
 
-const als = new AsyncLocalStorage<GreenMutationContextV1 | undefined>();
+/**
+ * v3 — o que fica no AsyncLocalStorage é um ESCOPO, não o contexto cru.
+ *
+ * `aberto` é o que faz o contexto TERMINAR: `AsyncLocalStorage.run` delimita
+ * quem herda, mas tudo que foi agendado lá dentro (timer, poller, callback
+ * tardio) continua herdando para sempre. Quem abriu o escopo o fecha quando o
+ * trabalho assenta, e um escopo fechado não entrega contexto a ninguém — é a
+ * diferença entre "delimitado por construção" e "delimitado enquanto ninguém
+ * guardar uma referência".
+ *
+ * `requisicao` marca o escopo aberto pela boundary de requisição: só nele o
+ * gate de auth escreve (uma vez).
+ */
+interface EscopoGreen {
+  ctx: GreenMutationContextV1 | undefined;
+  readonly requisicao: boolean;
+  aberto: boolean;
+}
+
+const als = new AsyncLocalStorage<EscopoGreen>();
+
+function escopoVivo(): EscopoGreen | undefined {
+  const escopo = als.getStore();
+  return escopo?.aberto ? escopo : undefined;
+}
+
+function ehThenable(valor: unknown): valor is PromiseLike<unknown> {
+  return (
+    !!valor &&
+    (typeof valor === "object" || typeof valor === "function") &&
+    typeof (valor as { then?: unknown }).then === "function"
+  );
+}
+
+/**
+ * Roda `fn` dentro do escopo e o FECHA quando o trabalho termina: no retorno
+ * síncrono, no throw, ou quando a promessa assenta (cumprida ou rejeitada).
+ * Thenable preguiçoso (o builder do PostgREST só dispara no `then`) é
+ * consumido DENTRO do escopo, para o fetch dele enxergar o contexto.
+ */
+function rodarNoEscopo<T>(escopo: EscopoGreen, fn: () => T): T {
+  const fechar = () => {
+    escopo.aberto = false;
+    escopo.ctx = undefined;
+  };
+  let resultado: T;
+  try {
+    resultado = als.run(escopo, fn);
+  } catch (err) {
+    fechar();
+    throw err;
+  }
+  if (resultado instanceof Promise) {
+    return resultado.finally(fechar) as T;
+  }
+  if (ehThenable(resultado)) {
+    const preguicoso = resultado;
+    return new Promise((ok, erro) => {
+      als.run(escopo, () => preguicoso.then(ok, erro));
+    }).finally(fechar) as T;
+  }
+  fechar();
+  return resultado;
+}
 
 const SOURCE = /^[a-z][a-z0-9_.:-]{0,63}$/;
 const ID = /^[A-Za-z0-9_.:-]{1,128}$/;
@@ -228,24 +291,78 @@ function mesclar(
  * não-Green, nada muda. Quem precisa da recusa alta usa `validate`/`serialize`.
  */
 export function withGreenMutationContext<T>(ctx: GreenMutationContextInput, fn: () => T): T {
-  let mesclado: GreenMutationContextV1;
+  return rodarComContexto(escopoVivo()?.ctx, ctx, fn);
+}
+
+function rodarComContexto<T>(
+  pai: GreenMutationContextV1 | undefined,
+  ctx: GreenMutationContextInput,
+  fn: () => T,
+): T {
+  let mesclado: GreenMutationContextV1 | undefined;
   try {
-    mesclado = mesclar(als.getStore(), ctx);
+    mesclado = mesclar(pai, ctx);
   } catch (err) {
     logger.warn(
       "[green.mutation-context] contexto inválido descartado; a mutação segue sem contexto",
       {
         campo: err instanceof GreenMutationContextError ? err.campo : String(err),
-        source: ctx.source ?? als.getStore()?.source ?? null,
+        source: ctx.source ?? pai?.source ?? null,
       },
     );
-    return als.run(undefined, fn);
+    mesclado = undefined;
   }
-  return als.run(mesclado, fn);
+  return rodarNoEscopo({ ctx: mesclado, requisicao: false, aberto: true }, fn);
+}
+
+/**
+ * v3 — RAIZ DE SISTEMA: roda `fn` com `ctx` SEM herdar nada de quem chamou.
+ *
+ * Trabalho de sistema (handler de evento, job do agent-worker, tool de um
+ * servidor MCP) não é continuação de quem o disparou. Uma sessão admin que
+ * chama `relogio/tick` não é a causa das mutações que o drain fizer — a causa é
+ * o evento. Herdar `request_id`/`correlation_id` da requisição humana gravava
+ * no canônico uma proveniência que não existe (AUDIT-08.2, ADV-05).
+ */
+export function withGreenSystemRoot<T>(ctx: GreenMutationContextInput, fn: () => T): T {
+  return rodarComContexto(undefined, ctx, fn);
+}
+
+/**
+ * v3 — roda `fn` SEM contexto nenhum, cortando o que quer que quem chamou
+ * tivesse. Para o ponto de entrada de trabalho de sistema que ainda não tem
+ * contexto próprio (o tick do relógio): os seams lá dentro abrem as raízes
+ * deles; o que não abrir, falha fechado no banco em lead Green.
+ */
+export function withoutGreenMutationContext<T>(fn: () => T): T {
+  return rodarNoEscopo({ ctx: undefined, requisicao: false, aberto: true }, fn);
 }
 
 export function currentGreenMutationContext(): GreenMutationContextV1 | undefined {
-  return als.getStore();
+  return escopoVivo()?.ctx;
+}
+
+/**
+ * v3 — BOUNDARY EXPLÍCITA DE REQUISIÇÃO.
+ *
+ * Delimita início e fim do contexto de UMA requisição com
+ * `AsyncLocalStorage.run`: sempre uma raiz nova (nunca herda de quem chamou),
+ * fechada quando o handler assenta. É o único lugar onde o gate de auth
+ * (`abrirContextoGreenDaRequisicao`) consegue escrever. Sem boundary não há
+ * contexto — a propriedade deixou de depender do formato das rotas, de haver um
+ * `await` antes do gate ou da implementação de ALS do runtime (AUDIT-08.2,
+ * ADV-06: no Node 22, o gate antigo deixava o contexto da requisição 1 vazar
+ * para as seguintes do mesmo socket).
+ */
+export function runGreenRequestBoundary<T>(fn: () => T): T {
+  return rodarNoEscopo({ ctx: undefined, requisicao: true, aberto: true }, fn);
+}
+
+/** A boundary como wrapper de route handler: `export const POST = comFronteiraGreen(async (req) => …)`. */
+export function comFronteiraGreen<A extends unknown[], R>(
+  handler: (...args: A) => R,
+): (...args: A) => R {
+  return (...args: A) => runGreenRequestBoundary(() => handler(...args));
 }
 
 /** O que a boundary de requisição devolve: completar o contexto depois de autenticar. */
@@ -256,33 +373,31 @@ export interface ContextoGreenDaRequisicao {
 const SEM_CONTEXTO: ContextoGreenDaRequisicao = { vincular() {} };
 
 /**
- * v2 — contexto aberto pela BOUNDARY DE REQUISIÇÃO (o gate de auth), não por um
- * wrapper.
+ * v3 — o gate de auth PREENCHE o contexto da requisição; quem o delimita é a
+ * boundary (`runGreenRequestBoundary` / `comFronteiraGreen`).
  *
- * As rotas do Deskcomm não passam por um wrapper compartilhado: cada uma é um
- * `export async function POST` cru. O ponto comum a TODAS é o gate de auth
- * (`requireRole`, `resolveAuthDual`), que a rota chama no próprio corpo e
- * espera com `await`. `enterWith` chamado SÍNCRONO na entrada do gate (antes do
- * primeiro `await` dele) vale para o RESTO da execução da rota — a continuação
- * depois do `await` herda o contexto — e não vaza para fora dela: nem para quem
- * chamou a rota (o framework), nem para outra requisição concorrente. Provado
- * em `mutation-context.test.ts` e, ponta a ponta, no E2E PostgREST.
+ * Na v2 esta função ABRIA o contexto no próprio gate, sem delimitar o fim — o
+ * que só era seguro enquanto toda rota tivesse um `await` antes do gate e nada
+ * sobrevivesse à requisição. Agora ela não abre nada: escreve no escopo de
+ * requisição corrente, uma vez. Fora de uma boundary (rota que não a declarou,
+ * job, script) é no-op — o contexto fica ausente e, em lead Green, o banco
+ * recusa o writer privilegiado (fail-closed); sessão humana não depende dele
+ * (o ator é `auth.uid()`).
  *
- * Se já existe contexto (tool MCP, job, regra), não sobrescreve: a boundary de
- * requisição é a mais externa, nunca a mais forte. Contexto inválido segue a
- * regra de `withGreenMutationContext`: avisa e não abre nada (fail-open aqui,
- * fail-closed no banco).
+ * Dentro de um contexto aninhado (tool MCP, job, regra) também é no-op: a
+ * requisição é a moldura mais externa, nunca a mais forte.
  *
- * `vincular` completa o MESMO objeto que a rota enxerga — é como o gate do
- * token acrescenta o ator, que só existe depois do `await` da validação.
+ * `vincular` troca o contexto do MESMO escopo por um objeto novo — é como o
+ * gate do token acrescenta o ator, que só existe depois do `await` da
+ * validação. Nada é compartilhado por referência entre requisições.
  */
 export function abrirContextoGreenDaRequisicao(
   ctx: GreenMutationContextInput,
 ): ContextoGreenDaRequisicao {
-  if (als.getStore() !== undefined || typeof als.enterWith !== "function") return SEM_CONTEXTO;
-  let atual: GreenMutationContextV1;
+  const escopo = escopoVivo();
+  if (!escopo || !escopo.requisicao || escopo.ctx !== undefined) return SEM_CONTEXTO;
   try {
-    atual = mesclar(undefined, ctx);
+    escopo.ctx = mesclar(undefined, ctx);
   } catch (err) {
     logger.warn("[green.mutation-context] contexto de requisição inválido descartado", {
       campo: err instanceof GreenMutationContextError ? err.campo : String(err),
@@ -290,15 +405,15 @@ export function abrirContextoGreenDaRequisicao(
     });
     return SEM_CONTEXTO;
   }
-  als.enterWith(atual);
   return {
     vincular(campos) {
+      if (!escopo.aberto) return;
       try {
-        Object.assign(atual, mesclar(atual, campos));
+        escopo.ctx = mesclar(escopo.ctx, campos);
       } catch (err) {
         logger.warn("[green.mutation-context] vínculo de requisição inválido descartado", {
           campo: err instanceof GreenMutationContextError ? err.campo : String(err),
-          source: atual.source,
+          source: escopo.ctx?.source ?? null,
         });
       }
     },
@@ -345,7 +460,7 @@ export function initComContextoGreen(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): RequestInit | undefined {
-  const ctx = als.getStore();
+  const ctx = escopoVivo()?.ctx;
   if (!ctx) return init;
   const headers = new Headers(input instanceof Request ? input.headers : undefined);
   new Headers(init?.headers).forEach((valor, nome) => headers.set(nome, valor));

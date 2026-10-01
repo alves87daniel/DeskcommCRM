@@ -34,6 +34,8 @@ import { ApiError } from "@/lib/api/types";
 import { ok, fail } from "@/lib/api/wrappers";
 import { audit } from "@/lib/audit";
 import { requireRole } from "@/lib/auth/require-role";
+// SPIKE Green v3: a rota declara a boundary de requisição do MutationContext.
+import { comFronteiraGreen } from "@/lib/green/mutation-context";
 import { traduzir } from "@/lib/i18n/dicionario";
 import {
   FUNIL_DE_DESTINO_NAO_ENCONTRADO,
@@ -104,7 +106,7 @@ export async function GET(
   return ok({ pipelines: destinos }, { requestId });
 }
 
-export async function POST(
+async function handlePOST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
@@ -433,3 +435,5 @@ export async function POST(
     throw err;
   }
 }
+
+export const POST = comFronteiraGreen(handlePOST);

@@ -20,6 +20,8 @@ import { listaAgendamentos, type AgendamentoListado } from "@/lib/agenda/consult
 import { donosDaAgenda } from "@/lib/agenda/donos-da-agenda";
 import { lerOcupacaoExterna } from "@/lib/agenda/ocupacao-externa";
 import { resolveAuthDual, tetoDeEscritaDoToken } from "@/lib/api/auth-dual";
+// SPIKE Green v3: a escrita da agenda declara a boundary de requisição do MutationContext.
+import { runGreenRequestBoundary } from "@/lib/green/mutation-context";
 import type { Actor } from "@/lib/api/handlers/types";
 import { ApiError } from "@/lib/api/types";
 import { chaveDaRequisicao } from "@/lib/api/idempotency";
@@ -301,21 +303,21 @@ export async function POST(req: NextRequest): Promise<Response> {
   const supportDenied = await requireSupportWrite();
   if (supportDenied) return supportDenied;
 
-  return despachar(req, marcarSchema, marcarAgendamentoHandler, 201, true);
+  return runGreenRequestBoundary(() => despachar(req, marcarSchema, marcarAgendamentoHandler, 201, true));
 }
 
 export async function PATCH(req: NextRequest): Promise<Response> {
   const supportDenied = await requireSupportWrite();
   if (supportDenied) return supportDenied;
 
-  return despachar(req, alterarSchema, alterarAgendamentoHandler, 200);
+  return runGreenRequestBoundary(() => despachar(req, alterarSchema, alterarAgendamentoHandler, 200));
 }
 
 export async function DELETE(req: NextRequest): Promise<Response> {
   const supportDenied = await requireSupportWrite();
   if (supportDenied) return supportDenied;
 
-  return despachar(req, cancelarSchema, cancelarAgendamentoHandler, 200);
+  return runGreenRequestBoundary(() => despachar(req, cancelarSchema, cancelarAgendamentoHandler, 200));
 }
 
 /**
