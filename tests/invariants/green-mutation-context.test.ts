@@ -252,6 +252,13 @@ describe("S1 — humano / Kanban", () => {
       caller: "user",
       actor: { kind: "user", id: GERENTE },
       actor_user_id: GERENTE,
+      // CONTRATO v3 (AUDIT-08.2, ADV-04): o v1/v2 afirmava aqui `source: "kanban"`
+      // e `request_id` no TOPO — valores que a sessão humana escolhe no header.
+      // A origem confiável é derivada do canal; o header humano é advisory.
+      source: "user_session",
+    });
+    expect(e!.metadata).not.toHaveProperty("request_id");
+    expect((e!.metadata.green as { advisory: unknown }).advisory).toEqual({
       source: "kanban",
       request_id: requestId,
     });
@@ -604,7 +611,9 @@ describe("S8 — bulk humano", () => {
       expect(eventos[0]!.metadata).toMatchObject({
         green_canonical: true,
         actor: { kind: "user", id: GERENTE },
-        source: "bulk",
+        // CONTRATO v3 (ADV-04): era `source: "bulk"`, escolhido pelo header humano.
+        source: "user_session",
+        green: { advisory: { source: "bulk" } },
       });
       await emitLegado(lead, ETAPA_A, ETAPA_B, { papel: "authenticated", sub: GERENTE });
       expect(await eventosDe(lead)).toHaveLength(1);
@@ -632,7 +641,9 @@ describe("S9 — arquivamento de etapa", () => {
       expect(eventos).toHaveLength(1);
       expect(eventos[0]!.payload).toMatchObject({ from_stage_id: origem, to_stage_id: ETAPA_B });
       expect(eventos[0]!.metadata).toMatchObject({
-        source: "stage_archive",
+        // CONTRATO v3 (ADV-04): era `source: "stage_archive"`, escolhido pelo header humano.
+        source: "user_session",
+        green: { advisory: { source: "stage_archive" } },
         actor: { kind: "user", id: GERENTE },
       });
     }

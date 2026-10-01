@@ -585,13 +585,26 @@ describe("S23 — supressor v2: só o gêmeo da mutação canonizada some", () =
     expect(await eventosDe(lead)).toHaveLength(2);
   });
 
-  it("cada gêmeo casa com a SUA mutação: o request_id escolhe a linha certa entre transições repetidas", async () => {
+  // CONTRATO v3 (AUDIT-08.2, ADV-04 / GAP-SUPPRESSOR-V3): o v2 afirmava que o
+  // `request_id` do header de uma sessão HUMANA escolhia a linha do livro-razão.
+  // Esse valor é advisory (o caller o escolhe) e deixou de decidir: mutação humana
+  // não tem request_id confiável, o gêmeo casa por (lead, transição, janela) com a
+  // mais recente ainda sem gêmeo. A contagem — o que o supressor protege — é a
+  // mesma. O desempate por request_id CONFIÁVEL (writer privilegiado) é provado
+  // em `green-mutation-context-v3.test.ts`.
+  it("gêmeos de mutações HUMANAS repetidas: o request_id do header não escolhe linha; casa a mais recente sem gêmeo", async () => {
     const lead = await novoLead(FUNIL_GREEN, ETAPA_A);
     const [r1, r2, r3] = [randomUUID(), randomUUID(), randomUUID()];
     await mover(lead, ETAPA_B, comRequest(r1));
     await mover(lead, ETAPA_A, comRequest(r2));
     await mover(lead, ETAPA_B, comRequest(r3));
-    // o gêmeo do PRIMEIRO A→B chega depois do terceiro
+    const { rows: livro0 } = await pool.query<{ id: string; advisory_request_id: string }>(
+      "select id, advisory_request_id from green.stage_event_ledger where lead_id=$1 order by created_at, id",
+      [lead],
+    );
+    const linha = (r: string) => livro0.find((l) => l.advisory_request_id === r)!.id;
+    expect((await livroDe(lead)).every((l) => l.request_id === null)).toBe(true);
+    // o gêmeo do PRIMEIRO A→B chega depois do terceiro: casa com a mais recente (a de r3)
     await emitComo(
       humano,
       lead,
@@ -599,12 +612,12 @@ describe("S23 — supressor v2: só o gêmeo da mutação canonizada some", () =
       { request_id: r1 },
     );
     let livro = await livroDe(lead);
-    expect(livro.find((l) => l.request_id === r1)!.legacy_request_id).toBe(r1);
-    expect(livro.find((l) => l.request_id === r3)!.legacy_suppressed_at).toBeNull();
-    // sem request_id em comum, o gêmeo casa com a mutação mais recente ainda sem gêmeo
+    expect(livro.find((l) => l.id === linha(r3))!.legacy_request_id).toBe(r1);
+    expect(livro.find((l) => l.id === linha(r1))!.legacy_suppressed_at).toBeNull();
+    // o gêmeo seguinte casa com a que sobrou
     await emitComo(humano, lead, { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B }, {});
     livro = await livroDe(lead);
-    expect(livro.find((l) => l.request_id === r3)!.legacy_suppressed_at).not.toBeNull();
+    expect(livro.find((l) => l.id === linha(r1))!.legacy_suppressed_at).not.toBeNull();
     expect(await eventosDe(lead)).toHaveLength(3);
   });
 });

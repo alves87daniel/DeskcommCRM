@@ -125,11 +125,16 @@ async function lead(id: string): Promise<{ pipeline_id: string; stage_id: string
   return (await pool.query("select pipeline_id, stage_id from crm_leads where id=$1", [id])).rows[0];
 }
 
+interface Envelope {
+  v: number;
+  trusted: Record<string, unknown>;
+  advisory: Record<string, unknown>;
+}
 interface Evento {
   id: string;
   event_type: string;
   payload: Record<string, unknown>;
-  metadata: Record<string, any>;
+  metadata: Record<string, unknown> & { green: Envelope };
 }
 /** Todos os eventos da entidade, de qualquer tipo, na ordem em que nasceram. */
 async function eventosDe(id: string): Promise<Evento[]> {
@@ -142,8 +147,8 @@ async function eventosDe(id: string): Promise<Evento[]> {
 const canonicos = async (id: string) =>
   (await eventosDe(id)).filter((e) => e.metadata.green_canonical === true);
 
-async function livroDe(id: string): Promise<Record<string, any>[]> {
-  const { rows } = await pool.query<{ l: Record<string, any> }>(
+async function livroDe(id: string): Promise<Record<string, unknown>[]> {
+  const { rows } = await pool.query<{ l: Record<string, unknown> }>(
     "select to_jsonb(l) l from green.stage_event_ledger l where lead_id=$1 order by created_at, id",
     [id],
   );
@@ -490,7 +495,7 @@ describe("V3-R04 — evento canônico: write-once, com allowlist do consumer", (
   }
   const linha = async (id: string) =>
     (await pool.query("select to_jsonb(e) e from event_log e where id=$1", [id])).rows[0]?.e as
-      | Record<string, any>
+      | Record<string, unknown>
       | undefined;
 
   const ataques: [string, string, (lead: string) => unknown[]][] = [
@@ -768,6 +773,36 @@ describe("ADV-07 (controle) — o supressor do gêmeo não piora com a separaç�
     const segundo = await emit(humano, id, { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B }, { request_id: "r2" });
     expect(segundo.rows[0]!.id).not.toBeNull();
     expect(await eventosDe(id)).toHaveLength(2);
+  });
+
+  it("request_id CONFIÁVEL (writer privilegiado) ainda escolhe a linha certa; o advisory humano não escolhe", async () => {
+    const id = await novoLead(FUNIL_GREEN, ETAPA_A);
+    const mover = (r: Request, para: string) =>
+      request(r, "update crm_leads set stage_id=$2 where id=$1", [id, para]);
+    await mover(servico({ request_id: "req-1" }), ETAPA_B);
+    await mover(servico({ request_id: "req-2" }), ETAPA_A);
+    await mover(servico({ request_id: "req-3" }), ETAPA_B);
+    // o gêmeo da PRIMEIRA A→B chega depois da terceira: casa pela chave confiável
+    await emit(servicoSemContexto, id, { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B }, { request_id: "req-1" });
+    let livro = await livroDe(id);
+    expect(livro.find((l) => l.request_id === "req-1")!.legacy_suppressed_at).not.toBeNull();
+    expect(livro.find((l) => l.request_id === "req-3")!.legacy_suppressed_at).toBeNull();
+
+    // mutações humanas com request_id no header: o livro não o trata como chave
+    const h = await novoLead(FUNIL_GREEN, ETAPA_A);
+    const comHeader = (rid: string): Request => ({
+      ...humano,
+      contexto: { v: 1, source: "http_session", request_id: rid },
+    });
+    await request(comHeader("h-1"), "update crm_leads set stage_id=$2 where id=$1", [h, ETAPA_B]);
+    await request(comHeader("h-2"), "update crm_leads set stage_id=$2 where id=$1", [h, ETAPA_A]);
+    await request(comHeader("h-3"), "update crm_leads set stage_id=$2 where id=$1", [h, ETAPA_B]);
+    await emit(humano, h, { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B }, { request_id: "h-1" });
+    livro = await livroDe(h);
+    // GAP-SUPPRESSOR-V3: sem chave confiável, casa a mais recente (h-3), não a "sua" (h-1)
+    expect(livro.find((l) => l.advisory_request_id === "h-3")!.legacy_suppressed_at).not.toBeNull();
+    expect(livro.find((l) => l.advisory_request_id === "h-1")!.legacy_suppressed_at).toBeNull();
+    expect(await eventosDe(h)).toHaveLength(3);
   });
 
   it("a lápide de DELETE nunca é gêmeo: um lead.stage_changed legado não casa com linha de exclusão", async () => {

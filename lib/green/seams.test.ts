@@ -54,7 +54,10 @@ beforeEach(() => {
 
 describe("dispatcher: o handler roda com a causalidade do evento", async () => {
   const { dispatchEvent, registerHandler } = await import("@/lib/event-log/dispatcher");
-  it("causation = id do evento; correlation herda do metadata ou cai no id", async () => {
+  // v2: "correlation herda do metadata". Num evento NÃO canônico o metadata é
+  // de quem o emitiu, e a correlação herdada virava trusted no canônico
+  // seguinte. Contrato v3: só a correlação CONFIÁVEL (canônico Green) é herdada.
+  it("causation = id do evento; correlation herda só a CONFIÁVEL do canônico, senão cai no id", async () => {
     registerHandler({
       key: "observador",
       events: ["lead.stage_changed"],
@@ -81,7 +84,27 @@ describe("dispatcher: o handler roda com a causalidade do evento", async () => {
       correlation_id: EVENTO,
     });
     await dispatchEvent({ ...base, id: EVENTO, metadata: { correlation_id: CONVERSA } });
+    expect(visto.ctx?.correlation_id).toBe(EVENTO);
+    const trusted = { caller: "service_role", source: "mcp", correlation_id: CONVERSA };
+    await dispatchEvent({
+      ...base,
+      id: EVENTO,
+      metadata: { green_canonical: true, green: { v: 2, trusted, advisory: {} } },
+    });
     expect(visto.ctx?.correlation_id).toBe(CONVERSA);
+    await dispatchEvent({
+      ...base,
+      id: EVENTO,
+      metadata: {
+        green_canonical: true,
+        green: {
+          v: 2,
+          trusted: { caller: "user", source: "user_session" },
+          advisory: { correlation_id: CONVERSA },
+        },
+      },
+    });
+    expect(visto.ctx?.correlation_id).toBe(EVENTO);
   });
 });
 

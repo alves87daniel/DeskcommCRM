@@ -1,9 +1,13 @@
 /**
  * SPIKE Green v2 — os seams que a auditoria do v1 achou faltando:
  *
- * - boundary de REQUISIÇÃO (`abrirContextoGreenDaRequisicao`): o contexto
- *   aberto síncrono pelo gate de auth chega ao resto da rota, não vaza para o
- *   framework nem entre requisições concorrentes;
+ * - boundary de REQUISIÇÃO: na v3 quem a delimita é `runGreenRequestBoundary`
+ *   (a rota a declara com `comFronteiraGreen`); o gate de auth
+ *   (`abrirContextoGreenDaRequisicao`) só PREENCHE. O contexto chega ao resto
+ *   da rota, não volta para o framework nem cruza requisições. (Na v2 o gate
+ *   abria sozinho, por `enterWith`; os casos abaixo que afirmavam esse
+ *   mecanismo foram reescritos para o contrato v3 — ver
+ *   docs/spike/GREEN-MUTATION-CONTEXT-V3.md, "Testes antigos alterados".)
  * - `requireRole` (rotas humanas): metadata operacional da requisição, sem ator
  *   (o banco deriva `auth.uid()`);
  * - `resolveAuthDual` no ramo Bearer: o ator técnico do token (agenda por token);
@@ -22,6 +26,7 @@ import {
   abrirContextoGreenDaRequisicao,
   currentGreenMutationContext,
   parseGreenMutationContext,
+  runGreenRequestBoundary,
   withGreenMutationContext,
   type GreenMutationContextV1,
 } from "./mutation-context";
@@ -96,20 +101,21 @@ const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * Uma requisição como o framework a roda: raiz async própria (cada requisição
  * nasce do socket dela, não da anterior) e a rota começando por um `await`
  * (`requireSupportWrite()`/`createClient()` — todas as rotas medidas fazem isso
- * ANTES do gate).
+ * ANTES do gate). v3: a rota roda dentro da boundary explícita, como as rotas
+ * que alcançam writer de etapa a declaram (`comFronteiraGreen`).
  */
 function requisicao<T>(rota: () => Promise<T>): Promise<T> {
   return new Promise<T>((ok, erro) =>
     setImmediate(() => {
-      void (async () => {
+      void runGreenRequestBoundary(async () => {
         await tick(0);
         return rota();
-      })().then(ok, erro);
+      }).then(ok, erro);
     }),
   );
 }
 
-describe("boundary de requisição — enterWith síncrono no gate", () => {
+describe("boundary de requisição — `run` explícito na rota, gate só preenche", () => {
   /** O gate: abre na entrada, ANTES do primeiro await, e completa depois. */
   async function gate(id: string, ator?: string) {
     const h = abrirContextoGreenDaRequisicao({ source: "http_token", request_id: id });
@@ -128,7 +134,7 @@ describe("boundary de requisição — enterWith síncrono no gate", () => {
   }
   /** O framework: espera a rota; o contexto dela não pode voltar para cá. */
   async function framework(id: string, atraso: number) {
-    const r = await rota(id, atraso);
+    const r = await runGreenRequestBoundary(() => rota(id, atraso));
     return { ...r, noFramework: currentGreenMutationContext() };
   }
 
@@ -162,18 +168,21 @@ describe("boundary de requisição — enterWith síncrono no gate", () => {
     expect(dentro).toEqual({ v: 1, source: "mcp", actor: { kind: "api_token", id: "tok-mcp" } });
   });
 
-  it("gate ANTES do primeiro await da rota: o contexto também cobre o resto da MESMA requisição, nunca a vizinha", async () => {
+  // v2 afirmava aqui que, com o gate antes do primeiro await, o contexto
+  // "cobria também o resto da MESMA requisição no framework". Era o vazamento
+  // que a AUDIT-08.2 mediu (ADV-06). Contrato v3: o contexto acaba com a rota.
+  it("gate ANTES do primeiro await da rota: o contexto vale na rota e NÃO volta para o framework nem para a vizinha", async () => {
     const ids = ["req-a", "req-b", "req-c"];
     const vistos = await Promise.all(
       ids.map(
         (id, i) =>
           new Promise<(GreenMutationContextV1 | undefined)[]>((ok) =>
             setImmediate(() => {
-              const p = (async () => {
+              const p = runGreenRequestBoundary(async () => {
                 abrirContextoGreenDaRequisicao({ source: "http_session", request_id: id });
                 await tick(5 - i);
                 return currentGreenMutationContext();
-              })();
+              });
               // o "framework" desta requisição continua depois da rota
               void p.then(async (naRota) => {
                 await tick(1);
@@ -185,17 +194,17 @@ describe("boundary de requisição — enterWith síncrono no gate", () => {
     );
     vistos.forEach(([naRota, noFramework], i) => {
       expect(naRota?.request_id).toBe(ids[i]);
-      expect(noFramework?.request_id).toBe(ids[i]);
+      expect(noFramework).toBeUndefined();
     });
     expect(currentGreenMutationContext()).toBeUndefined();
   });
 
   it("contexto inválido não abre nada (fail-open no seam; o banco recusa Green)", async () => {
-    const r = await (async () => {
+    const r = await runGreenRequestBoundary(async () => {
       abrirContextoGreenDaRequisicao({ source: "Fonte Com Espaço" });
       await tick(1);
       return currentGreenMutationContext();
-    })();
+    });
     expect(r).toBeUndefined();
   });
 });
