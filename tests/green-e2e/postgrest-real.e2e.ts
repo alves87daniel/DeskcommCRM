@@ -413,6 +413,38 @@ describe.skipIf(!TEM_STACK)("E2E PostgREST real — Green Mutation Boundary v2",
     expect(await eventosDe(comum)).toHaveLength(0);
   });
 
+  it("S20b — client do agent-worker (crmEdgeConfigFromEnv) por HTTP: o contexto do job chega ao banco", async () => {
+    const { withGreenMutationContext } = await import("@/lib/green/mutation-context");
+    const { crmEdgeConfigFromEnv } = await import("@/lib/agent-engine/edge/crm/mcp-client");
+    const cfg = crmEdgeConfigFromEnv({
+      SUPABASE_URL: STACK.url,
+      SUPABASE_SERVICE_ROLE_KEY: STACK.service,
+    });
+    const lead = await novoLead(FUNIL_GREEN, ETAPA.A, CONTATO_SERVICO);
+    const job = `job-${randomUUID()}`;
+    // a mesma forma que `withServiceJob` amarra para um job sem fronteira
+    await withGreenMutationContext(
+      { source: "agent_engine", source_job_id: job, actor: { kind: "system", id: "inbound_turn" } },
+      async () => {
+        // compare-and-set pela etapa de origem, como `sincronizaEstagioDoAgente`
+        const { error } = await cfg.supabase
+          .from("crm_leads")
+          .update({ stage_id: ETAPA.B })
+          .eq("id", lead)
+          .eq("stage_id", ETAPA.A);
+        expect(error).toBeNull();
+      },
+    );
+    expect(await etapaDe(lead)).toBe(ETAPA.B);
+    const [e] = await eventosDe(lead);
+    expect(e!.metadata).toMatchObject({
+      caller: "service_role",
+      source: "agent_engine",
+      source_job_id: job,
+      actor: { kind: "system", id: "inbound_turn" },
+    });
+  });
+
   it("S21 — humano direto no PostgREST: header forjado não muda o ator; forja de canônico e oracle recusados", async () => {
     const lead = await novoLead(FUNIL_GREEN, ETAPA.A, CONTATO_HUMANO);
     const forjado = Buffer.from(
