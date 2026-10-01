@@ -39,6 +39,7 @@ import { decryptWebhookSecret } from "@/lib/webhooks/secrets";
 import { ApiError } from "@/lib/api/types";
 import { autorizarContatoParaIA } from "@/lib/ai/elegibilidade/autorizacao";
 import { kickLocalPipeline } from "@/lib/dev/kick-local-pipeline";
+import { withGreenSystemRoot } from "@/lib/green/mutation-context";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -524,14 +525,28 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
 
   let lead: Record<string, unknown>;
   try {
-    lead = await createLeadHandler(
-      admin,
+    // SPIKE Green lifecycle (EV-01B): a fonte pode apontar para um funil
+    // gerenciado (Green). O client é o de serviço, então o banco exige o
+    // contexto da mutação — o MESMO ator que a rota já declara ao handler (a
+    // fonte do webhook, resolvida pelo path_token, nunca pelo body). Sem ele,
+    // o nascimento Green era recusado depois de o contato já ter sido criado:
+    // contato órfão e 500 em todo reenvio.
+    lead = await withGreenSystemRoot(
       {
-        organization_id: source.organization_id,
-        actor: { type: "webhook_source", id: source.id },
-        requestId,
+        source: "webhook.in",
+        request_id: requestId,
+        actor: { kind: "webhook_source", id: source.id },
       },
-      leadInput,
+      () =>
+        createLeadHandler(
+          admin,
+          {
+            organization_id: source.organization_id,
+            actor: { type: "webhook_source", id: source.id },
+            requestId,
+          },
+          leadInput,
+        ),
     );
   } catch (err) {
     if (err instanceof ApiError) {

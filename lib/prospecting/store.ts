@@ -8,6 +8,7 @@ import { createLeadSchema } from "@/lib/schemas/leads";
 import { beginServiceAtOrigin } from "@/lib/atendimento/origem";
 import { capabilitiesOf } from "@/lib/channels/capabilities";
 import type { ChannelProvider } from "@/lib/channels/types";
+import { greenActorFromActor, withGreenSystemRoot } from "@/lib/green/mutation-context";
 import { phoneLookupVariants } from "@/lib/channels/phone-variants";
 import { decryptWebhookSecret, encryptWebhookSecret } from "@/lib/webhooks/secrets";
 import {
@@ -363,21 +364,35 @@ export async function activateCampaign(
         leadId = existing.rows[0]?.id ?? null;
       }
       if (!leadId) {
-        const lead = await createLeadHandler(admin, ctx, {
-          ...createLeadSchema.parse({
-            pipeline_id: config.pipeline_id,
-            stage_id: config.stage_id,
-            title: p.data.name,
-            contact_id: contactId,
-            owner_agent_id: config.agent_id,
+        // SPIKE Green lifecycle (EV-01B): o funil da campanha pode ser
+        // gerenciado (Green) e o client é o de serviço — o banco exige o
+        // contexto da mutação. Ator = o mesmo que o handler recebe (a
+        // campanha). `ctx.requestId` é `rule:<campanha>` (convenção do audit
+        // daqui) e NÃO vai para o contexto: `rule:*` confiável é o marcador
+        // de causa de automação que o anti-loop lê.
+        const lead = await withGreenSystemRoot(
+          {
             source: "prospecting",
-            description: `Campanha: ${c.name}\nQualificação: ${config.qualification}`.slice(
-              0,
-              2000,
-            ),
-          }),
-          external_id: p.id,
-        });
+            correlation_id: `prospecting:${id}`,
+            actor: greenActorFromActor(ctx.actor),
+          },
+          () =>
+            createLeadHandler(admin, ctx, {
+              ...createLeadSchema.parse({
+                pipeline_id: config.pipeline_id,
+                stage_id: config.stage_id,
+                title: p.data.name,
+                contact_id: contactId,
+                owner_agent_id: config.agent_id,
+                source: "prospecting",
+                description: `Campanha: ${c.name}\nQualificação: ${config.qualification}`.slice(
+                  0,
+                  2000,
+                ),
+              }),
+              external_id: p.id,
+            }),
+        );
         leadId = String(lead.id);
         await db.query(
           "update prospecting_candidates set lead_id=$3 where organization_id=$1 and id=$2",

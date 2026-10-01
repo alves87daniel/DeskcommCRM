@@ -71,7 +71,13 @@ export const RAIZES_DO_APAGAMENTO: readonly Raiz[] = [
 export type ContagensApagadas = Record<TabelaOperacional, number>;
 
 export interface FalhaAoApagar {
-  readonly tabela: TabelaOperacional;
+  /**
+   * SPIKE Green lifecycle: o apagamento é UMA transação
+   * (`fn_apagar_dados_operacionais_da_org`), então a falha é da transação
+   * inteira — nenhuma tabela ficou pela metade para ser nomeada aqui. A causa
+   * está em `mensagem`.
+   */
+  readonly tabela: TabelaOperacional | "transacao";
   readonly mensagem: string;
 }
 
@@ -99,10 +105,17 @@ function contagensZeradas(): ContagensApagadas {
  * separa uma organização da vizinha. `organizationId` tem de vir da sessão
  * (`resolveActiveOrg`), NUNCA do corpo da requisição.
  *
- * Não é atômico: o PostgREST não expõe transação de várias chamadas. A ordem é
- * escolhida para que uma parada no meio deixe o banco íntegro (filhos antes dos
- * pais) e para que repetir a ação continue de onde parou. Por isso as contagens
- * parciais voltam junto com a falha, em vez de serem perdidas.
+ * SPIKE Green lifecycle (SPIKE-GREEN-01): os sete DELETE saem numa transação
+ * só, pela RPC `fn_apagar_dados_operacionais_da_org` (SECURITY INVOKER, só
+ * `service_role`, mesma ordem de `RAIZES_DO_APAGAMENTO`, e o mesmo filtro de
+ * organização em cada DELETE). Antes eram sete requests PostgREST: com uma
+ * Opportunity Green na org, mensagens, conversas, agenda, pedidos e propostas
+ * já tinham sido apagados quando a fronteira recusava `crm_leads` — perda
+ * irreversível, e o retry recusava de novo no mesmo ponto. Agora qualquer
+ * recusa desfaz tudo, e repetir converge. Precedente do upstream para a mesma
+ * classe: `fn_apagar_contato_com_historico` (migration 0488, #752). Quem chama
+ * declara o contexto Green da operação (a action); o header viaja na própria
+ * request da RPC.
  */
 export async function apagarDadosOperacionaisDaOrg(
   client: SupabaseClient,
@@ -110,16 +123,20 @@ export async function apagarDadosOperacionaisDaOrg(
 ): Promise<ResultadoDoApagamento> {
   const counts = contagensZeradas();
 
+  const { data, error } = await client.rpc("fn_apagar_dados_operacionais_da_org", {
+    p_org: organizationId,
+  });
+  if (error) {
+    return {
+      ok: false,
+      falha: { tabela: "transacao", mensagem: error.message },
+      counts,
+      pdfsRemovidos: 0,
+    };
+  }
+  const apagadas = (data ?? {}) as Partial<Record<TabelaOperacional, number>>;
   for (const { tabela } of RAIZES_DO_APAGAMENTO) {
-    const { count, error } = await client
-      .from(tabela)
-      .delete({ count: "exact" })
-      .eq("organization_id", organizationId);
-
-    if (error) {
-      return { ok: false, falha: { tabela, mensagem: error.message }, counts, pdfsRemovidos: 0 };
-    }
-    counts[tabela] = count ?? 0;
+    counts[tabela] = Number(apagadas[tabela] ?? 0);
   }
 
   // D10: os PDFs de proposta (bucket `propostas`, path `<org>/<id>.pdf` —

@@ -8,6 +8,7 @@ import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { loadAuthUser, mfaEmDivida, resolveActiveOrg } from "@/lib/auth/server";
 import { ROLE_RANK } from "@/lib/auth/types";
+import { greenActorFromActor, withGreenSystemRoot } from "@/lib/green/mutation-context";
 import {
   apagarDadosOperacionaisDaOrg,
   type ContagensApagadas,
@@ -86,9 +87,25 @@ export async function apagarDadosOperacionaisDaOrganizacao(input: {
     return { ok: false, error: "confirmacao_nao_confere" };
   }
 
-  const resultado = await apagarDadosOperacionaisDaOrg(supabase, activeOrg.orgId);
-
   const hdrs = await headers();
+  const requestId = hdrs.get("x-request-id");
+
+  // SPIKE Green lifecycle: apagar uma Opportunity Green é mutação Green, e o
+  // client aqui é o de serviço — sem contexto, a fronteira recusa (e, sendo a
+  // RPC uma transação só, nada é apagado). A autorização já foi decidida acima
+  // (admin/platform admin, MFA, nome conferido no banco); o contexto só DECLARA
+  // quem e por onde, e vira a lápide de cada Opportunity. O humano chega por
+  // caminho privilegiado, então é rebaixado a `system` com o próprio id
+  // (`greenActorFromActor`), e o banco registra `caller = service_role`.
+  const resultado = await withGreenSystemRoot(
+    {
+      source: "settings.danger_zone",
+      ...(requestId && /^[A-Za-z0-9_.:-]{1,128}$/.test(requestId) ? { request_id: requestId } : {}),
+      actor: greenActorFromActor({ type: "user", id: authUser.id }),
+    },
+    () => apagarDadosOperacionaisDaOrg(supabase, activeOrg.orgId),
+  );
+
   await audit({
     action: "org.dados_operacionais_apagados",
     actorUserId: authUser.id,

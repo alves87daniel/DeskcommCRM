@@ -133,7 +133,14 @@ async function handleStasisStart(event: AriEvent) {
         nomeDoContato: channel.caller?.name ?? null,
         origem: { rotulo: "chamada", source: "voip", motivo: "primeira ligação recebida" },
       });
-      if (!nascimento.criado) {
+      if (!nascimento.criado && nascimento.motivo === "erro") {
+        // SPIKE Green lifecycle (EV-01B): a ESCRITA falhou (ex.: a fronteira
+        // Green recusando o nascimento) — a ligação fica sem o lead que o
+        // contrato exige. Erro, com o motivo do banco, não `info`.
+        console.error(
+          `[voice-agent] nascimento do lead recusado (chamada ${callRow.id}): ${nascimento.detalhe ?? "sem detalhe"}`,
+        );
+      } else if (!nascimento.criado) {
         console.info(`[voice-agent] lead não criado para ${callerNumber}: ${nascimento.motivo}`);
       }
     } catch (err) {
