@@ -358,13 +358,6 @@ export function runGreenRequestBoundary<T>(fn: () => T): T {
   return rodarNoEscopo({ ctx: undefined, requisicao: true, aberto: true }, fn);
 }
 
-/** A boundary como wrapper de route handler: `export const POST = comFronteiraGreen(async (req) => …)`. */
-export function comFronteiraGreen<A extends unknown[], R>(
-  handler: (...args: A) => R,
-): (...args: A) => R {
-  return (...args: A) => runGreenRequestBoundary(() => handler(...args));
-}
-
 /** O que a boundary de requisição devolve: completar o contexto depois de autenticar. */
 export interface ContextoGreenDaRequisicao {
   vincular(campos: GreenMutationContextInput): void;
@@ -374,7 +367,9 @@ const SEM_CONTEXTO: ContextoGreenDaRequisicao = { vincular() {} };
 
 /**
  * v3 — o gate de auth PREENCHE o contexto da requisição; quem o delimita é a
- * boundary (`runGreenRequestBoundary` / `comFronteiraGreen`).
+ * boundary (`runGreenRequestBoundary`), que a rota declara depois da guarda de
+ * suporte (`requireSupportWrite`) — a forma `export const POST = wrapper(handle)`
+ * é reprovada pela cerca `suporte-cobertura-de-efeitos` do upstream.
  *
  * Na v2 esta função ABRIA o contexto no próprio gate, sem delimitar o fim — o
  * que só era seguro enquanto toda rota tivesse um `await` antes do gate e nada

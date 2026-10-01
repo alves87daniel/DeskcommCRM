@@ -2,7 +2,7 @@
  * SPIKE Green v2 — os seams que a auditoria do v1 achou faltando:
  *
  * - boundary de REQUISIÇÃO: na v3 quem a delimita é `runGreenRequestBoundary`
- *   (a rota a declara com `comFronteiraGreen`); o gate de auth
+ *   (a rota a declara no handler exportado); o gate de auth
  *   (`abrirContextoGreenDaRequisicao`) só PREENCHE. O contexto chega ao resto
  *   da rota, não volta para o framework nem cruza requisições. (Na v2 o gate
  *   abria sozinho, por `enterWith`; os casos abaixo que afirmavam esse
@@ -102,7 +102,7 @@ const tick = (ms: number) => new Promise((r) => setTimeout(r, ms));
  * nasce do socket dela, não da anterior) e a rota começando por um `await`
  * (`requireSupportWrite()`/`createClient()` — todas as rotas medidas fazem isso
  * ANTES do gate). v3: a rota roda dentro da boundary explícita, como as rotas
- * que alcançam writer de etapa a declaram (`comFronteiraGreen`).
+ * que alcançam writer de etapa a declaram.
  */
 function requisicao<T>(rota: () => Promise<T>): Promise<T> {
   return new Promise<T>((ok, erro) =>

@@ -23,7 +23,7 @@ import { respostaDeRecusa } from "@/lib/api/recusa";
 import { fail, ok } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
 // SPIKE Green v3: a rota declara a boundary de requisição do MutationContext.
-import { comFronteiraGreen } from "@/lib/green/mutation-context";
+import { runGreenRequestBoundary } from "@/lib/green/mutation-context";
 import { arquivarEtapa, atualizarEtapa } from "@/lib/leads/stage-operations";
 import { createClient } from "@/lib/supabase/server";
 import { traduzir } from "@/lib/i18n/dicionario";
@@ -102,9 +102,14 @@ export async function PATCH(req: NextRequest, ctx: RouteCtx): Promise<Response> 
   }
 }
 
-async function handleDELETE(req: NextRequest, ctx: RouteCtx): Promise<Response> {
+export async function DELETE(req: NextRequest, ctx: RouteCtx): Promise<Response> {
   const supportDenied = await requireSupportWrite();
   if (supportDenied) return supportDenied;
+  // SPIKE Green v3: boundary de requisição do MutationContext (delimitada por `run`).
+  return runGreenRequestBoundary(() => handleDELETE(req, ctx));
+}
+
+async function handleDELETE(req: NextRequest, ctx: RouteCtx): Promise<Response> {
 
   const requestId = randomUUID();
   const authz = await requireRole("manager", { requestId, resource: "crm_stages" });
@@ -129,5 +134,3 @@ async function handleDELETE(req: NextRequest, ctx: RouteCtx): Promise<Response> 
     return respostaDeRecusa(err, requestId);
   }
 }
-
-export const DELETE = comFronteiraGreen(handleDELETE);

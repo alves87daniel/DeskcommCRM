@@ -17,18 +17,26 @@ import { ApiError } from "@/lib/api/types";
 import { ok, fail } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
 // SPIKE Green v3: a rota declara a boundary de requisição do MutationContext.
-import { comFronteiraGreen } from "@/lib/green/mutation-context";
+import { runGreenRequestBoundary } from "@/lib/green/mutation-context";
 import { encerraDemanda } from "@/lib/leads/encerramento";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
-async function handlePOST(
+export async function POST(
   req: NextRequest,
   ctx: { params: Promise<{ id: string }> },
 ): Promise<Response> {
   const supportDenied = await requireSupportWrite();
   if (supportDenied) return supportDenied;
+  // SPIKE Green v3: boundary de requisição do MutationContext (delimitada por `run`).
+  return runGreenRequestBoundary(() => handlePOST(req, ctx));
+}
+
+async function handlePOST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<Response> {
 
   const requestId = randomUUID();
   const { id: leadId } = await ctx.params;
@@ -69,5 +77,3 @@ async function handlePOST(
     throw err;
   }
 }
-
-export const POST = comFronteiraGreen(handlePOST);

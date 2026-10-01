@@ -16,7 +16,7 @@ import { ApiError } from "@/lib/api/types";
 import { ok, fail } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
 // SPIKE Green v3: a rota declara a boundary de requisição do MutationContext.
-import { comFronteiraGreen } from "@/lib/green/mutation-context";
+import { runGreenRequestBoundary } from "@/lib/green/mutation-context";
 import { resolveOwnerPatch } from "@/lib/leads/owner-patch";
 import { emitLeadActivity, stageChangeReason } from "@/lib/leads/activity-emitter";
 import { registraFalhaDeAtividade } from "@/lib/leads/activity-write-failure";
@@ -50,9 +50,14 @@ interface LeadMovidoEmLote {
   pipeline_id: string;
 }
 
-async function handlePOST(req: NextRequest): Promise<Response> {
+export async function POST(req: NextRequest): Promise<Response> {
   const supportDenied = await requireSupportWrite();
   if (supportDenied) return supportDenied;
+  // SPIKE Green v3: boundary de requisição do MutationContext (delimitada por `run`).
+  return runGreenRequestBoundary(() => handlePOST(req));
+}
+
+async function handlePOST(req: NextRequest): Promise<Response> {
 
   const requestId = randomUUID();
   const supabase = await createClient();
@@ -535,5 +540,3 @@ async function handlePOST(req: NextRequest): Promise<Response> {
 
   return ok({ updated_count: updatedCount, lead_ids: visibleIds }, { requestId });
 }
-
-export const POST = comFronteiraGreen(handlePOST);
