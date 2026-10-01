@@ -8,13 +8,18 @@
 -- — SEM patchar os oito writers de `crm_leads.stage_id`.
 --
 -- Desenho: Conector Green, `docs/audits/deskcomm-fit/05A-SPIKE-MUTATION-CONTEXT.md`.
+-- Rodada v2: fecha os gaps da auditoria independente do SPIKE-DESKCOMM-07
+-- (`05-EVENTOS-IDEMPOTENCIA-ATOMICIDADE.md`) — produtor canônico não forjável,
+-- `service_origin.event` amarrada ao contato real do evento, helpers fora da
+-- API de `authenticated` e supressor restrito ao gêmeo da mutação canonizada.
 --
 -- ── Transporte ──────────────────────────────────────────────────────────────
 -- O contexto viaja no header `x-green-mutation-context` (JSON UTF-8 em Base64)
 -- da própria request PostgREST que executa o UPDATE, lido por
 -- `current_setting('request.headers', true)` — o mesmo lugar que a 0250 já lê
--- em produção. Conexão `pg` direta (sem PostgREST) usa o GUC transacional
--- `green.mutation_context` (JSON), definido com `set_config(..., true)`.
+-- em produção. Conexão `pg` direta (sem PostgREST, sem papel de request) usa o
+-- GUC transacional `green.mutation_context` (JSON), definido com
+-- `set_config(..., true)`.
 --
 -- ── Confiança ───────────────────────────────────────────────────────────────
 -- O contexto NUNCA concede autorização (RLS/roles continuam mandando):
@@ -22,25 +27,45 @@
 --                              do header são IGNORADOS; o resto é advisory;
 --   * service_role / direta  → contexto validado por schema; `source` e
 --                              `actor.kind` (nunca `user`) obrigatórios;
---                              ausente ou inválido em lead Green ⇒ fail-closed.
+--                              ausente ou inválido em lead Green ⇒ fail-closed;
+--   * anon / sem identidade  → nunca confiável; lead Green ⇒ fail-closed.
+--
+-- ── Privilégios (v2) ────────────────────────────────────────────────────────
+-- O schema `green` NÃO é API de `authenticated`/`anon`: sem USAGE, sem EXECUTE,
+-- sem tabela. Quem precisa dos helpers são os TRIGGERS, que rodam como dono
+-- (`security definer`, `search_path=''`). Função de trigger não pode ser chamada
+-- fora de trigger ("trigger functions can only be called as triggers"), então o
+-- definer só é exercido por uma escrita real em `crm_leads`/`event_log` que a
+-- RLS já autorizou — não é porta de escalada. Dentro do definer, `current_user`
+-- é o dono; por isso o chamador é classificado pelo claim do JWT e pelo GUC
+-- `role` da request (que o definer não troca), nunca por `current_user`.
+-- `service_role` mantém EXECUTE nos helpers (backend legítimo).
 --
 -- ── Hooks (core patch explícito do fork; módulo nativo não instala trigger em
 --    tabela core) ─────────────────────────────────────────────────────────────
 --   * BEFORE INSERT/UPDATE em crm_leads: só pipeline Green (binding) — confere
 --     etapa do funil, exige contexto em writer privilegiado, valida
---     `service_origin` contra org/contato/fronteira vigente;
+--     `service_origin` contra org/contato/fronteira vigente e, para
+--     `kind=event`, contra o contato REAL do evento (mesma regra de
+--     `public.fn_service_event_origin`);
 --   * AFTER UPDATE em crm_leads: OLD.stage_id IS DISTINCT FROM NEW.stage_id em
---     pipeline Green ⇒ `public.emit_event('lead.stage_changed', ...)` com
---     `metadata.green_canonical=true`. Erro NÃO é capturado: evento falha ⇒
---     UPDATE falha;
---   * BEFORE INSERT em event_log: `lead.stage_changed`/`crm_lead` de lead Green
---     sem `green_canonical` ⇒ no-op (os emitters legados continuam chamando
---     `emit_event`; para Green a segunda linha não nasce; non-Green intacto).
+--     pipeline Green ⇒ linha no livro-razão `green.stage_event_ledger` + prova de
+--     produtor (GUC transacional de uso único apontando para ela) +
+--     `public.emit_event('lead.stage_changed', ...)`. Erro NÃO é capturado:
+--     evento falha ⇒ UPDATE falha;
+--   * BEFORE INSERT/UPDATE em event_log: (a) a marca canônica
+--     (`green_canonical`/`green_context_version`) só nasce com a prova do
+--     produtor e é imutável depois; (b) `lead.stage_changed` legado sem marca é
+--     suprimido SÓ quando é o gêmeo de uma mutação já canonizada (mesmo lead,
+--     mesma transição, janela curta, gêmeo ainda não visto). O resto passa
+--     intacto — inclusive lead não-Green, que nunca tem linha no livro-razão.
 --
 -- Sem o binding físico (`to_regclass`) os hooks são no-op: Deskcomm puro.
 
 create schema if not exists green;
-grant usage on schema green to authenticated, service_role;
+-- v2: o schema deixa de ser alcançável por authenticated/anon (oracle fechado).
+revoke all on schema green from public, anon, authenticated;
+grant usage on schema green to service_role;
 
 -- ── binding mínimo de pipeline gerenciado (não é catálogo iGreen) ────────────
 create table if not exists green.product_pipeline_binding (
@@ -56,10 +81,36 @@ alter table green.product_pipeline_binding enable row level security;
 revoke all on green.product_pipeline_binding from public, anon, authenticated;
 grant select on green.product_pipeline_binding to service_role;
 
--- ── pipeline é Green? (definer: a sessão humana não lê a tabela diretamente) ─
+-- ── livro-razão do produtor canônico (v2) ───────────────────────────────────
+-- Uma linha por mutação Green canonizada. É a PROVA de proveniência do evento
+-- canônico (só o trigger de crm_leads, como dono, escreve aqui) e a chave do
+-- supressor: o gêmeo legado é casado com a linha da SUA mutação, não com o lead.
+create table if not exists green.stage_event_ledger (
+  id                   uuid primary key default gen_random_uuid(),
+  organization_id      uuid not null,
+  lead_id              uuid not null,
+  from_stage_id        uuid,
+  to_stage_id          uuid not null,
+  request_id           text,
+  txid                 bigint not null default txid_current(),
+  canonical_event_id   uuid unique,
+  legacy_suppressed_at timestamptz,
+  legacy_request_id    text,
+  created_at           timestamptz not null default now()
+);
+comment on table green.stage_event_ledger is
+  'SPIKE Green: prova de produtor do lead.stage_changed canônico e chave do supressor do gêmeo legado. Escrita só pelos triggers (dono).';
+create index if not exists stage_event_ledger_twin_idx
+  on green.stage_event_ledger (organization_id, lead_id, created_at desc)
+  where legacy_suppressed_at is null;
+alter table green.stage_event_ledger enable row level security;
+revoke all on green.stage_event_ledger from public, anon, authenticated;
+grant select on green.stage_event_ledger to service_role;
+
+-- ── pipeline é Green? (invoker: dono pelos triggers, service_role direto) ────
 create or replace function green.fn_is_green_pipeline(p_org uuid, p_pipeline uuid)
 returns boolean
-language plpgsql stable security definer
+language plpgsql stable
 set search_path = ''
 as $$
 begin
@@ -71,8 +122,8 @@ begin
      where b.organization_id = p_org and b.pipeline_id = p_pipeline
   );
 end $$;
-revoke all on function green.fn_is_green_pipeline(uuid, uuid) from public, anon;
-grant execute on function green.fn_is_green_pipeline(uuid, uuid) to authenticated, service_role;
+revoke all on function green.fn_is_green_pipeline(uuid, uuid) from public, anon, authenticated;
+grant execute on function green.fn_is_green_pipeline(uuid, uuid) to service_role;
 
 -- ── validadores de forma (imutáveis, sem I/O) ──────────────────────────────
 create or replace function green.fn_ctx_id_ok(p text)
@@ -83,13 +134,13 @@ create or replace function green.fn_ctx_uuid_ok(p text)
 returns boolean language sql immutable set search_path = '' as $$
   select p is null or p ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
 $$;
-revoke all on function green.fn_ctx_id_ok(text) from public, anon;
-revoke all on function green.fn_ctx_uuid_ok(text) from public, anon;
-grant execute on function green.fn_ctx_id_ok(text) to authenticated, service_role;
-grant execute on function green.fn_ctx_uuid_ok(text) to authenticated, service_role;
+revoke all on function green.fn_ctx_id_ok(text) from public, anon, authenticated;
+revoke all on function green.fn_ctx_uuid_ok(text) from public, anon, authenticated;
+grant execute on function green.fn_ctx_id_ok(text) to service_role;
+grant execute on function green.fn_ctx_uuid_ok(text) to service_role;
 
 -- ── resolver do MutationContext ─────────────────────────────────────────────
--- Devolve: { caller: user|service_role|direct, valid, reason, actor,
+-- Devolve: { caller: user|service_role|direct|anonymous, valid, reason, actor,
 --            service_origin, source, request_id, correlation_id,
 --            causation_event_id, idempotency_key, source_job_id }
 create or replace function green.fn_mutation_context()
@@ -100,6 +151,7 @@ as $$
 declare
   v_uid       uuid := auth.uid();
   v_jwt_role  text;
+  v_role      text;
   v_caller    text;
   v_header    text;
   v_raw       jsonb;
@@ -115,6 +167,16 @@ begin
   exception when others then
     v_jwt_role := '';
   end;
+  -- Papel da REQUEST, não `current_user`: chamado de trigger definer,
+  -- `current_user` é o dono; o claim e o GUC `role` (SET ROLE do PostgREST)
+  -- continuam sendo os de quem fez a request.
+  v_role := coalesce(nullif(v_jwt_role, ''), nullif(current_setting('role', true), 'none'), '');
+  v_caller := case
+    when v_uid is not null then 'user'
+    when v_role = 'service_role' then 'service_role'
+    when v_role in ('anon', 'authenticated') then 'anonymous'
+    else 'direct'
+  end;
 
   -- transporte 1: header da request PostgREST
   begin
@@ -128,20 +190,14 @@ begin
     exception when others then
       v_raw := null; v_reason := 'undecodable_header';
     end;
-  else
-    -- transporte 2: GUC transacional (conexão pg direta, sem PostgREST)
+  elsif v_caller = 'direct' then
+    -- transporte 2: GUC transacional — só conexão pg direta (sem papel de request)
     begin
       v_raw := nullif(current_setting('green.mutation_context', true), '')::jsonb;
     exception when others then
       v_raw := null; v_reason := 'undecodable_guc';
     end;
   end if;
-
-  v_caller := case
-    when v_uid is not null then 'user'
-    when current_user = 'service_role' or v_jwt_role = 'service_role' then 'service_role'
-    else 'direct'
-  end;
 
   -- ── validação de forma (vale para todo chamador; humano só a usa como advisory)
   if v_raw is not null and jsonb_typeof(v_raw) <> 'object' then
@@ -183,6 +239,13 @@ begin
       'caller', 'user', 'valid', true, 'reason', null,
       'actor', jsonb_build_object('kind', 'user', 'id', v_uid),
       'service_origin', null) || v_advisory;
+  end if;
+
+  -- ── request sem identidade: nunca confiável, qualquer que seja o header
+  if v_caller = 'anonymous' then
+    return jsonb_build_object(
+      'caller', 'anonymous', 'valid', false, 'reason', 'anonymous',
+      'actor', null, 'service_origin', null);
   end if;
 
   -- ── writer privilegiado: actor explícito e service_origin validados por schema
@@ -235,13 +298,87 @@ begin
     'caller', v_caller, 'valid', true, 'reason', null,
     'actor', v_actor, 'service_origin', v_origin) || v_advisory;
 end $$;
-revoke all on function green.fn_mutation_context() from public, anon;
-grant execute on function green.fn_mutation_context() to authenticated, service_role;
+revoke all on function green.fn_mutation_context() from public, anon, authenticated;
+grant execute on function green.fn_mutation_context() to service_role;
+
+-- ── contato REAL de um evento de origem (v2) ────────────────────────────────
+-- Projeção SEM EFEITO COLATERAL da regra canônica de
+-- `public.fn_service_event_origin` (última definição da cadeia): o contato de um
+-- evento é o da sua ENTIDADE, pela mesma tabela tipo → entidade → contato, e a
+-- cadeia `payload.service_origin.kind=event` é seguida até a raiz com o mesmo
+-- teto de ciclo. A função canônica não pode ser chamada aqui: ela trava o
+-- contato (advisory), pode abrir atendimento (`fn_service_begin`) e grava o
+-- memo `event_service_origins` — efeitos de CONSUMIR o evento, não de conferir
+-- uma referência. A paridade (mesmo conjunto de tipos, mesmo veredito de escopo)
+-- é cobrada em `tests/invariants/green-mutation-context.test.ts` (S16), contra a
+-- própria função canônica: se o upstream mudar a regra, o teste fica vermelho.
+create or replace function green.fn_assert_event_origin_contact(p_org uuid, p_event uuid, p_contact uuid)
+returns void
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  e        record;
+  v_root   uuid := p_event;
+  v_seen   uuid[] := array[]::uuid[];
+  v_entity uuid;
+  v_origin jsonb;
+begin
+  loop
+    if v_root = any(v_seen) or cardinality(v_seen) >= 32 then
+      raise exception 'green_service_origin_cycle' using errcode = '23503';
+    end if;
+    v_seen := array_append(v_seen, v_root);
+    v_entity := null;
+    select ev.event_type, ev.entity_kind, ev.entity_id, ev.payload into e
+      from public.event_log ev where ev.organization_id = p_org and ev.id = v_root;
+    if not found then
+      raise exception 'green_service_origin_event_not_found' using errcode = '23503';
+    end if;
+    if e.event_type in ('lead.created','lead.stage_changed','lead.tag_added') and e.entity_kind = 'crm_lead' then
+      select contact_id into v_entity from public.crm_leads where organization_id = p_org and id = e.entity_id;
+    elsif e.event_type = 'contact.tag_added' and e.entity_kind = 'contact' then
+      select id into v_entity from public.contacts where organization_id = p_org and id = e.entity_id;
+    elsif e.event_type = 'appointment.outcome_confirmed' and e.entity_kind = 'appointment' then
+      select contact_id into v_entity from public.calendar_appointments
+       where organization_id = p_org and id = e.entity_id
+         and revision = (e.payload ->> 'appointment_revision')::bigint
+         and status = 'no_show' and outcome_recorded_at is not null;
+    elsif e.event_type = 'message.received' and e.entity_kind = 'message' then
+      select contact_id into v_entity from public.messages
+       where organization_id = p_org and id = e.entity_id and direction = 'inbound';
+    else
+      -- a regra canônica também não ancora este tipo (`service_event_origin_unsupported`)
+      raise exception 'green_service_origin_unsupported' using errcode = '23503';
+    end if;
+    if v_entity is distinct from p_contact or not exists (
+         select 1 from public.contacts
+          where organization_id = p_org and id = p_contact
+            and not is_anonymized and is_merged_into is null) then
+      raise exception 'green_service_origin_contact_mismatch' using errcode = '23503';
+    end if;
+    v_origin := e.payload -> 'service_origin';
+    if v_origin ->> 'kind' = 'event' then
+      if v_origin ->> 'organization_id' is distinct from p_org::text
+         or v_origin ->> 'contact_id' is distinct from p_contact::text then
+        raise exception 'green_service_origin_contact_mismatch' using errcode = '23503';
+      end if;
+      v_root := (v_origin ->> 'event_id')::uuid;
+      if v_root is null then
+        raise exception 'green_service_origin_event_not_found' using errcode = '23503';
+      end if;
+      continue;
+    end if;
+    exit;
+  end loop;
+end $$;
+revoke all on function green.fn_assert_event_origin_contact(uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function green.fn_assert_event_origin_contact(uuid, uuid, uuid) to service_role;
 
 -- ── service_origin transportada tem de bater com o lead e com a fronteira vigente
 create or replace function green.fn_assert_service_origin(p_origin jsonb, p_org uuid, p_contact uuid)
 returns void
-language plpgsql stable security definer
+language plpgsql stable
 set search_path = ''
 as $$
 declare
@@ -257,10 +394,8 @@ begin
        or (p_origin ->> 'contact_id')::uuid is distinct from p_contact then
       raise exception 'green_service_origin_scope_mismatch' using errcode = '23503';
     end if;
-    if not exists (select 1 from public.event_log e
-                    where e.id = (p_origin ->> 'event_id')::uuid and e.organization_id = p_org) then
-      raise exception 'green_service_origin_event_not_found' using errcode = '23503';
-    end if;
+    -- v2: o evento tem de ser DO contato declarado (não basta existir na org)
+    perform green.fn_assert_event_origin_contact(p_org, (p_origin ->> 'event_id')::uuid, p_contact);
     return;
   end if;
 
@@ -295,20 +430,18 @@ begin
 
   raise exception 'green_service_origin_kind' using errcode = '22023';
 end $$;
-revoke all on function green.fn_assert_service_origin(jsonb, uuid, uuid) from public, anon;
-grant execute on function green.fn_assert_service_origin(jsonb, uuid, uuid) to authenticated, service_role;
+revoke all on function green.fn_assert_service_origin(jsonb, uuid, uuid) from public, anon, authenticated;
+grant execute on function green.fn_assert_service_origin(jsonb, uuid, uuid) to service_role;
 
 -- ── hook BEFORE: guarda Green de crm_leads ──────────────────────────────────
 create or replace function green.fn_guard_crm_lead_stage()
 returns trigger
-language plpgsql
+language plpgsql security definer
 set search_path = ''
 as $$
 declare
   v_ctx jsonb;
 begin
-  -- anon nunca passa pela RLS de crm_leads; não há o que guardar
-  if current_user = 'anon' then return new; end if;
   -- só mutação de etapa/funil (ou nascimento) entra na guarda
   if tg_op = 'UPDATE'
      and new.stage_id is not distinct from old.stage_id
@@ -339,13 +472,15 @@ end $$;
 -- ── hook AFTER: evento canônico na MESMA transação ──────────────────────────
 create or replace function green.fn_emit_crm_lead_stage_changed()
 returns trigger
-language plpgsql
+language plpgsql security definer
 set search_path = ''
 as $$
 declare
   v_ctx     jsonb;
   v_meta    jsonb;
   v_payload jsonb;
+  v_ledger  uuid;
+  v_event   uuid;
 begin
   if old.stage_id is not distinct from new.stage_id then return null; end if;
   if not green.fn_is_green_pipeline(new.organization_id, new.pipeline_id) then return null; end if;
@@ -379,40 +514,111 @@ begin
     v_payload := v_payload || jsonb_build_object('service_origin', v_ctx -> 'service_origin');
   end if;
 
+  -- Prova de produtor (v2): a linha do livro-razão só pode ser escrita aqui
+  -- (dono); o GUC de uso único aponta para ELA, na MESMA transação. O porteiro
+  -- de event_log só aceita a marca canônica se os dois baterem e carimba
+  -- `canonical_event_id` — um `emit_event` chamado por fora não tem linha.
+  insert into green.stage_event_ledger (organization_id, lead_id, from_stage_id, to_stage_id, request_id)
+  values (new.organization_id, new.id, old.stage_id, new.stage_id, v_ctx ->> 'request_id')
+  returning id into v_ledger;
+  perform set_config('green.canonical_proof', v_ledger::text, true);
   -- Erro aqui NÃO é capturado: evento falha ⇒ UPDATE inteiro faz rollback.
-  perform public.emit_event('lead.stage_changed', 'crm_lead', new.id, v_payload, v_meta, new.organization_id);
+  v_event := public.emit_event('lead.stage_changed', 'crm_lead', new.id, v_payload, v_meta, new.organization_id);
+  perform set_config('green.canonical_proof', '', true);
+  if not exists (select 1 from green.stage_event_ledger l
+                  where l.id = v_ledger and l.canonical_event_id = v_event) then
+    raise exception 'green_canonical_not_recorded' using errcode = 'P0001';
+  end if;
   return null;
 end $$;
 
--- ── hook em event_log: suprime a emissão legada duplicada (só Green) ────────
+-- ── hook em event_log: porteiro da marca canônica + supressor do gêmeo legado ─
 create or replace function green.fn_suppress_legacy_stage_changed()
 returns trigger
-language plpgsql
+language plpgsql security definer
 set search_path = ''
 as $$
 declare
-  v_pipeline uuid;
+  v_proof uuid;
+  v_hit   uuid;
 begin
-  if new.event_type <> 'lead.stage_changed' or new.entity_kind is distinct from 'crm_lead' then return new; end if;
-  if coalesce(new.metadata ->> 'green_canonical', '') = 'true' then return new; end if;
-  select l.pipeline_id into v_pipeline
-    from public.crm_leads l
-   where l.id = new.entity_id and l.organization_id = new.organization_id;
-  if v_pipeline is null or not green.fn_is_green_pipeline(new.organization_id, v_pipeline) then return new; end if;
-  -- lead Green: o stage change commitado já tem o evento canônico do trigger
-  return null;
+  -- (0) a marca canônica é imutável depois de nascer — nem service_role a
+  --     acrescenta a um evento existente, nem a retira de um canônico.
+  if tg_op = 'UPDATE' then
+    if (old.metadata -> 'green_canonical') is distinct from (new.metadata -> 'green_canonical')
+       or (old.metadata -> 'green_context_version') is distinct from (new.metadata -> 'green_context_version') then
+      raise exception 'green_canonical_immutable' using errcode = '42501';
+    end if;
+    return new;
+  end if;
+
+  -- (a) marca reservada ao produtor: só passa com a prova da MESMA transação,
+  --     de uso único, amarrada a este lead e a esta transição.
+  if new.metadata ?| array['green_canonical', 'green_context_version'] then
+    begin
+      v_proof := nullif(current_setting('green.canonical_proof', true), '')::uuid;
+    exception when others then
+      v_proof := null;
+    end;
+    if v_proof is not null and new.event_type = 'lead.stage_changed' and new.entity_kind = 'crm_lead' then
+      update green.stage_event_ledger l
+         set canonical_event_id = new.id
+       where l.id = v_proof
+         and l.txid = txid_current()
+         and l.canonical_event_id is null
+         and l.organization_id = new.organization_id
+         and l.lead_id = new.entity_id
+         and l.to_stage_id::text = new.payload ->> 'to_stage_id'
+         and l.from_stage_id::text is not distinct from new.payload ->> 'from_stage_id'
+      returning l.id into v_hit;
+    end if;
+    if v_hit is null then
+      raise exception 'green_canonical_reserved' using errcode = '42501',
+        detail = 'a marca canônica só nasce do trigger de crm_leads, na transação da mutação';
+    end if;
+    perform set_config('green.canonical_proof', '', true);
+    return new;
+  end if;
+
+  -- (b) gêmeo legado: suprimido SÓ quando corresponde a uma mutação já
+  --     canonizada — mesmo lead, mesma transição, gêmeo ainda não visto, janela
+  --     curta. Lead não-Green nunca tem linha no livro-razão ⇒ passa intacto.
+  if new.event_type <> 'lead.stage_changed' or new.entity_kind is distinct from 'crm_lead'
+     or new.entity_id is null then
+    return new;
+  end if;
+  update green.stage_event_ledger l
+     set legacy_suppressed_at = clock_timestamp(),
+         legacy_request_id = left(new.metadata ->> 'request_id', 128)
+   where l.id = (
+     select c.id from green.stage_event_ledger c
+      where c.organization_id = new.organization_id
+        and c.lead_id = new.entity_id
+        and c.canonical_event_id is not null
+        and c.legacy_suppressed_at is null
+        and c.to_stage_id::text = new.payload ->> 'to_stage_id'
+        and (not (new.payload ? 'from_stage_id')
+             or c.from_stage_id::text is not distinct from new.payload ->> 'from_stage_id')
+        and c.created_at > clock_timestamp() - interval '5 minutes'
+      -- o MESMO request (quando os dois o têm) primeiro; depois o mais recente
+      order by (c.request_id is not null and c.request_id = new.metadata ->> 'request_id') desc,
+               c.created_at desc
+      limit 1
+      for update skip locked)
+  returning l.id into v_hit;
+  if v_hit is not null then return null; end if;
+  return new;
 end $$;
 
 -- Funções de trigger não passam por EXECUTE na hora de disparar (o Postgres só
--- confere no CREATE TRIGGER); os grants abaixo são declarativos. NUNCA a anon:
--- ela não alcança crm_leads/event_log (RLS) e a varredura de anon do baseline
--- exige que nenhum bloco a devolva.
-revoke all on function green.fn_guard_crm_lead_stage() from public;
-revoke all on function green.fn_emit_crm_lead_stage_changed() from public;
-revoke all on function green.fn_suppress_legacy_stage_changed() from public;
-grant execute on function green.fn_guard_crm_lead_stage() to authenticated, service_role;
-grant execute on function green.fn_emit_crm_lead_stage_changed() to authenticated, service_role;
-grant execute on function green.fn_suppress_legacy_stage_changed() to authenticated, service_role;
+-- confere no CREATE TRIGGER) e não podem ser chamadas fora de trigger. Nenhum
+-- grant a authenticated/anon (v2): ninguém além do dono precisa delas.
+revoke all on function green.fn_guard_crm_lead_stage() from public, anon, authenticated;
+revoke all on function green.fn_emit_crm_lead_stage_changed() from public, anon, authenticated;
+revoke all on function green.fn_suppress_legacy_stage_changed() from public, anon, authenticated;
+grant execute on function green.fn_guard_crm_lead_stage() to service_role;
+grant execute on function green.fn_emit_crm_lead_stage_changed() to service_role;
+grant execute on function green.fn_suppress_legacy_stage_changed() to service_role;
 
 drop trigger if exists trg_green_guard_crm_lead_stage on public.crm_leads;
 create trigger trg_green_guard_crm_lead_stage
@@ -428,5 +634,11 @@ drop trigger if exists trg_green_suppress_legacy_stage_changed on public.event_l
 create trigger trg_green_suppress_legacy_stage_changed
   before insert on public.event_log
   for each row execute function green.fn_suppress_legacy_stage_changed();
+
+drop trigger if exists trg_green_canonical_mark_immutable on public.event_log;
+create trigger trg_green_canonical_mark_immutable
+  before update on public.event_log
+  for each row when (old.metadata is distinct from new.metadata)
+  execute function green.fn_suppress_legacy_stage_changed();
 
 notify pgrst, 'reload schema';
