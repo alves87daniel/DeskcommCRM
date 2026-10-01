@@ -8,6 +8,8 @@
  */
 import { triggerHandoff, type HandoffReason } from "@/lib/ai/handoff/orchestrator";
 import { createAdminClient } from "@/lib/supabase/admin";
+// SPIKE Green: o handoff do runtime legado roda FORA do wrapper das tools.
+import { withGreenMutationContext } from "@/lib/green/mutation-context";
 import { finalizeRun, type FinalizeRunInput } from "./finalize";
 
 export type HandoffSource = "sentinel" | "tool";
@@ -47,14 +49,23 @@ export async function finalizeHandoff(input: FinalizeHandoffInput): Promise<void
   // (test/dry-run flows pass null and just want the run row marked).
   if (input.conversationId && !input.isDryRun) {
     const leadId = await findLeadIdForConversation(input.organizationId, input.conversationId);
-    await triggerHandoff({
-      conversationId: input.conversationId,
-      organizationId: input.organizationId,
-      reason: input.reason,
-      origem: "runtime_nativo",
-      leadId,
-      metadata: { run_id: input.runId, source: input.source },
-    });
+    const conversationId = input.conversationId;
+    await withGreenMutationContext(
+      {
+        source: "agent_runtime",
+        request_id: input.runId,
+        actor: { kind: input.source === "tool" ? "ai_agent" : "system", id: input.runId },
+      },
+      () =>
+        triggerHandoff({
+          conversationId,
+          organizationId: input.organizationId,
+          reason: input.reason,
+          origem: "runtime_nativo",
+          leadId,
+          metadata: { run_id: input.runId, source: input.source },
+        }),
+    );
   }
 
   await finalizeRun({

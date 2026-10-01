@@ -248,6 +248,63 @@ export function currentGreenMutationContext(): GreenMutationContextV1 | undefine
   return als.getStore();
 }
 
+/** O que a boundary de requisição devolve: completar o contexto depois de autenticar. */
+export interface ContextoGreenDaRequisicao {
+  vincular(campos: GreenMutationContextInput): void;
+}
+
+const SEM_CONTEXTO: ContextoGreenDaRequisicao = { vincular() {} };
+
+/**
+ * v2 — contexto aberto pela BOUNDARY DE REQUISIÇÃO (o gate de auth), não por um
+ * wrapper.
+ *
+ * As rotas do Deskcomm não passam por um wrapper compartilhado: cada uma é um
+ * `export async function POST` cru. O ponto comum a TODAS é o gate de auth
+ * (`requireRole`, `resolveAuthDual`), que a rota chama no próprio corpo e
+ * espera com `await`. `enterWith` chamado SÍNCRONO na entrada do gate (antes do
+ * primeiro `await` dele) vale para o RESTO da execução da rota — a continuação
+ * depois do `await` herda o contexto — e não vaza para fora dela: nem para quem
+ * chamou a rota (o framework), nem para outra requisição concorrente. Provado
+ * em `mutation-context.test.ts` e, ponta a ponta, no E2E PostgREST.
+ *
+ * Se já existe contexto (tool MCP, job, regra), não sobrescreve: a boundary de
+ * requisição é a mais externa, nunca a mais forte. Contexto inválido segue a
+ * regra de `withGreenMutationContext`: avisa e não abre nada (fail-open aqui,
+ * fail-closed no banco).
+ *
+ * `vincular` completa o MESMO objeto que a rota enxerga — é como o gate do
+ * token acrescenta o ator, que só existe depois do `await` da validação.
+ */
+export function abrirContextoGreenDaRequisicao(
+  ctx: GreenMutationContextInput,
+): ContextoGreenDaRequisicao {
+  if (als.getStore() !== undefined || typeof als.enterWith !== "function") return SEM_CONTEXTO;
+  let atual: GreenMutationContextV1;
+  try {
+    atual = mesclar(undefined, ctx);
+  } catch (err) {
+    logger.warn("[green.mutation-context] contexto de requisição inválido descartado", {
+      campo: err instanceof GreenMutationContextError ? err.campo : String(err),
+      source: ctx.source ?? null,
+    });
+    return SEM_CONTEXTO;
+  }
+  als.enterWith(atual);
+  return {
+    vincular(campos) {
+      try {
+        Object.assign(atual, mesclar(atual, campos));
+      } catch (err) {
+        logger.warn("[green.mutation-context] vínculo de requisição inválido descartado", {
+          campo: err instanceof GreenMutationContextError ? err.campo : String(err),
+          source: atual.source,
+        });
+      }
+    },
+  };
+}
+
 /* ── transporte ─────────────────────────────────────────────────────────────── */
 
 function base64DeUtf8(texto: string): string {
