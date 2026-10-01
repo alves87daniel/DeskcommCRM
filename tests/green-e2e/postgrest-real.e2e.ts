@@ -336,18 +336,25 @@ describe.skipIf(!TEM_STACK)("E2E PostgREST real — Green Mutation Boundary v2",
     expect(await etapaDe(lead)).toBe(ETAPA.B);
     const eventos = await eventosDe(lead);
     expect(eventos).toHaveLength(1); // a emissão legada da rota virou o gêmeo suprimido
+    // CONTRATO v3 (AUDIT-08.2, ADV-04): o v2 afirmava `source: "http_session"`,
+    // `request_id` e `correlation_id` da rota no TOPO do canônico. São valores que
+    // viajam no header de uma sessão humana — advisory. No topo fica só o derivado.
     expect(eventos[0]!.metadata).toMatchObject({
       green_canonical: true,
       caller: "user",
       actor: { kind: "user", id: USUARIO },
       actor_user_id: USUARIO,
-      source: "http_session",
-      request_id: requestId,
-      correlation_id: requestId,
+      source: "user_session",
+      green: {
+        advisory: { source: "http_session", request_id: requestId, correlation_id: requestId },
+      },
     });
-    // o gêmeo legado casou com ESTA mutação pelo request_id da própria rota
+    expect(eventos[0]!.metadata).not.toHaveProperty("request_id");
+    // o gêmeo legado casou com ESTA mutação; o request_id da rota fica registrado
+    // como diagnóstico (`legacy_request_id`), não como chave confiável (`request_id`)
     const [linha] = await livroDe(lead);
-    expect(linha).toMatchObject({ request_id: requestId, legacy_request_id: requestId });
+    expect(linha).toMatchObject({ request_id: null, legacy_request_id: requestId });
+    expect(linha.legacy_suppressed_at).not.toBeNull();
     // e o header humano saiu por HTTP (advisory, sem ator)
     const update = espiao.vistos.find(
       (v) => v.url.startsWith(`${STACK.url}/rest/v1/crm_leads`) && v.header,
@@ -468,12 +475,15 @@ describe.skipIf(!TEM_STACK)("E2E PostgREST real — Green Mutation Boundary v2",
     });
     expect(r.status).toBe(204);
     const [e] = await eventosDe(lead);
+    // CONTRATO v3 (ADV-04): o v2 afirmava `request_id: "req-forjado"` no TOPO. O
+    // usuário continua podendo escrevê-lo — só que agora ele fica em advisory.
     expect(e!.metadata).toMatchObject({
       caller: "user",
       actor: { kind: "user", id: USUARIO },
-      // advisory: o próprio usuário pode escrever request_id, e isso não autoriza nada
-      request_id: "req-forjado",
+      source: "user_session",
+      green: { advisory: { request_id: "req-forjado" } },
     });
+    expect(e!.metadata).not.toHaveProperty("request_id");
     expect((e!.payload.service_origin as { kind: string }).kind).toBe("command");
 
     // forjar o canônico pela RPC pública

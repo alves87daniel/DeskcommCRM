@@ -103,8 +103,14 @@ async function novoContato(org: string): Promise<string> {
   return id;
 }
 const lead = async (id: string) =>
-  (await pool.query("select pipeline_id, stage_id, updated_at from crm_leads where id=$1", [id]))
-    .rows[0] as { pipeline_id: string; stage_id: string; updated_at: Date } | undefined;
+  (
+    await pool.query(
+      `select pipeline_id, stage_id,
+              to_char(updated_at at time zone 'utc', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') updated_at
+         from crm_leads where id=$1`,
+      [id],
+    )
+  ).rows[0] as { pipeline_id: string; stage_id: string; updated_at: string } | undefined;
 
 interface Envelope {
   v: number;
@@ -128,6 +134,17 @@ async function eventosDe(id: string): Promise<Evento[]> {
 }
 const canonicos = async (id: string) =>
   (await eventosDe(id)).filter((e) => e.metadata.green_canonical === true);
+
+/**
+ * Para os cenários de ISOLAMENTO (N2/N3), que medem a boundary e não o formato
+ * da metadata: onde o canônico guarda o ator e o request da requisição. Na v3,
+ * o envelope; na v2 (sem envelope), o topo da metadata.
+ */
+const atorDe = (e: Evento) => (e.metadata.green?.trusted ?? e.metadata).actor;
+const requestDe = (e: Evento) =>
+  (e.metadata.green?.advisory.request_id ??
+    e.metadata.green?.trusted.request_id ??
+    e.metadata.request_id) as string | undefined;
 
 /* ── HTTP ─────────────────────────────────────────────────────────────────── */
 async function pessoa(org: string, papel: string): Promise<Pessoa> {
@@ -215,6 +232,25 @@ const vereditoRest = async (r: Response) => {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
+/**
+ * O `request_id` que a ROTA gerou para uma requisição, lido do trilho de
+ * auditoria (`api_audit_log`), que a rota grava com a variável local dela — não
+ * passa pelo AsyncLocalStorage. É a testemunha independente de "qual requisição
+ * fez esta mutação". (O `x-request-id` da resposta não serve: o middleware o
+ * sobrescreve com o id dele.) A auditoria pode ser fire-and-forget: espera um pouco.
+ */
+async function requestDaRota(tipo: string, recurso: string): Promise<string[]> {
+  for (let i = 0; i < 40; i++) {
+    const { rows } = await pool.query<{ request_id: string }>(
+      "select request_id::text request_id from api_audit_log where resource_type=$1 and resource_id=$2 and request_id is not null order by created_at",
+      [tipo, recurso],
+    );
+    if (rows.length) return rows.map((r) => r.request_id);
+    await new Promise((r) => setTimeout(r, 250));
+  }
+  return [];
+}
+
 beforeAll(async () => {
   if (!TEM_STACK) return;
   await pool.query(
@@ -269,6 +305,9 @@ beforeAll(async () => {
       ]),
     ],
   );
+  // GoTrue e PostgREST são contêineres diferentes: um JWT emitido "agora" pode
+  // chegar ao PostgREST com `iat` ainda no futuro (PGRST303). Folga de relógio.
+  await new Promise((r) => setTimeout(r, 3000));
   // o servidor Next precisa estar de pé (e não é este processo)
   const vivo = await fetch(`${STACK.next}/api/v1/leads/${randomUUID()}/move`, { method: "POST" }).catch(
     () => null,
@@ -290,7 +329,7 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
       body: {
         stage_id: para,
         position_in_stage: 1000,
-        expected_updated_at: atual!.updated_at.toISOString(),
+        expected_updated_at: atual!.updated_at,
       },
     });
   };
@@ -314,7 +353,7 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
     expect(e!.metadata.green!.advisory.source).toBe("http_session");
     expect(e!.metadata.green!.advisory.request_id).toMatch(UUID);
     expect(e!.metadata.green!.advisory.correlation_id).toBe(e!.metadata.green!.advisory.request_id);
-    expect(res.headers.get("x-request-id")).toBe(e!.metadata.green!.advisory.request_id);
+    expect(await requestDaRota("crm_lead", id)).toEqual([e!.metadata.green!.advisory.request_id]);
     // no topo, nenhum campo de controle vindo do header
     expect(e!.metadata).not.toHaveProperty("request_id");
     expect(e!.metadata.source).toBe("user_session");
@@ -326,17 +365,19 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
     for (const destino of [ETAPA.B, ETAPA.C]) {
       const respostas = await Promise.all(ids.map((id) => moverPeloKanban(id, destino)));
       expect(respostas.map((r) => r.status)).toEqual(ids.map(() => 200));
-      const vistos = new Set<string>();
-      for (const [i, id] of ids.entries()) {
-        const eventos = await canonicos(id);
-        const e = eventos.at(-1)!;
+      const dasRotas: (string | undefined)[] = [];
+      const dosEventos: (string | undefined)[] = [];
+      for (const id of ids) {
+        const e = (await canonicos(id)).at(-1)!;
         expect(e.payload.to_stage_id).toBe(destino);
-        const rid = e.metadata.green!.advisory.request_id as string;
-        expect(rid).toBe(respostas[i]!.headers.get("x-request-id"));
-        expect(e.metadata.green!.trusted.actor).toEqual({ kind: "user", id: ADMIN.id });
-        vistos.add(rid);
+        expect(atorDe(e)).toEqual({ kind: "user", id: ADMIN.id });
+        dosEventos.push(requestDe(e));
+        dasRotas.push((await requestDaRota("crm_lead", id)).at(-1));
       }
-      expect(vistos.size).toBe(ids.length);
+      // lista inteira contra lista inteira: uma permutação aqui é contexto de uma
+      // requisição gravado na mutação de OUTRA
+      expect(dosEventos).toEqual(dasRotas);
+      expect(new Set(dosEventos).size).toBe(ids.length);
     }
   });
 
@@ -379,22 +420,24 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
       ),
     );
     expect(respostas.map((r) => r.status)).toEqual(casos.map(() => 200));
-    const requests = new Set<string>();
-    for (const [i, c] of casos.entries()) {
+    const dasRotas: (string | undefined)[] = [];
+    const dosEventos: (string | undefined)[] = [];
+    const atores: unknown[] = [];
+    for (const c of casos) {
+      dasRotas.push((await requestDaRota("calendar_appointment", c.compromisso)).at(-1));
       expect((await lead(c.id))!.stage_id).toBe(ETAPA.AGENDADO);
       const eventos = await canonicos(c.id);
       expect(eventos).toHaveLength(1);
-      const trusted = eventos[0]!.metadata.green!.trusted;
-      expect(trusted).toMatchObject({
-        caller: "service_role",
-        source: "http_token",
-        actor: { kind: "api_token", id: c.token.id, api_token_id: c.token.id },
-      });
-      expect(trusted.request_id).toBe(respostas[i]!.headers.get("x-request-id"));
-      expect(eventos[0]!.metadata.green!.advisory).toEqual({});
-      requests.add(trusted.request_id as string);
+      expect(eventos[0]!.metadata).toMatchObject({ caller: "service_role", source: "http_token" });
+      atores.push(atorDe(eventos[0]!));
+      dosEventos.push(requestDe(eventos[0]!));
     }
-    expect(requests.size).toBe(casos.length);
+    // o ator de cada mutação é o token da SUA requisição, e o request também
+    expect(atores).toEqual(
+      casos.map((c) => ({ kind: "api_token", id: c.token.id, api_token_id: c.token.id })),
+    );
+    expect(dosEventos).toEqual(dasRotas);
+    expect(new Set(dosEventos).size).toBe(casos.length);
   });
 
   /* ═══ ADV-01 — saída e DELETE ═══════════════════════════════════════════════ */
@@ -443,7 +486,7 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
       actor: { kind: "user", id: ADMIN.id },
       source: "user_session",
     });
-    expect(eventos[0]!.metadata.green!.advisory.request_id).toBe(res.headers.get("x-request-id"));
+    expect(eventos[0]!.metadata.green!.advisory.request_id).toMatch(UUID);
   });
 
   /* ═══ ADV-09 — lote entre funis pela rota real ══════════════════════════════ */
@@ -518,6 +561,7 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
 
     // a sessão ADMIN bate o relógio pelo servidor real, até o drain consumir os dois eventos
     const ticks: string[] = [];
+    const inicio = new Date();
     const prazo = Date.now() + 90_000;
     for (;;) {
       const res = await next("/api/v1/system/relogio/tick", { quem: ADMIN_AUTO });
@@ -529,6 +573,14 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
       if (Date.now() > prazo) throw new Error("o tick não drenou os eventos no prazo");
       await new Promise((r) => setTimeout(r, 1500));
     }
+
+    // o id que a ROTA do tick gerou (o da resposta é do middleware): trilho de auditoria
+    const { rows: auditoria } = await pool.query<{ request_id: string }>(
+      "select request_id from api_audit_log where action='relogio.tick_run' and created_at >= $1 and request_id is not null",
+      [inicio],
+    );
+    expect(auditoria.length).toBeGreaterThan(0);
+    ticks.push(...auditoria.map((a) => a.request_id));
 
     // os DOIS leads foram levados a C pela regra: o request_id forjado não desligou nada
     expect((await lead(controle))!.stage_id).toBe(ETAPA.AUTO_C);
