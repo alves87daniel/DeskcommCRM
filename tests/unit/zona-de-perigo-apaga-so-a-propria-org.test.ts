@@ -25,10 +25,38 @@
  * O que este arquivo NÃO prova: que o filtro funciona no Postgres de verdade.
  * Isso é `tests/e2e/zona-de-perigo-apaga-dados-de-teste.spec.ts`, que apaga a
  * organização A pela TELA e confere no banco que a B ficou inteira.
+ *
+ * CONTRATO lifecycle (SPIKE-GREEN-01): os sete DELETE deixaram de ser sete
+ * requests e passaram a ser o corpo de `fn_apagar_dados_operacionais_da_org`,
+ * numa transação (a parada no meio apagava mensagens e conversas antes de a
+ * fronteira Green recusar `crm_leads`). As três perguntas acima continuam, e
+ * continuam sobre o que RODA: o dublê executa o corpo da função lido da
+ * migration — cada `delete … where <filtro>` vira uma deleção registrada, com
+ * o filtro que está escrito lá. Mudou um caso: "parada no meio" agora não
+ * apaga nada, e a auditoria diz isso.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { RAIZES_DO_APAGAMENTO } from "@/lib/settings/apagar-dados-operacionais";
+
+/** Os DELETE do corpo da função SQL, na ordem em que ela os executa. */
+function deletesDaFuncao(): Array<{ tabela: string; filtro: string }> {
+  const sql = readFileSync(
+    join(process.cwd(), "supabase/migrations/20261001120000_0503_spike_green_lead_lifecycle.sql"),
+    "utf8",
+  );
+  const inicio = sql.indexOf(
+    "create or replace function public.fn_apagar_dados_operacionais_da_org",
+  );
+  const corpo = sql.slice(inicio, sql.indexOf("end $$;", inicio));
+  return [...corpo.matchAll(/delete from public\.([a-z_]+) where ([^;]+);/g)].map((m) => ({
+    tabela: m[1]!,
+    filtro: m[2]!.trim(),
+  }));
+}
 
 const ORG = "22222222-2222-4222-8222-222222222222";
 const OUTRA_ORG = "33333333-3333-4333-8333-333333333333";
@@ -79,6 +107,31 @@ vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => clienteFalso()
  */
 function clienteFalso() {
   return {
+    /**
+     * CONTRATO lifecycle: a RPC transacional. Executa o corpo da função (lido
+     * da migration), um DELETE por vez, com o filtro que está escrito lá — o
+     * valor de `p_org` é o que a action mandou. Falha num DELETE desfaz a
+     * transação: nada é contado como apagado.
+     */
+    async rpc(nome: string, params: { p_org?: unknown }) {
+      if (nome !== "fn_apagar_dados_operacionais_da_org")
+        throw new Error(`rpc inesperada: ${nome}`);
+      const contagens: Record<string, number> = {};
+      for (const { tabela, filtro } of deletesDaFuncao()) {
+        delecoes.push({
+          tabela,
+          filtros:
+            filtro === "organization_id = p_org"
+              ? { organization_id: params.p_org }
+              : { filtro_desconhecido: filtro },
+        });
+        if (tabelaQueFalha === tabela) {
+          return { data: null, error: { code: "23503", message: `falhou em ${tabela}` } };
+        }
+        contagens[tabela] = linhasPorTabela[tabela] ?? 0;
+      }
+      return { data: contagens, error: null };
+    },
     from(tabela: string) {
       const filtros: Record<string, unknown> = {};
       const construtor = {
@@ -303,7 +356,11 @@ describe("zona de perigo: o apagamento deixa rastro", () => {
     expect((auditadas[0]!.metadata as { counts: Record<string, number> }).counts.messages).toBe(12);
   });
 
-  it("parada no meio audita o que JÁ foi apagado — não some com a contagem parcial", async () => {
+  // CONTRATO lifecycle: antes, "parada no meio audita o que JÁ foi apagado" —
+  // 7 mensagens apagadas e `falhou_em: crm_leads`. Com a transação, a parada
+  // desfaz tudo: a auditoria registra a tentativa, zero apagado, e que a falha
+  // foi da transação inteira (a causa vai em `details`).
+  it("parada no meio desfaz a transação inteira — a auditoria registra zero apagado", async () => {
     linhasPorTabela.messages = 7;
     linhasPorTabela.conversations = 2;
     tabelaQueFalha = "crm_leads";
@@ -317,8 +374,8 @@ describe("zona de perigo: o apagamento deixa rastro", () => {
     expect(delecoes.map((d) => d.tabela)).not.toContain("contacts");
     expect(auditadas.length).toBe(1);
     const meta = auditadas[0]!.metadata as { counts: Record<string, number>; falhou_em?: string };
-    expect(meta.counts.messages).toBe(7);
-    expect(meta.falhou_em).toBe("crm_leads");
+    expect(meta.counts.messages).toBe(0);
+    expect(meta.falhou_em).toBe("transacao");
   });
 });
 
