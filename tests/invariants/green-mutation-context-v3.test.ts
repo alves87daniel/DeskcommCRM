@@ -397,10 +397,41 @@ describe("V3-R02 — DELETE de Opportunity Green: contexto exigido e lápide can
       "insert into green.product_pipeline_binding (organization_id, pipeline_id, product_key) values ($1,$2,'energia')",
       [org, funil],
     );
+    // a org Green tem um canônico de verdade: a cascata passa pela fronteira de
+    // crm_leads E pelo guard de imutabilidade de event_log
+    const etapaB = randomUUID();
+    await pool.query(
+      "insert into crm_stages (id, organization_id, pipeline_id, name, slug, position) values ($1,$2,$3,'B','etapa-b',2000)",
+      [etapaB, org, funil],
+    );
+    const dono = await pool.connect();
+    try {
+      await dono.query("begin");
+      await dono.query("select set_config('green.mutation_context', $1, true)", [
+        JSON.stringify({ v: 1, source: "fixture", actor: { kind: "system", id: "fixture" } }),
+      ]);
+      await dono.query("update crm_leads set stage_id=$2 where organization_id=$1", [org, etapaB]);
+      await dono.query("commit");
+    } finally {
+      dono.release();
+    }
+    const canonicosDaOrg = async () =>
+      (
+        await pool.query(
+          "select count(*)::int n from event_log where organization_id=$1 and metadata ? 'green_canonical'",
+          [org],
+        )
+      ).rows[0].n as number;
+    expect(await canonicosDaOrg()).toBe(1);
+
     const apagar = (o: string) =>
       erroDe(request(servicoSemContexto, "delete from organizations where id=$1", [o]));
-    // o veredito da org Green é o MESMO da org comum (o que quer que o upstream decida)
-    expect(veredito(await apagar(org))).toBe(veredito(await apagar(orgComum)));
+    // o veredito da org Green é o MESMO da org comum — e a exclusão do tenant passa
+    const vereditoComum = veredito(await apagar(orgComum));
+    expect(veredito(await apagar(org))).toBe(vereditoComum);
+    expect(vereditoComum).toBe("ACEITO");
+    expect(await canonicosDaOrg()).toBe(0);
+    expect((await pool.query("select 1 from crm_leads where organization_id=$1", [org])).rowCount).toBe(0);
   });
 });
 
