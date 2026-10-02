@@ -279,10 +279,16 @@ describe.skipIf(!TEM_STACK)("E2E PostgREST real — Green Mutation Boundary v2",
       green_canonical: true,
       caller: "service_role",
       source: "http_token",
-      request_id: requestId,
+      // CONTRATO v1.2 (LIFE-ADV-02): o v1 afirmava o id DA ROTA/cliente em `request_id`
+      // confiável; agora o id confiável é gerado no servidor e o da rota é advisory.
+      request_id: expect.stringMatching(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      ),
       actor: { kind: "api_token", id: TOKEN_ID, api_token_id: TOKEN_ID },
       actor_kind: "api_token",
+      green: { advisory: { client_request_id: requestId } },
     });
+    expect(eventos[0]!.metadata.request_id).not.toBe(requestId);
     expect(eventos[0]!.payload).toMatchObject({
       from_stage_id: ETAPA.SOLICITADO,
       to_stage_id: ETAPA.AGENDADO,
@@ -346,7 +352,9 @@ describe.skipIf(!TEM_STACK)("E2E PostgREST real — Green Mutation Boundary v2",
       actor_user_id: USUARIO,
       source: "user_session",
       green: {
-        advisory: { source: "http_session", request_id: requestId, correlation_id: requestId },
+        // CONTRATO v1.2: o id da rota viaja como `client_request_id`; request/correlation do
+        // contexto são ids do servidor (também advisory para a sessão humana)
+        advisory: { source: "http_session", client_request_id: requestId },
       },
     });
     expect(eventos[0]!.metadata).not.toHaveProperty("request_id");

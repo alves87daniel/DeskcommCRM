@@ -21,6 +21,8 @@ import { join, relative } from "node:path";
 import { NextRequest } from "next/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import type * as McpAuth from "@/lib/mcp/auth";
+
 import {
   currentGreenMutationContext,
   runGreenRequestBoundary,
@@ -37,7 +39,7 @@ vi.mock("@/lib/audit", () => ({ audit: vi.fn(async () => {}) }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: vi.fn(async () => ({ session: true })) }));
 vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: vi.fn(() => ({ admin: true })) }));
 vi.mock("@/lib/mcp/auth", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/mcp/auth")>("@/lib/mcp/auth");
+  const actual = await vi.importActual<McpAuth>("@/lib/mcp/auth");
   return { ...actual, validateBearerToken: vi.fn() };
 });
 

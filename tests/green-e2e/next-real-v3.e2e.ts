@@ -96,10 +96,10 @@ async function novoLead(org: string, funil: string, etapa: string, contato: stri
 }
 async function novoContato(org: string): Promise<string> {
   const id = randomUUID();
-  await pool.query("insert into contacts (id, organization_id, display_name) values ($1,$2,'E2E v3')", [
-    id,
-    org,
-  ]);
+  await pool.query(
+    "insert into contacts (id, organization_id, display_name) values ($1,$2,'E2E v3')",
+    [id, org],
+  );
   return id;
 }
 const lead = async (id: string) =>
@@ -141,8 +141,11 @@ const canonicos = async (id: string) =>
  * o envelope; na v2 (sem envelope), o topo da metadata.
  */
 const atorDe = (e: Evento) => (e.metadata.green?.trusted ?? e.metadata).actor;
+// CONTRATO v1.2 (LIFE-ADV-02): o request DA REQUISIÇÃO do cliente/rota viaja como
+// `client_request_id` (advisory); `request_id` agora é o id gerado no servidor.
 const requestDe = (e: Evento) =>
-  (e.metadata.green?.advisory.request_id ??
+  ((e.metadata.green?.advisory as Record<string, string> | undefined)?.client_request_id ??
+    e.metadata.green?.advisory.request_id ??
     e.metadata.green?.trusted.request_id ??
     e.metadata.request_id) as string | undefined;
 
@@ -217,7 +220,9 @@ function rest(
       prefer: "return=minimal",
       ...(init.contexto
         ? {
-            "x-green-mutation-context": Buffer.from(JSON.stringify(init.contexto)).toString("base64"),
+            "x-green-mutation-context": Buffer.from(JSON.stringify(init.contexto)).toString(
+              "base64",
+            ),
           }
         : {}),
     },
@@ -286,7 +291,16 @@ beforeAll(async () => {
     `insert into crm_stages (id, organization_id, pipeline_id, name, slug, position) values
        ($1,$4,$5,'A','etapa-a',1000), ($2,$4,$5,'B','etapa-b',2000), ($3,$4,$5,'C','etapa-c',3000),
        ($6,$7,$8,'A','etapa-a',1000)`,
-    [ETAPA.AUTO_A, ETAPA.AUTO_B, ETAPA.AUTO_C, ORG_AUTO, FUNIL_AUTO, ETAPA.ALHEIA, ORG_ALHEIA, FUNIL_ALHEIO],
+    [
+      ETAPA.AUTO_A,
+      ETAPA.AUTO_B,
+      ETAPA.AUTO_C,
+      ORG_AUTO,
+      FUNIL_AUTO,
+      ETAPA.ALHEIA,
+      ORG_ALHEIA,
+      FUNIL_ALHEIO,
+    ],
   );
   await pool.query(
     "insert into green.product_pipeline_binding (organization_id, pipeline_id, product_key) values ($1,$2,'energia'), ($3,$4,'energia')",
@@ -301,7 +315,10 @@ beforeAll(async () => {
       REGRA,
       ORG_AUTO,
       JSON.stringify([
-        { type: "create_or_move_lead", config: { pipeline_id: FUNIL_AUTO, stage_id: ETAPA.AUTO_C } },
+        {
+          type: "create_or_move_lead",
+          config: { pipeline_id: FUNIL_AUTO, stage_id: ETAPA.AUTO_C },
+        },
       ]),
     ],
   );
@@ -309,14 +326,15 @@ beforeAll(async () => {
   // chegar ao PostgREST com `iat` ainda no futuro (PGRST303). Folga de relógio.
   await new Promise((r) => setTimeout(r, 3000));
   // o servidor Next precisa estar de pé (e não é este processo)
-  const vivo = await fetch(`${STACK.next}/api/v1/leads/${randomUUID()}/move`, { method: "POST" }).catch(
-    () => null,
-  );
+  const vivo = await fetch(`${STACK.next}/api/v1/leads/${randomUUID()}/move`, {
+    method: "POST",
+  }).catch(() => null);
   if (!vivo) throw new Error(`servidor Next fora do ar em ${STACK.next}`);
 });
 
 afterAll(async () => {
-  if (TEM_STACK) await pool.query("update automation_rules set is_active=false where id=$1", [REGRA]);
+  if (TEM_STACK)
+    await pool.query("update automation_rules set is_active=false where id=$1", [REGRA]);
   await pool.end();
 });
 
@@ -353,14 +371,20 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
     expect(e!.metadata.green!.advisory.source).toBe("http_session");
     expect(e!.metadata.green!.advisory.request_id).toMatch(UUID);
     expect(e!.metadata.green!.advisory.correlation_id).toBe(e!.metadata.green!.advisory.request_id);
-    expect(await requestDaRota("crm_lead", id)).toEqual([e!.metadata.green!.advisory.request_id]);
+    // v1.2: o request da rota é o `client_request_id`, distinto do id do servidor
+    const cliente = (e!.metadata.green!.advisory as Record<string, string>).client_request_id;
+    expect(cliente).toMatch(UUID);
+    expect(cliente).not.toBe(e!.metadata.green!.advisory.request_id);
+    expect(await requestDaRota("crm_lead", id)).toEqual([cliente]);
     // no topo, nenhum campo de controle vindo do header
     expect(e!.metadata).not.toHaveProperty("request_id");
     expect(e!.metadata.source).toBe("user_session");
   });
 
   it("N2 — requisições humanas concorrentes no servidor real: cada canônico carrega o request da SUA requisição", async () => {
-    const ids = await Promise.all(Array.from({ length: 12 }, () => novoLead(ORG, FUNIL_GREEN, ETAPA.A)));
+    const ids = await Promise.all(
+      Array.from({ length: 12 }, () => novoLead(ORG, FUNIL_GREEN, ETAPA.A)),
+    );
     // duas rajadas no mesmo processo/keep-alive: a segunda não pode herdar da primeira
     for (const destino of [ETAPA.B, ETAPA.C]) {
       const respostas = await Promise.all(ids.map((id) => moverPeloKanban(id, destino)));
@@ -480,7 +504,10 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
     const eventos = await canonicos(id);
     expect(eventos).toHaveLength(1);
     expect(eventos[0]!.event_type).toBe("lead.deleted");
-    expect(eventos[0]!.payload).toMatchObject({ from_stage_id: ETAPA.B, green_transition: "delete" });
+    expect(eventos[0]!.payload).toMatchObject({
+      from_stage_id: ETAPA.B,
+      green_transition: "delete",
+    });
     expect(eventos[0]!.metadata.green!.trusted).toEqual({
       caller: "user",
       actor: { kind: "user", id: ADMIN.id },
@@ -528,7 +555,11 @@ describe.skipIf(!TEM_STACK)("E2E servidor Next real — Green Mutation Boundary 
       rest(`event_log?id=eq.${e!.id}`, { method, jwt: STACK.service, apikey: STACK.service, body });
     const reescrita = await vereditoRest(
       await comoServico("PATCH", {
-        metadata: { ...e!.metadata, actor: { kind: "system", id: "forjado" }, caller: "service_role" },
+        metadata: {
+          ...e!.metadata,
+          actor: { kind: "system", id: "forjado" },
+          caller: "service_role",
+        },
         payload: { ...e!.payload, to_stage_id: ETAPA.C },
       }),
     );
