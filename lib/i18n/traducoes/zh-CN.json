@@ -2137,6 +2137,7 @@
   "— ver o que mudou": "— 查看更改内容",
   "O envio não trazia nome, telefone nem e-mail reconhecíveis — confira os nomes dos campos do formulário.": "提交中没有可识别的姓名、电话或电子邮件——请检查表单字段名称。",
   "A assinatura não conferiu. Quem enviou não usou o segredo configurado nesta fonte.": "签名不匹配。发送方未使用此来源中配置的密钥。",
+  "O segredo de assinatura desta fonte não pôde ser lido nesta instalação, então nada entra por ela. Cadastre a assinatura de novo na fonte.": "此安装无法读取该来源的签名密钥，因此任何内容都无法通过它进入。请在该来源中重新设置签名。",
   "Os dados chegaram, mas o lead não pôde ser criado — confira se o funil e a etapa da fonte ainda existem.": "数据已到达，但无法创建销售线索——请检查该来源的销售漏斗和阶段是否仍然存在。",
   "Virou lead": "已转为销售线索",
   "Reenvio": "重新发送",
