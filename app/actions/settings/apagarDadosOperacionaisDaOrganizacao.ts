@@ -8,7 +8,11 @@ import { z } from "zod";
 import { audit } from "@/lib/audit";
 import { loadAuthUser, mfaEmDivida, resolveActiveOrg } from "@/lib/auth/server";
 import { ROLE_RANK } from "@/lib/auth/types";
-import { greenActorFromActor, withGreenSystemRoot } from "@/lib/green/mutation-context";
+import {
+  greenActorFromActor,
+  identificadoresDaRequisicao,
+  withGreenSystemRoot,
+} from "@/lib/green/mutation-context";
 import {
   apagarDadosOperacionaisDaOrg,
   type ContagensApagadas,
@@ -100,7 +104,7 @@ export async function apagarDadosOperacionaisDaOrganizacao(input: {
   const resultado = await withGreenSystemRoot(
     {
       source: "settings.danger_zone",
-      ...(requestId && /^[A-Za-z0-9_.:-]{1,128}$/.test(requestId) ? { request_id: requestId } : {}),
+      ...identificadoresDaRequisicao(requestId),
       actor: greenActorFromActor({ type: "user", id: authUser.id }),
     },
     () => apagarDadosOperacionaisDaOrg(supabase, activeOrg.orgId),

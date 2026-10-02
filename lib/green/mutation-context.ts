@@ -29,6 +29,7 @@
  * nome, telefone, e-mail ou texto de mensagem não têm por onde entrar.
  */
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomUUID } from "node:crypto";
 
 import { logger } from "@/lib/logger";
 
@@ -61,6 +62,8 @@ export interface GreenMutationContextV1 {
   causation_event_id?: string;
   source_job_id?: string;
   idempotency_key?: string;
+  /** O que o CLIENTE mandou como x-request-id: advisory, nunca controle (v1.2). */
+  client_request_id?: string;
   actor?: GreenActor;
   service_origin?: GreenServiceOrigin;
 }
@@ -152,6 +155,7 @@ const CHAVES = new Set([
   "causation_event_id",
   "source_job_id",
   "idempotency_key",
+  "client_request_id",
   "actor",
   "service_origin",
 ]);
@@ -202,6 +206,7 @@ export function validateGreenMutationContext(ctx: unknown): asserts ctx is Green
   idOpcional(c.correlation_id, "correlation_id");
   idOpcional(c.source_job_id, "source_job_id");
   idOpcional(c.idempotency_key, "idempotency_key");
+  idOpcional(c.client_request_id, "client_request_id");
   if (c.causation_event_id !== undefined) uuid(c.causation_event_id, "causation_event_id");
 
   if (c.actor !== undefined) {
@@ -259,6 +264,29 @@ export function validateGreenMutationContext(ctx: unknown): asserts ctx is Green
 
 function utf8Bytes(texto: string): number {
   return new TextEncoder().encode(texto).length;
+}
+
+/**
+ * v1.2 (LIFE-ADV-02) — a confiança vem da ORIGEM, não do formato. O
+ * `request_id` confiável é gerado AQUI, no servidor; o `x-request-id` que o
+ * cliente mandou nunca ocupa `request_id`/`correlation_id` (que o banco grava
+ * em `trusted` e o anti-loop lê), só `client_request_id` (advisory).
+ */
+export function novoRequestIdDoServidor(): string {
+  return randomUUID();
+}
+
+/** Valor do cliente saneado para advisory: charset e teto do contrato, nunca derruba o contexto. */
+export function requestIdDoCliente(valor: unknown): string | undefined {
+  if (typeof valor !== "string" || valor === "") return undefined;
+  return valor.slice(0, 128).replace(/[^A-Za-z0-9_.:-]/g, "_");
+}
+
+/** Os três campos de identificação de uma requisição de entrada, na separação certa. */
+export function identificadoresDaRequisicao(headerDoCliente: unknown): GreenMutationContextInput {
+  const id = novoRequestIdDoServidor();
+  const cliente = requestIdDoCliente(headerDoCliente);
+  return { request_id: id, correlation_id: id, ...(cliente ? { client_request_id: cliente } : {}) };
 }
 
 /**

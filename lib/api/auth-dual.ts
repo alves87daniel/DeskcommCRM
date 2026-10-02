@@ -43,7 +43,11 @@ import {
 import { JANELA_SEGUNDOS, TETO_DE_ESCRITA, TETO_POR_ORGANIZACAO } from "@/lib/mcp/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { abrirContextoGreenDaRequisicao, greenActorFromActor } from "@/lib/green/mutation-context";
+import {
+  abrirContextoGreenDaRequisicao,
+  greenActorFromActor,
+  identificadoresDaRequisicao,
+} from "@/lib/green/mutation-context";
 
 export type AuthDual =
   | {
@@ -101,8 +105,7 @@ export async function resolveAuthDual(
     // do primeiro await) e ganha o ator técnico do token quando ele é validado.
     const green = abrirContextoGreenDaRequisicao({
       source: "http_token",
-      request_id: requestId,
-      correlation_id: requestId,
+      ...identificadoresDaRequisicao(requestId),
     });
     let auth;
     try {

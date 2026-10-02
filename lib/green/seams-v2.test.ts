@@ -209,6 +209,8 @@ describe("boundary de requisição — `run` explícito na rota, gate só preenc
   });
 });
 
+const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 describe("requireRole: a requisição humana ganha metadata operacional (sem ator)", async () => {
   const { requireRole } = await import("@/lib/auth/require-role");
   it("depois do await, a rota roda com source/request/correlation da própria requisição", async () => {
@@ -222,8 +224,10 @@ describe("requireRole: a requisição humana ganha metadata operacional (sem ato
     expect(await requisicao(rotaHumana)).toEqual({
       v: 1,
       source: "http_session",
-      request_id: requestId,
-      correlation_id: requestId,
+      // CONTRATO v1.2 (LIFE-ADV-02): o id confiável é do servidor; o da rota/cliente é advisory
+      request_id: expect.stringMatching(UUID_V4),
+      correlation_id: expect.stringMatching(UUID_V4),
+      client_request_id: requestId,
     });
     // o header que sai (sessão humana): o banco usa só como advisory
     const { initComContextoGreen } = await import("./mutation-context");
@@ -262,8 +266,10 @@ describe("resolveAuthDual: Bearer ganha o ator técnico do token; sessão ganha 
     expect(await requisicao(rotaPorToken)).toEqual({
       v: 1,
       source: "http_token",
-      request_id: requestId,
-      correlation_id: requestId,
+      // CONTRATO v1.2 (LIFE-ADV-02): id confiável gerado no servidor; o da rota fica em advisory
+      request_id: expect.stringMatching(UUID_V4),
+      correlation_id: expect.stringMatching(UUID_V4),
+      client_request_id: requestId,
       actor: { kind: "api_token", id: TOKEN, api_token_id: TOKEN },
     });
   });
@@ -290,8 +296,10 @@ describe("resolveAuthDual: Bearer ganha o ator técnico do token; sessão ganha 
     expect(porSessao).toEqual({
       v: 1,
       source: "http_session",
-      request_id: requestId,
-      correlation_id: requestId,
+      // CONTRATO v1.2 (LIFE-ADV-02)
+      request_id: expect.stringMatching(UUID_V4),
+      correlation_id: expect.stringMatching(UUID_V4),
+      client_request_id: requestId,
     });
   });
 });

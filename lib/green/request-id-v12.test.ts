@@ -160,8 +160,7 @@ describe("LIFE-ADV-02 — nenhum seam de produção põe valor do cliente em req
     return out;
   }
 
-  const ORIGEM_PERMITIDA =
-    /^(`rule:\$\{[^}]+\}`|novoRequestIdDoServidor\(\)|requestIdDoServidor)$/;
+  const ORIGEM_PERMITIDA = /^(`rule:\$\{[^}]+\}`|novoRequestIdDoServidor\(\)|requestIdDoServidor)$/;
 
   /**
    * Valores que a revisão desta spike confirmou como gerados no servidor (nunca
@@ -174,7 +173,8 @@ describe("LIFE-ADV-02 — nenhum seam de produção põe valor do cliente em req
     "lib/leads/nascimento-do-lead.ts|conversationId": "id da conversa, dado do banco",
     "lib/event-log/dispatcher.ts|correlacao ?? row.id": "correlação já confiável herdada do evento",
     "lib/prospecting/store.ts|`prospecting:${id}`": "id da campanha, dado do banco",
-    "app/api/v1/webhooks/in/[token]/route.ts|requestId": "`randomUUID()` na primeira linha do handler",
+    "app/api/v1/webhooks/in/[token]/route.ts|requestId":
+      "`randomUUID()` na primeira linha do handler",
     "lib/mcp/server.ts|requestId": "`randomUUID()` em app/api/mcp/route.ts; único chamador",
   };
 

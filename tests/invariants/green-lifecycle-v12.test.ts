@@ -325,9 +325,7 @@ describe("R2 — LIFE-ADV-02: `x-request-id` do cliente nunca vira `trusted.requ
 
   it("chamadas simultâneas com headers forjados diferentes: cada lápide tem o próprio id de servidor e nenhuma é lida como regra", async () => {
     const tenants = await Promise.all([tenant(), tenant(), tenant(), tenant()]);
-    const leads = await Promise.all(
-      tenants.map((t) => leadComoDono(t, t.funilGreen, t.etapaG1)),
-    );
+    const leads = await Promise.all(tenants.map((t) => leadComoDono(t, t.funilGreen, t.etapaG1)));
     const forjados = tenants.map((_, i) => `rule:forjado-${i}`);
     await Promise.all(tenants.map((t, i) => apagarComo(t, forjados[i]!)));
     const ids = new Set<string>();
@@ -336,9 +334,10 @@ describe("R2 — LIFE-ADV-02: `x-request-id` do cliente nunca vira `trusted.requ
       const green = lapide!.metadata.green as { trusted: Record<string, unknown> };
       expect(green.trusted.request_id).toMatch(UUID);
       expect(causadoPorRegra(lapide!.metadata)).toBe(false);
-      expect((lapide!.metadata.green as { advisory: Record<string, unknown> }).advisory.client_request_id).toBe(
-        forjados[i],
-      );
+      expect(
+        (lapide!.metadata.green as { advisory: Record<string, unknown> }).advisory
+          .client_request_id,
+      ).toBe(forjados[i]);
       ids.add(String(green.trusted.request_id));
     }
     expect(ids.size).toBe(tenants.length);
@@ -367,7 +366,12 @@ describe("R2 — LIFE-ADV-02: `x-request-id` do cliente nunca vira `trusted.requ
       {
         papel: "authenticated",
         sub: t.admin,
-        contexto: { v: 1, source: "kanban", request_id: "rule:forjado", actor: { kind: "system", id: "x" } },
+        contexto: {
+          v: 1,
+          source: "kanban",
+          request_id: "rule:forjado",
+          actor: { kind: "system", id: "x" },
+        },
       },
       "delete from crm_leads where id=$1",
       [lead],
@@ -537,14 +541,29 @@ describe("R3 — LIFE-ADV-03: UUID de uma Opportunity Green não pode representa
     await leadComoDono(b, b.funilComum, b.etapaC1, x);
     const e = await erroDe(moverParaGreen(b, x));
     expect(e?.message, veredito(e)).toBe(REUSO);
+    await pool.query("delete from crm_leads where id=$1", [x]); // libera a PK; a identidade segue aposentada
     const e2 = await erroDe(nascerGreen(b, x));
     expect(e2?.message, veredito(e2)).toBe(REUSO);
+  });
+
+  it("trocar o id de um lead com identidade Green é recusado (trocar libertaria o UUID antigo)", async () => {
+    const t = await tenant();
+    const y = randomUUID();
+    await nascerGreen(t, y);
+    const e = await erroDe(
+      request(servico(), "update crm_leads set id=$2 where id=$1", [y, randomUUID()]),
+    );
+    expect(e?.message, veredito(e)).toBe("green_lead_id_immutable");
+    expect(await contar("select count(*) as n from crm_leads where id=$1", [y])).toBe(1);
   });
 
   it("o registro de identidade não guarda PII nem ator/origem: só o necessário para detectar reuso", async () => {
     const t = await tenant();
     const x = await historico(t);
-    const { rows } = await pool.query("select to_jsonb(i) as linha from green.lead_identity i where lead_id=$1", [x]);
+    const { rows } = await pool.query(
+      "select to_jsonb(i) as linha from green.lead_identity i where lead_id=$1",
+      [x],
+    );
     expect(rows).toHaveLength(1);
     const colunas = Object.keys(rows[0].linha).sort();
     expect(colunas).toEqual(["first_seen_at", "lead_id", "retired_at", "state"]);
@@ -567,7 +586,11 @@ describe("R3 — LIFE-ADV-03: UUID de uma Opportunity Green não pode representa
       }
     }
     const e = await erroDe(
-      request({ papel: "service_role" }, "update green.lead_identity set state='live' where lead_id=$1", [x]),
+      request(
+        { papel: "service_role" },
+        "update green.lead_identity set state='live' where lead_id=$1",
+        [x],
+      ),
     );
     expect(e?.code).toBe("42501"); // nem service_role reabilita um UUID aposentado
   });
@@ -690,7 +713,9 @@ describe("R4 — LIFE-ADV-04: zona de perigo apaga A e deixa B intacta (as sete 
     const antesA = await retrato(a.org);
     const antesB = await retrato(b.org);
     const e = await erroDe(
-      request({ papel: "service_role" }, "select public.fn_apagar_dados_operacionais_da_org($1)", [a.org]),
+      request({ papel: "service_role" }, "select public.fn_apagar_dados_operacionais_da_org($1)", [
+        a.org,
+      ]),
     );
     expect(veredito(e)).toBe("42501 green_mutation_context_required");
     expect(await retrato(a.org)).toEqual(antesA);

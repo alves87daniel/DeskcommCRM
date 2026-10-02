@@ -24,7 +24,10 @@ import { loadAuthUser, mfaEmDivida, resolveActiveOrg } from "@/lib/auth/server";
 import { ROLE_RANK, type ActiveOrg, type AuthUser, type Role } from "@/lib/auth/types";
 import { traduzir } from "@/lib/i18n/dicionario";
 import { createClient } from "@/lib/supabase/server";
-import { abrirContextoGreenDaRequisicao } from "@/lib/green/mutation-context";
+import {
+  abrirContextoGreenDaRequisicao,
+  identificadoresDaRequisicao,
+} from "@/lib/green/mutation-context";
 
 export type RoleCheck =
   | { ok: true; user: AuthUser; org: ActiveOrg }
@@ -56,7 +59,7 @@ export async function requireRole(min: Role, opts: RequireRoleOpts = {}): Promis
   // o ator é `auth.uid()`, derivado no banco. Síncrono, antes do primeiro await.
   abrirContextoGreenDaRequisicao({
     source: "http_session",
-    ...(requestId ? { request_id: requestId, correlation_id: requestId } : {}),
+    ...identificadoresDaRequisicao(requestId),
   });
 
   const user = await loadAuthUser();
