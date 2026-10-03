@@ -56,7 +56,8 @@ export const crmListConversations: McpToolDefinition<typeof listInputShape> = {
   name: "crm_list_conversations",
   description:
     "Lista conversas do CRM com filtros opcionais por contato e status. Retorna preview da ultima mensagem. " +
-    "Campos de governança por conversa: assignee_kind ('user'|'ai'|null), assigned_to_user_id + assigned_to_user_name (só o nome do atendente, sem email/telefone), tags[], e queue_position (posição 1-based na fila do inbox — só quando na fila, senão null).",
+    "Campos de governança por conversa: assignee_kind ('user'|'ai'|null), assigned_to_user_id + assigned_to_user_name (só o nome do atendente, sem email/telefone), tags[], e queue_position (posição 1-based na fila do inbox — só quando na fila, senão null). " +
+    "Em conversa de atendimento, devolve apenas as conversas do contato desta conversa.",
   inputSchema: listInputShape,
   category: "read",
   requiresRole: "agent",
@@ -92,6 +93,28 @@ export const crmListConversations: McpToolDefinition<typeof listInputShape> = {
     if (input.contact_id) {
       conversations = conversations.filter((c) => c.contact_id === input.contact_id);
     }
+    // ── A CONVERSA É COM ALGUÉM (#2178) ─────────────────────────────────────
+    //
+    // Mesmo escopo do #2175 em `crm_search_contacts`: a listagem filtra
+    // `organization_id`, então não há vazamento entre ORGANIZAÇÕES, mas
+    // alcançava os outros clientes da MESMA organização — com
+    // `last_message_preview` junto, que é texto do lado de lá indo para o
+    // WhatsApp do cliente A, encaminhável, sem volta.
+    //
+    // ESCOPO, não tradução: o pedido continua sendo o que o modelo escreveu e
+    // o filtro continua sendo o do handler; muda só QUEM a resposta alcança.
+    // `ctx.contatoDoTurno` é contexto de CONFIANÇA (injetado por
+    // `lib/ai/runtime/tools.ts`, nunca escrito pelo modelo); sem ele — rota
+    // HTTP, MCP externo, agente sem conversa — a lista segue a da
+    // organização, exatamente como antes. O Operador TEM contato do turno
+    // (`operator-turn.ts` passa `contactId`) e também fica escopado.
+    //
+    // A paginação morre junto: `cursor`/`has_more` descrevem a página da
+    // varredura da organização, e a próxima página voltaria a ser varredura.
+    const doTurno = ctx.contatoDoTurno;
+    if (doTurno) {
+      conversations = conversations.filter((c) => c.contact_id === doTurno);
+    }
     // Nomes (dedupe) e posições de fila (1 query cada) — sem N+1 na listagem.
     const names = await resolveUserNames(
       ctx.supabase,
@@ -118,8 +141,8 @@ export const crmListConversations: McpToolDefinition<typeof listInputShape> = {
         unread_count: c.unread_count_for_assignee,
         is_group: c.is_group,
       })),
-      cursor: result.cursor,
-      has_more: result.has_more,
+      cursor: doTurno ? null : result.cursor,
+      has_more: doTurno ? false : result.has_more,
     };
   },
 };
@@ -132,7 +155,8 @@ export const crmGetConversation: McpToolDefinition<typeof getInputShape> = {
   name: "crm_get_conversation",
   description:
     "Retorna detalhes de uma conversa pelo UUID. Inclui status, atribuicao, contato, ultima atividade. " +
-    "Governança: assignee_kind ('user'|'ai'|null), assigned_to_user_id + assigned_to_user_name (só o nome, sem email/telefone), tags[], e queue_position (1-based na fila do inbox — null quando não está na fila).",
+    "Governança: assignee_kind ('user'|'ai'|null), assigned_to_user_id + assigned_to_user_name (só o nome, sem email/telefone), tags[], e queue_position (1-based na fila do inbox — null quando não está na fila). " +
+    "Em conversa de atendimento, devolve apenas conversas do contato desta conversa.",
   inputSchema: getInputShape,
   category: "read",
   requiresRole: "agent",
@@ -147,6 +171,32 @@ export const crmGetConversation: McpToolDefinition<typeof getInputShape> = {
       },
       input.conversation_id,
     );
+    // ── A CONVERSA DE QUEM NÃO É DESTA CONVERSA NÃO ABRE AQUI (#2178) ────────
+    //
+    // RECUSA, e não tradução: trocar o uuid pedido pelo da conversa do turno
+    // faria o modelo perguntar por uma conversa e receber outra — a mesma
+    // razão que `crm_get_contact` recusa em vez de trocar (#2158).
+    //
+    // A ida ao handler ACONTECE porque é ela que diz de quem é a conversa
+    // (`conversation_id` não carrega `contact_id`); o que não sai daqui é a
+    // RESPOSTA — o registro de B é descartado e o modelo vê a recusa, no
+    // mesmo formato que `negocioDaEscritaDoTurno` devolve, auditada como
+    // recusa pelo runtime (`contato_da_conversa:fora_da_conversa`).
+    //
+    // `ctx.contatoDoTurno` é contexto de CONFIANÇA (injetado por
+    // `lib/ai/runtime/tools.ts`, nunca escrito pelo modelo); sem ele — rota
+    // HTTP, MCP externo, agente sem conversa — qualquer conversa da
+    // organização segue abrindo como antes. O Operador recebe o contato do
+    // turno e também fica escopado.
+    if (ctx.contatoDoTurno && conv.contact_id !== ctx.contatoDoTurno) {
+      return {
+        permitido: false,
+        motivo: "fora_da_conversa",
+        mensagem:
+          "esta conversa é com outra pessoa — abrir a conversa de um cliente que não é o desta " +
+          "conversa não é sua para ler; siga a conversa com quem está falando.",
+      };
+    }
     const names = await resolveUserNames(ctx.supabase, [conv.assigned_to_user_id]);
     const queue_position = isInQueue(conv)
       ? ((await getQueuePositions(ctx.supabase, ctx.organizationId)).get(conv.id) ?? null)
@@ -185,12 +235,44 @@ const historyInputShape = {
 export const crmGetConversationHistory: McpToolDefinition<typeof historyInputShape> = {
   name: "crm_get_conversation_history",
   description:
-    "Carrega historico de mensagens de uma conversa. Use para dar contexto ao agente sem inflar o system prompt.",
+    "Carrega historico de mensagens de uma conversa. Use para dar contexto ao agente sem inflar o system prompt." +
+    " Em conversa de atendimento, devolve apenas o histórico da conversa do contato desta conversa.",
   inputSchema: historyInputShape,
   category: "read",
   requiresRole: "agent",
   requiresScope: "mcp:read",
   handler: async (input, ctx) => {
+    // ── O HISTÓRICO DE QUEM NÃO É DESTA CONVERSA NÃO SAI DAQUI (#2178) ──────
+    //
+    // A mesma recusa de `crm_get_conversation`, e ANTES de ler as mensagens:
+    // o histórico é a leitura que mais sai do prédio (texto de ponta a
+    // ponta), e carregar a página de B só para jogá-la fora seria deixar o
+    // dado do outro cliente entrar na memória do turno sem necessidade.
+    //
+    // A conferência é a do `getConversationHandler` — a MESMA que a tela usa
+    // —, porque `listMessagesHandler` recebe o uuid da conversa e não devolve
+    // `contact_id`. Aqui ela custa uma ida extra ao banco, e só quando há
+    // contato do turno: sem ele, o caminho é idêntico ao de antes.
+    if (ctx.contatoDoTurno) {
+      const conv = await getConversationHandler(
+        ctx.supabase,
+        {
+          organization_id: ctx.organizationId,
+          actor: ctx.actor,
+          requestId: ctx.requestId,
+        },
+        input.conversation_id,
+      );
+      if (conv.contact_id !== ctx.contatoDoTurno) {
+        return {
+          permitido: false,
+          motivo: "fora_da_conversa",
+          mensagem:
+            "esta conversa é com outra pessoa — o histórico de um cliente que não é o desta " +
+            "conversa não é seu para ler; siga a conversa com quem está falando.",
+        };
+      }
+    }
     const result = await listMessagesHandler(
       ctx.supabase,
       {
