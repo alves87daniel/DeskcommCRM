@@ -275,20 +275,23 @@ async function leadsGreenSemIdentidade(org: string): Promise<string[]> {
 
 /* ═══ B — o binding registra a identidade dos leads que já estão no funil ═══ */
 describe("B — binding: o pipeline que vira Green registra a identidade dos leads existentes", () => {
-  it.each([[0], [1], [150]])("funil com %i lead(s): todos ganham identidade `live` e nenhum buraco", async (n) => {
-    const t = await tenant();
-    const f = await funilComLeads(t, n);
-    for (const id of f.leads) expect(await estadoDe(id)).toBe("SEM-LINHA"); // RED: ninguém tem identidade
-    await ligar(t, f.id);
-    expect(await leadsGreenSemIdentidade(t.org)).toEqual([]);
-    for (const id of f.leads) expect(await estadoDe(id)).toBe("live");
-    expect(
-      await contar(
-        "select count(*) as n from green.lead_identity where lead_id = any($1::uuid[])",
-        [f.leads],
-      ),
-    ).toBe(n); // sem duplicidade
-  });
+  it.each([[0], [1], [150]])(
+    "funil com %i lead(s): todos ganham identidade `live` e nenhum buraco",
+    async (n) => {
+      const t = await tenant();
+      const f = await funilComLeads(t, n);
+      for (const id of f.leads) expect(await estadoDe(id)).toBe("SEM-LINHA"); // RED: ninguém tem identidade
+      await ligar(t, f.id);
+      expect(await leadsGreenSemIdentidade(t.org)).toEqual([]);
+      for (const id of f.leads) expect(await estadoDe(id)).toBe("live");
+      expect(
+        await contar(
+          "select count(*) as n from green.lead_identity where lead_id = any($1::uuid[])",
+          [f.leads],
+        ),
+      ).toBe(n); // sem duplicidade
+    },
+  );
 
   it("leads que JÁ tinham identidade (saíram do Green antes) não duplicam nem regridem", async () => {
     const t = await tenant();
@@ -365,7 +368,10 @@ describe("B — binding: o pipeline que vira Green registra a identidade dos lea
     const e = await erroDe(ligar(t, f.id));
     expect(e?.message, veredito(e)).toBe(REUSO);
     expect(
-      await contar("select count(*) as n from green.product_pipeline_binding where pipeline_id=$1", [f.id]),
+      await contar(
+        "select count(*) as n from green.product_pipeline_binding where pipeline_id=$1",
+        [f.id],
+      ),
     ).toBe(0);
     for (const id of f.leads) expect(await estadoDe(id)).toBe("SEM-LINHA"); // nada foi registrado
   });
@@ -378,7 +384,12 @@ describe("B — binding: o pipeline que vira Green registra a identidade dos lea
       "select to_jsonb(i) as linha from green.lead_identity i where lead_id=$1",
       [f.leads[0]],
     );
-    expect(Object.keys(rows[0].linha).sort()).toEqual(["first_seen_at", "lead_id", "retired_at", "state"]);
+    expect(Object.keys(rows[0].linha).sort()).toEqual([
+      "first_seen_at",
+      "lead_id",
+      "retired_at",
+      "state",
+    ]);
     expect(JSON.stringify(rows[0].linha)).not.toContain(t.org);
   });
 });
@@ -488,7 +499,9 @@ describe("D — DELETE de lead que toca o domínio nunca deixa o UUID recicláve
     await nascerGreen(t, x);
     await apagar(x);
     expect(await estadoDe(x)).toBe("retired");
-    expect(await contar("select count(*) as n from green.lead_identity where lead_id=$1", [x])).toBe(1);
+    expect(
+      await contar("select count(*) as n from green.lead_identity where lead_id=$1", [x]),
+    ).toBe(1);
   });
 });
 
@@ -583,7 +596,11 @@ describe("C — concorrência: nenhum cenário deixa lead Green sem identidade",
     const f = await funilComLeads(t, 0);
     const lead = await novoLeadComoDono(t, t.funilComum, t.etapaC1);
     const c1 = await transacaoDoDono();
-    await c1.query("update crm_leads set pipeline_id=$2, stage_id=$3 where id=$1", [lead, f.id, f.etapa]);
+    await c1.query("update crm_leads set pipeline_id=$2, stage_id=$3 where id=$1", [
+      lead,
+      f.id,
+      f.etapa,
+    ]);
     const binding = ligar(t, f.id);
     await esperar(500);
     await c1.query("commit");
@@ -606,7 +623,11 @@ describe("C — concorrência: nenhum cenário deixa lead Green sem identidade",
     const mover = (async () => {
       const c = await transacaoDoDono();
       try {
-        await c.query("update crm_leads set pipeline_id=$2, stage_id=$3 where id=$1", [lead, f.id, f.etapa]);
+        await c.query("update crm_leads set pipeline_id=$2, stage_id=$3 where id=$1", [
+          lead,
+          f.id,
+          f.etapa,
+        ]);
         await c.query("commit");
       } finally {
         c.release();
@@ -655,13 +676,20 @@ describe("C — concorrência: nenhum cenário deixa lead Green sem identidade",
         ligar(t, f.id),
         ...ids.map((id) => novoLeadComoDono(t, f.id, f.etapa, id)),
         ...comuns.map((id) =>
-          comoDono("update crm_leads set pipeline_id=$2, stage_id=$3 where id=$1", [id, f.id, f.etapa]),
+          comoDono("update crm_leads set pipeline_id=$2, stage_id=$3 where id=$1", [
+            id,
+            f.id,
+            f.etapa,
+          ]),
         ),
         ...apagaveis.map((id) => comoDono("delete from crm_leads where id=$1", [id])),
       ];
       const res = await Promise.allSettled(tarefas);
       const falhas = res.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
-      expect(falhas.map((r) => String(r.reason?.message)), `rodada ${rodada}`).toEqual([]);
+      expect(
+        falhas.map((r) => String(r.reason?.message)),
+        `rodada ${rodada}`,
+      ).toEqual([]);
       expect(await leadsGreenSemIdentidade(t.org), `rodada ${rodada}`).toEqual([]);
       // quem foi apagado DEPOIS de o binding ficar visível deixou lápide Green: então está aposentado
       const { rows } = await pool.query<{ lead_id: string }>(
@@ -766,7 +794,14 @@ describe("Z — zona de perigo: a vizinha fica idêntica em TODA tabela com orga
     const t = await tenant();
     await semear(t);
     const f = await foto(t.org);
-    expect(Object.keys(f)).toEqual(expect.arrayContaining(["user_organizations", "crm_pipelines", "channel_sessions", "green.*"]));
+    expect(Object.keys(f)).toEqual(
+      expect.arrayContaining([
+        "user_organizations",
+        "crm_pipelines",
+        "channel_sessions",
+        "green.*",
+      ]),
+    );
     expect(Object.keys(f).length).toBeGreaterThan(50);
   });
 
@@ -784,13 +819,18 @@ describe("Z — zona de perigo: a vizinha fica idêntica em TODA tabela com orga
     expect(await foto(b.org)).toEqual(antesB);
     expect(await foto(c.org)).toEqual(antesC);
     // o que não é raiz da zona de perigo continua em A
-    expect(await contar("select count(*) as n from user_organizations where organization_id=$1", [a.org])).toBe(1);
+    expect(
+      await contar("select count(*) as n from user_organizations where organization_id=$1", [
+        a.org,
+      ]),
+    ).toBe(1);
   });
 });
 
 /* ═══ U — upgrade 0504 → 0505 com histórico ═════════════════════════════════ */
 describe("U — upgrade 0504 → 0505: pipeline comum com leads, binding posterior, histórico", () => {
-  const MIG = (arq: string) => readFileSync(join(process.cwd(), "supabase/migrations", arq), "utf8");
+  const MIG = (arq: string) =>
+    readFileSync(join(process.cwd(), "supabase/migrations", arq), "utf8");
   const M0504 = MIG("20261002090000_0504_spike_green_lifecycle_v12.sql");
   const M0505 = MIG("20261003090000_0505_spike_green_lifecycle_v13.sql");
 
@@ -803,7 +843,9 @@ describe("U — upgrade 0504 → 0505: pipeline comum com leads, binding posteri
 
   it("estado 0504 reconstruído → histórico → 0505 duas vezes: vivos `live`, apagado `retired`, comum fora, reuso recusado", async () => {
     // rebaixa o banco ao estado da 0504 (sem o trigger de binding, com a fronteira antiga)
-    await pool.query("drop trigger if exists trg_green_binding_claims_identities on green.product_pipeline_binding");
+    await pool.query(
+      "drop trigger if exists trg_green_binding_claims_identities on green.product_pipeline_binding",
+    );
     await pool.query("drop function if exists green.fn_claim_binding_identities()");
     await pool.query(funcao(M0504, "green.fn_crm_lead_boundary"));
 

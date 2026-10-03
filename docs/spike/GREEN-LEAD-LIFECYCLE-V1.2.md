@@ -15,8 +15,13 @@ Nenhum merge, nenhum PR, nenhum push.
 
 Corrigir os defeitos que a SPIKE-GREEN-01 introduziu e a auditoria confirmou, sob a decisão arquitetural nova:
 
-> **O UUID interno de `crm_leads` NÃO é reciclável.** Um UUID identifica uma única existência lógica de lead. DELETE não
-> o libera. Novo lead lógico = novo UUID. O histórico permanece em tombstone, `event_log`, livro-razão e proveniência.
+> **O UUID de um lead que tocou o domínio Green NÃO é reciclável.** Um UUID identifica uma única existência lógica de
+> lead no domínio. DELETE não o libera. Novo lead lógico = novo UUID. O histórico permanece em tombstone, `event_log`,
+> livro-razão e proveniência.
+>
+> **Correção de texto (SPIKE-GREEN-01.3):** esta seção dizia que TODO UUID de `crm_leads` não é reciclável. A política
+> implementada (0504) e a vigente (0505) protegem só o UUID de quem TOCOU o domínio Green; o de um lead que nunca tocou
+> não é protegido. Ver `GREEN-LEAD-LIFECYCLE-V1.3.md`.
 
 ## 2. Delta
 
