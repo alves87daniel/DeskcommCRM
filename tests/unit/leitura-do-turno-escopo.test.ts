@@ -38,6 +38,7 @@ vi.mock("@/app/api/v1/leads/_handler", async (original) => ({
 vi.mock("@/lib/mcp/audit", () => ({ auditMcpToolCall: vi.fn().mockResolvedValue(undefined) }));
 
 const { listContactsHandler, getContactHandler } = await import("@/app/api/v1/contacts/_handler");
+const { auditMcpToolCall } = await import("@/lib/mcp/audit");
 const { updateLeadHandler } = await import("@/app/api/v1/leads/_handler");
 const { pickToolsFromMcp } = await import("@/lib/ai/runtime/tools");
 
@@ -162,6 +163,19 @@ describe("na conversa, a leitura de contato só alcança o contato do turno", ()
     expect(typeof mensagem).toBe("string");
     expect((mensagem as string).length).toBeGreaterThan(20);
     expect(JSON.stringify(r)).not.toContain(TELEFONE_DE_B);
+  });
+
+  // A recusa entra no audit como recusa, igual à de escrita — `success: true`
+  // contaria como acerto uma ficha que o agente NÃO pôde abrir.
+  it("ficha recusada é auditada como recusa, com o motivo", async () => {
+    vi.mocked(auditMcpToolCall).mockClear();
+    await executar(["crm_get_contact"], { contact_id: DE_OUTRO_CLIENTE }, DA_CONVERSA);
+    expect(auditMcpToolCall).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(auditMcpToolCall).mock.calls[0]![0]).toMatchObject({
+      toolName: "crm_get_contact",
+      success: false,
+      errorMessage: "contato_da_conversa:fora_da_conversa",
+    });
   });
 
   it("ficha do contato DA conversa abre — não é a ferramenta que quebra, é o escopo", async () => {

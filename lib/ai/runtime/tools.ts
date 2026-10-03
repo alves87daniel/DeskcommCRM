@@ -401,6 +401,23 @@ function wrapMcpTool(
         // Só quem declara é afetado: sem `motivoDoVazio` nada muda.
         const motivoDoVazio = def.motivoDoVazio?.(result) ?? null;
 
+        // Recusa devolvida PELO HANDLER também não é sucesso (#2158): a ficha de
+        // outro cliente recusada em `crm_get_contact` volta no mesmo formato da
+        // recusa de escrita acima, e entra no audit como ela — `success: false`
+        // e o motivo em `error` —, senão a recusa some contada como acerto.
+        const recusa = recusaDoHandler(result);
+        if (recusa !== null) {
+          void auditMcpToolCall({
+            ctx: input.ctx,
+            toolName: def.name,
+            args: argsAudit,
+            durationMs: Date.now() - startedAt,
+            success: false,
+            errorMessage: `contato_da_conversa:${recusa}`,
+          });
+          return result;
+        }
+
         void auditMcpToolCall({
           ctx: input.ctx,
           toolName: def.name,
@@ -451,6 +468,13 @@ function wrapMcpTool(
       }
     },
   });
+}
+
+/** O `motivo` de uma recusa `{ permitido: false, motivo }` devolvida pelo handler, ou `null`. */
+function recusaDoHandler(result: unknown): string | null {
+  if (typeof result !== "object" || result === null) return null;
+  const r = result as { permitido?: unknown; motivo?: unknown };
+  return r.permitido === false && typeof r.motivo === "string" ? r.motivo : null;
 }
 
 export function pickToolsFromMcp(input: PickToolsInput): Record<string, Tool> {
