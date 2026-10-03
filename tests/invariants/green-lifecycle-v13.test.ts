@@ -17,6 +17,8 @@
  * Mesmo arquivo contra a v1.2 (`bc727cb`) e a v1.3: só muda o código sob teste.
  */
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 import pg from "pg";
 import { afterAll, describe, expect, it } from "vitest";
@@ -459,16 +461,18 @@ describe("D — DELETE de lead que toca o domínio nunca deixa o UUID recicláve
     expect(e?.message, veredito(e)).toBe(REUSO);
   });
 
-  it("idem quando a organização inteira vai embora (cascata) e a identidade estava perdida", async () => {
+  it("LIMITE CONHECIDO — identidade perdida E cascata da organização juntas: a defesa não alcança (o binding já foi levado pela cascata)", async () => {
+    // Duplo estado impossível, forçado de propósito: o caminho real tem a identidade íntegra
+    // (R-D acima, recusado). Quando a cascata já apagou o binding, a fronteira não consegue
+    // avaliar se o lead tocava o domínio, então não inventa uma identidade. Documentado, não escondido.
     const a = await tenant();
     const b = await tenant();
     const x = randomUUID();
     await nascerGreen(a, x);
     await pool.query("delete from green.lead_identity where lead_id=$1", [x]);
     await pool.query("delete from organizations where id=$1", [a.org]);
-    // a cascata pode apagar o binding antes do lead; o que a fronteira alcança, ela aposenta
     const e = await erroDe(nascerGreen(b, x));
-    console.info(`D2 cascata com identidade perdida: ${veredito(e)} / identidade=${await estadoDe(x)}`);
+    expect(veredito(e)).toBe("ACEITO");
   });
 
   it("lead que nunca tocou Green não ganha identidade ao ser apagado (escopo mantido)", async () => {
@@ -781,5 +785,63 @@ describe("Z — zona de perigo: a vizinha fica idêntica em TODA tabela com orga
     expect(await foto(c.org)).toEqual(antesC);
     // o que não é raiz da zona de perigo continua em A
     expect(await contar("select count(*) as n from user_organizations where organization_id=$1", [a.org])).toBe(1);
+  });
+});
+
+/* ═══ U — upgrade 0504 → 0505 com histórico ═════════════════════════════════ */
+describe("U — upgrade 0504 → 0505: pipeline comum com leads, binding posterior, histórico", () => {
+  const MIG = (arq: string) => readFileSync(join(process.cwd(), "supabase/migrations", arq), "utf8");
+  const M0504 = MIG("20261002090000_0504_spike_green_lifecycle_v12.sql");
+  const M0505 = MIG("20261003090000_0505_spike_green_lifecycle_v13.sql");
+
+  function funcao(sql: string, nome: string): string {
+    const ini = sql.indexOf(`create or replace function ${nome}(`);
+    const fim = sql.indexOf("end $$;", ini) + "end $$;".length;
+    if (ini < 0 || fim < ini) throw new Error(`função ${nome} não encontrada`);
+    return sql.slice(ini, fim);
+  }
+
+  it("estado 0504 reconstruído → histórico → 0505 duas vezes: vivos `live`, apagado `retired`, comum fora, reuso recusado", async () => {
+    // rebaixa o banco ao estado da 0504 (sem o trigger de binding, com a fronteira antiga)
+    await pool.query("drop trigger if exists trg_green_binding_claims_identities on green.product_pipeline_binding");
+    await pool.query("drop function if exists green.fn_claim_binding_identities()");
+    await pool.query(funcao(M0504, "green.fn_crm_lead_boundary"));
+
+    const t = await tenant();
+    const f = await funilComLeads(t, 4); // pipeline comum com leads
+    await ligar(t, f.id); // binding posterior: na 0504 ninguém ganha identidade
+    const [viva1, viva2, apagada] = [f.leads[0]!, f.leads[1]!, f.leads[2]!];
+    await apagar(apagada); // lápide Green canônica, mas sem identidade (o defeito da 0504)
+    const comum = await novoLeadComoDono(t, t.funilComum, t.etapaC1);
+    const green = randomUUID();
+    await nascerGreen(t, green);
+    expect(await estadoDe(viva1)).toBe("SEM-LINHA");
+    expect(await estadoDe(apagada)).toBe("SEM-LINHA");
+    expect((await erroDe(nascerGreen(t, apagada))) === null).toBe(true); // o defeito, reproduzido no estado antigo
+    await apagar(apagada); // desfaz o renascimento para o histórico ficar limpo
+
+    // 0505 duas vezes (idempotência)
+    await pool.query(M0505);
+    const e2 = await erroDe(pool.query(M0505));
+    expect(e2, e2?.message).toBeNull();
+
+    expect(await estadoDe(viva1)).toBe("live");
+    expect(await estadoDe(viva2)).toBe("live");
+    expect(await estadoDe(apagada)).toBe("retired");
+    expect(await estadoDe(green)).toBe("live");
+    expect(await estadoDe(comum)).toBe("SEM-LINHA");
+    expect(await leadsGreenSemIdentidade(t.org)).toEqual([]);
+    expect(
+      await contar(
+        "select count(*) as n from green.lead_identity where lead_id = any($1::uuid[])",
+        [[viva1, viva2, apagada, green, comum]],
+      ),
+    ).toBe(4);
+    expect((await erroDe(nascerGreen(t, apagada)))?.message).toBe(REUSO);
+
+    // e o trigger novo está de pé: um binding posterior à 0505 fecha sozinho
+    const g = await funilComLeads(t, 3);
+    await ligar(t, g.id);
+    expect(await leadsGreenSemIdentidade(t.org)).toEqual([]);
   });
 });
