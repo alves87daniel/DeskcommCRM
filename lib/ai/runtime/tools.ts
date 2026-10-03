@@ -243,6 +243,12 @@ function wrapMcpTool(
         // negócio e receber outro. Só com contato do turno: o Operador, a rota
         // HTTP e as automações seguem com o `lead_id` de quem chamou. Antes do
         // escopo, para o escopo julgar o negócio que de fato vai ser escrito.
+        //
+        // A LEITURA não traduz — ela ESCOPA, e o faz no handler, com o
+        // `ctx.contatoDoTurno` que passamos na chamada abaixo (#2158): trocar o
+        // id mudaria a pergunta do modelo, escopar muda só quem a resposta
+        // alcança. Quem recebe identificador de contato e é do turno segue
+        // abrindo; quem é de outro cliente é recusado com o motivo em texto.
         if (
           input.contatoDoTurno &&
           def.category === "write" &&
@@ -349,6 +355,17 @@ function wrapMcpTool(
           return { permitido: false, motivo: veredito.motivo, mensagem: explicacao };
         }
 
+        // O contato do turno como CONTEXTO ao lado de `ctx.organizationId`, e
+        // não como argumento que o modelo escreve: é o handler que precisa
+        // saber com quem a conversa está, e quem sabe é o runtime. Injetado
+        // aqui, no único ponto que tem `input`, para valer para todo chamador
+        // de `pickToolsFromMcp` — quem não tem contato de turno (rota HTTP,
+        // MCP externo, agente sem conversa) continua com o ctx de antes (#2158).
+        // O envelope Green segue em volta da chamada: o contato do turno muda
+        // o ctx do handler, não o ator da mutação.
+        const ctxDoHandler = input.contatoDoTurno
+          ? { ...input.ctx, contatoDoTurno: input.contatoDoTurno }
+          : input.ctx;
         const result = await withGreenMutationContext(
           {
             source: "agent_runtime",
@@ -361,7 +378,7 @@ function wrapMcpTool(
               : {}),
             actor: greenActorFromActor(input.ctx.actor, input.ctx.apiTokenId),
           },
-          () => def.handler(argsRecord as never, input.ctx),
+          () => def.handler(argsRecord as never, ctxDoHandler),
         );
 
         // Capture handoff signal so the runtime can short-circuit the loop.
