@@ -191,7 +191,25 @@ const idsDe = (r: unknown) =>
 
 beforeEach(() => {
   supabase = supabaseFalso();
-  vi.mocked(listConversationsHandler).mockReset().mockResolvedValue(paginaDeConversas() as never);
+  // O duplo REPETE o contrato do handler (#2184): o `contact_id` que a
+  // ferramenta passa já sai como predicado da consulta, então a página que
+  // volta é do contato. O predicado em si — o `eq("contact_id", …)` no `WHERE`,
+  // antes do `.limit` — é medido em
+  // `tests/unit/contato-do-turno-filtra-no-banco.test.ts`.
+  vi.mocked(listConversationsHandler)
+    .mockReset()
+    .mockImplementation(async (_s, _c, q) => {
+      const pagina = paginaDeConversas();
+      const filtro = (q as { contact_id?: string }).contact_id;
+      return (
+        filtro
+          ? {
+              ...pagina,
+              conversations: pagina.conversations.filter((c) => c.contact_id === filtro),
+            }
+          : pagina
+      ) as never;
+    });
   vi.mocked(getConversationHandler)
     .mockReset()
     .mockResolvedValue(conversa(CONVERSA_DE_B, DE_OUTRO_CLIENTE, PREVIA_DE_B) as never);
@@ -208,13 +226,21 @@ describe("com contato do turno, a leitura de conversa só alcança o contato del
     expect(idsDe(r)).toContain(CONVERSA_DA_CONVERSA);
     expect(JSON.stringify(r)).not.toContain(PREVIA_DE_B);
     expect(JSON.stringify(r)).not.toContain(EMAIL_DE_B);
+    // E o contato saiu NA CONSULTA do handler — é o predicado, e não um
+    // recorte da página, que garante a lista acima (#2184).
+    expect(vi.mocked(listConversationsHandler).mock.calls[0]![2]).toMatchObject({
+      contact_id: DA_CONVERSA,
+    });
   });
 
-  // Escopo, não tradução: o cursor/`has_more` descrevem a página da
-  // VARREDURA da organização, e a próxima página voltaria a ser varredura.
-  it("crm_list_conversations sem cursor nem has_more para a varredura da organização", async () => {
+  // O escopo mora no `WHERE` (#2184), então a página É do contato: a próxima
+  // página continua sendo dele, e cursor/`has_more` voltam a valer. Era o
+  // contrário enquanto o filtro era de página — com 10 conversas por página, a
+  // conversa mais antiga do mesmo cliente ficava invisível e o
+  // `has_more: false` dizia que não havia mais nada.
+  it("crm_list_conversations mantém cursor e has_more porque a página já é do contato", async () => {
     const r = await executar(["crm_list_conversations"], {}, DA_CONVERSA);
-    expect(r).toMatchObject({ cursor: null, has_more: false });
+    expect(r).toMatchObject({ cursor: "cur-2", has_more: true });
   });
 
   // Mesma coisa com o filtro explícito: pedir o contato de OUTRO cliente não
