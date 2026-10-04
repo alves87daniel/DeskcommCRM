@@ -38,6 +38,15 @@ import type { ServiceBoundary } from "@/lib/atendimento/fronteira";
 
 export const GREEN_MUTATION_CONTEXT_HEADER = "x-green-mutation-context";
 
+/**
+ * SPIKE-GREEN-03 — o id do ESCOPO de execução que fez a request (uma requisição, uma tool, uma
+ * regra, um job). Viaja junto do contexto: a mutação e a emissão legada de um writer acontecem
+ * no MESMO escopo, então o banco reconhece o gêmeo de uma mutação canonizada por esta chave
+ * (migration 0508), sem janela de tempo. Não autoriza nada e não é proveniência: só diz "estas
+ * requests são da mesma execução".
+ */
+export const GREEN_SCOPE_HEADER = "x-green-scope-id";
+
 /** Teto do JSON serializado; o resolver SQL recusa acima disto. */
 export const GREEN_MUTATION_CONTEXT_MAX_BYTES = 4096;
 
@@ -99,6 +108,8 @@ export class GreenMutationContextError extends Error {
  * gate de auth escreve (uma vez).
  */
 interface EscopoGreen {
+  /** GREEN-03: identidade da execução, nova a cada escopo (nunca herdada do pai). */
+  readonly id: string;
   ctx: GreenMutationContextV1 | undefined;
   readonly requisicao: boolean;
   aberto: boolean;
@@ -356,7 +367,7 @@ function rodarComContexto<T>(
     );
     mesclado = undefined;
   }
-  return rodarNoEscopo({ ctx: mesclado, requisicao: false, aberto: true }, fn);
+  return rodarNoEscopo({ id: randomUUID(), ctx: mesclado, requisicao: false, aberto: true }, fn);
 }
 
 /**
@@ -379,7 +390,7 @@ export function withGreenSystemRoot<T>(ctx: GreenMutationContextInput, fn: () =>
  * deles; o que não abrir, falha fechado no banco em lead Green.
  */
 export function withoutGreenMutationContext<T>(fn: () => T): T {
-  return rodarNoEscopo({ ctx: undefined, requisicao: false, aberto: true }, fn);
+  return rodarNoEscopo({ id: randomUUID(), ctx: undefined, requisicao: false, aberto: true }, fn);
 }
 
 export function currentGreenMutationContext(): GreenMutationContextV1 | undefined {
@@ -399,7 +410,7 @@ export function currentGreenMutationContext(): GreenMutationContextV1 | undefine
  * para as seguintes do mesmo socket).
  */
 export function runGreenRequestBoundary<T>(fn: () => T): T {
-  return rodarNoEscopo({ ctx: undefined, requisicao: true, aberto: true }, fn);
+  return rodarNoEscopo({ id: randomUUID(), ctx: undefined, requisicao: true, aberto: true }, fn);
 }
 
 /** O que a boundary de requisição devolve: completar o contexto depois de autenticar. */
@@ -494,16 +505,20 @@ export function parseGreenMutationContext(valor: string): GreenMutationContextV1
  * request certa sob concorrência). Sem contexto, devolve o `init` intacto —
  * transporte byte a byte igual ao de antes. Quando `input` é um `Request`, os
  * headers dele entram no merge para o `init` novo não os apagar.
+ *
+ * GREEN-03: o id do escopo vai junto do contexto (e só com ele), em header próprio.
  */
 export function initComContextoGreen(
   input: RequestInfo | URL,
   init?: RequestInit,
 ): RequestInit | undefined {
-  const ctx = escopoVivo()?.ctx;
-  if (!ctx) return init;
+  const escopo = escopoVivo();
+  const ctx = escopo?.ctx;
+  if (!escopo || !ctx) return init;
   const headers = new Headers(input instanceof Request ? input.headers : undefined);
   new Headers(init?.headers).forEach((valor, nome) => headers.set(nome, valor));
   headers.set(GREEN_MUTATION_CONTEXT_HEADER, serializeGreenMutationContext(ctx));
+  headers.set(GREEN_SCOPE_HEADER, escopo.id);
   return { ...init, headers };
 }
 
