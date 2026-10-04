@@ -25,7 +25,7 @@ import { ENTIDADE_ESPERADA_POR_GATILHO } from "@/lib/schemas/webhooks";
 import { logger } from "@/lib/logger";
 // SPIKE Green: a regra roda com `request_id=rule:<id>` + causation no contexto
 // async, para o evento canônico do hook de banco carregar a marca anti-loop.
-import { withGreenMutationContext } from "@/lib/green/mutation-context";
+import { greenAutomationOrigin, withGreenMutationContext } from "@/lib/green/mutation-context";
 import { causadoPorRegra } from "@/lib/green/proveniencia";
 
 export const AUTOMATION_CONSUMER_KEY = "automation-rules";
@@ -235,28 +235,17 @@ export async function runAutomationForEvent(
 
   for (const rule of applicable) {
     const results: ActionResultDetail[] = [];
-    // SPIKE Green: o contato do contexto é o que ancora `service_origin.kind=event`;
-    // sem contato, o hook deriva a origem no banco.
-    const contatoDaRegra =
-      (context.lead as { contact_id?: string | null } | undefined)?.contact_id ??
-      (context.contact as { id?: string } | undefined)?.id ??
-      null;
+    // SPIKE-GREEN-AUTO-01: a origem é a EXECUÇÃO da regra sobre o evento consumido
+    // (regra + evento), para todo gatilho — o banco prova a regra, o evento, a raiz
+    // de relógio e o sujeito. A régua de atendimento (`kind=event`) só ancorava 5
+    // dos 16 gatilhos e recusava os outros 11 em lead Green (LIFE-ADV-01).
     await withGreenMutationContext(
       {
         source: "automation",
         request_id: `rule:${rule.id}`,
         causation_event_id: row.id,
         actor: { kind: "webhook_source", id: rule.id },
-        ...(contatoDaRegra
-          ? {
-              service_origin: {
-                kind: "event" as const,
-                event_id: row.id,
-                organization_id: row.organization_id,
-                contact_id: contatoDaRegra,
-              },
-            }
-          : {}),
+        service_origin: greenAutomationOrigin(rule.id, row.id, row.organization_id),
       },
       async () => {
         // O índice é o da lista INTEIRA — a posição do resultado em

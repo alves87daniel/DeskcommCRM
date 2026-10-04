@@ -52,7 +52,14 @@ export interface GreenActor {
 
 export type GreenServiceOrigin =
   | { kind: "event"; event_id: string; organization_id: string; contact_id: string }
-  | { kind: "continuation"; boundary: ServiceBoundary };
+  | { kind: "continuation"; boundary: ServiceBoundary }
+  /**
+   * SPIKE-GREEN-AUTO-01 — a execução de uma regra de automação: a regra e o evento
+   * do `event_log` que o motor consumiu. Só o motor declara; o banco prova (regra
+   * e evento da organização do lead, gatilho da regra, raiz de relógio emitida pelo
+   * servidor, evento vivo, alvo = sujeito do evento) — migration 0506.
+   */
+  | { kind: "automation"; rule_id: string; event_id: string; organization_id: string };
 
 export interface GreenMutationContextV1 {
   v: 1;
@@ -251,6 +258,15 @@ export function validateGreenMutationContext(ctx: unknown): asserts ctx is Green
       if (b.demanda_revision !== null && !Number.isSafeInteger(b.demanda_revision)) {
         throw new GreenMutationContextError("service_origin.boundary.demanda_revision");
       }
+    } else if (o.kind === "automation") {
+      somenteChaves(
+        o,
+        new Set(["kind", "rule_id", "event_id", "organization_id"]),
+        "service_origin",
+      );
+      uuid(o.rule_id, "service_origin.rule_id");
+      uuid(o.event_id, "service_origin.event_id");
+      uuid(o.organization_id, "service_origin.organization_id");
     } else {
       // `command` NUNCA viaja: o banco deriva. `unavailable` não é origem.
       throw new GreenMutationContextError("service_origin.kind");
@@ -520,6 +536,20 @@ export function greenActorFromActor(actor: Actor, apiTokenId?: string): GreenAct
     default:
       return { kind: "system", id: actor.id };
   }
+}
+
+/** Execução de uma regra de automação sobre um evento consumido do `event_log`. */
+export function greenAutomationOrigin(
+  ruleId: string,
+  eventId: string,
+  organizationId: string,
+): GreenServiceOrigin {
+  return {
+    kind: "automation",
+    rule_id: ruleId,
+    event_id: eventId,
+    organization_id: organizationId,
+  };
 }
 
 /** Continuação de atendimento (fronteira já validada por quem a abriu). */

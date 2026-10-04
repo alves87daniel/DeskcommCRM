@@ -168,11 +168,14 @@ describe("motor de regras: a ação roda com request_id=rule:<id>, causation e o
       request_id: `rule:${REGRA}`,
       causation_event_id: EVENTO,
       actor: { kind: "webhook_source", id: REGRA },
+      // CONTRATO GREEN-AUTO-01: a origem é a execução da regra sobre o evento
+      // (`kind=automation`), não a régua de atendimento (`kind=event`, que só
+      // ancorava 5 dos 16 gatilhos — LIFE-ADV-01)
       service_origin: {
-        kind: "event",
+        kind: "automation",
+        rule_id: REGRA,
         event_id: EVENTO,
         organization_id: ORG,
-        contact_id: CONTATO,
       },
     });
   });
