@@ -1264,6 +1264,64 @@ describe("I — idempotência: a mesma execução repetida não duplica nem muda
   });
 });
 
+/* ═══ G — gaps documentados: comportamento ATUAL, não contrato desejado ═════ */
+// Cada caso registra um resíduo classificado no relatório (§14). Se um deles
+// ficar vermelho, o gap mudou: atualize a classificação, não "conserte" o teste.
+describe("G — gaps documentados (comportamento atual)", () => {
+  it("G1 (AUTO-GAP-01, PRODUÇÃO) — evento da família `event` emitido por um VIEWER pelo PostgREST: a regra roda e move o lead Green", async () => {
+    const t = await tenant();
+    const lead = await leadDe(t, t.funilGreen, t.etapaG1);
+    const r = await regra(t, "lead.tag_added", { funil: t.funilGreen, etapa: t.etapaG2 });
+    // nenhuma etiqueta foi posta: o viewer só grava a linha no barramento (o `emit_event` aceita)
+    const e = await emitir(sessao(t.viewer), t.org, "lead.tag_added", "crm_lead", lead, {
+      added_tags: ["vip"],
+      tags: ["vip"],
+    });
+    await drenar(e);
+    const l = await linha("G1-lead.tag_added-emitido-por-viewer", lead, e, "GAP (aceito)");
+    expect(l.run).toBe("success");
+    expect(await etapaDe(lead)).toBe(t.etapaG2);
+    // a origem diz a verdade sobre a regra e o evento; quem emitiu o evento não é registrado
+    const [c] = (await canonicosDe(lead)).slice(-1);
+    expect(c!.payload.service_origin).toEqual(origemDaRegra(t, r, e));
+    expect(JSON.stringify(c!.metadata)).not.toContain(t.viewer);
+  });
+
+  it("G2 (AUTO-GAP-02, DÉBITO) — backend com `source=automation`/`rule:*` e SEM origem: aceito, e o anti-loop o lê como causado por regra", async () => {
+    const t = await tenant();
+    const lead = await leadDe(t, t.funilGreen, t.etapaG1);
+    const regraQualquer = randomUUID();
+    const e = await erroDe(
+      request(
+        {
+          papel: "service_role",
+          contexto: {
+            v: 1,
+            source: "automation",
+            request_id: `rule:${regraQualquer}`,
+            actor: { kind: "webhook_source", id: regraQualquer },
+          },
+        },
+        "update crm_leads set stage_id=$1 where id=$2",
+        [t.etapaG2, lead],
+      ),
+    );
+    relatorio.push({ caso: "G2", veredito: veredito(e) });
+    expect(veredito(e)).toBe("ACEITO");
+    const [c] = await canonicosDe(lead);
+    expect(c!.metadata.green!.trusted).toMatchObject({
+      source: "automation",
+      request_id: `rule:${regraQualquer}`,
+    });
+    // sem origem transportada, o banco carimba a derivada (`command`), não a de automação
+    expect((c!.payload.service_origin as { kind?: string } | undefined)?.kind).toBe("command");
+    const { resultados } = await drenar(c!.id);
+    expect(resultados.find((x) => x.consumer_key === "automation-rules")?.detail).toBe(
+      "caused_by_rule",
+    );
+  });
+});
+
 /* ═══ K — catraca: o banco classifica exatamente os gatilhos do produto ═════ */
 describe("K — catraca: a régua do banco e a fonte única do TS concordam", () => {
   it("K1 — família e entidade de cada gatilho no banco = `ENTIDADE_ESPERADA_POR_GATILHO` + os 4 do relógio", async () => {
