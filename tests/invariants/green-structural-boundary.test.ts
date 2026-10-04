@@ -1668,7 +1668,10 @@ describe("U — upgrade 0506 → 0507", () => {
     const antes = await foto([a.org, b.org]);
     const e = await erroDe(pool.query(M0507()));
     expect(veredito(e)).toContain(LEGADO);
-    expect(e?.detail ?? "").toMatch(/green_incoerente.*[1-9]/);
+    expect(JSON.parse(e?.detail ?? "{}")).toMatchObject({
+      green_incoerente: 2,
+      etapa_em_funil_alheio: 1,
+    });
     expect(await foto([a.org, b.org])).toEqual(antes);
     expect(await colunasDaFk("public.crm_stages", "crm_stages_pipeline_id_fkey")).toEqual({
       n: 1,
