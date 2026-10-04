@@ -30,6 +30,7 @@ import { recusaDeCapacidadeParaOModelo } from "@/lib/mcp/recusa-para-o-modelo";
 import type { McpContext, McpToolDefinition } from "@/lib/mcp/types";
 import { resolveActiveLeadForContact, type LeadCandidate } from "@/lib/leads/active-lead";
 import { podeChamarFerramenta, recusaParaOModelo } from "@/lib/leads/escopo-de-funil";
+import { escritaCabeNoTurno } from "./escopo-das-escritas";
 
 export interface RuntimeHandoffSignal {
   triggered: boolean;
@@ -235,6 +236,32 @@ function wrapMcpTool(
       try {
         ensureScope(input.auth.scopes, def.requiresScope);
         ensureRole(input.auth.role, def.requiresRole);
+
+        // ── DE QUEM É O REGISTRO QUE ESTA ESCRITA ALCANÇA — do contato do turno
+        //
+        // `write` E `handoff`: a passagem também age sobre uma conversa. A regra
+        // e o mapa campo → dono moram em `escopo-das-escritas.ts`; o `lead_id`
+        // segue com a guarda logo abaixo. Sem contato do turno, nada muda.
+        if (input.contatoDoTurno && def.category !== "read") {
+          const escopo = await escritaCabeNoTurno(
+            input.supabase,
+            input.ctx.organizationId,
+            input.contatoDoTurno,
+            def.name,
+            argsRecord,
+          );
+          if (!escopo.permitido) {
+            void auditMcpToolCall({
+              ctx: input.ctx,
+              toolName: def.name,
+              args: argsAudit,
+              durationMs: Date.now() - startedAt,
+              success: false,
+              errorMessage: `contato_da_conversa:${escopo.motivo}`,
+            });
+            return escopo;
+          }
+        }
 
         // ── DE QUE NEGÓCIO É ESTA ESCRITA — do contato da conversa ──────────
         //
