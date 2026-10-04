@@ -93,6 +93,12 @@ export async function listContactsHandler(
   supabase: SB,
   ctx: HandlerCtx,
   raw: ContactListQueryParams,
+  /**
+   * Só este contato — o escopo do turno do agente (`crm_search_contacts`).
+   * Fora do `raw` de propósito: não é parâmetro da rota HTTP, e vai no WHERE,
+   * antes do limite.
+   */
+  soContato?: string,
 ): Promise<ListContactsResult> {
   const q: ContactListQuery = contactListQuerySchema.parse(raw);
 
@@ -230,6 +236,7 @@ export async function listContactsHandler(
     query = query.contains("tags", q.tag);
   }
   if (q.source) query = query.eq("source", q.source);
+  if (soContato) query = query.eq("id", soContato);
 
   if (q.cursor) {
     const c = decodeCursor(q.cursor);

@@ -127,6 +127,12 @@ export interface OpcoesDoRadar {
   now?: Date;
   /** Apenas a rota humana passa o papel efetivo; as consultas usam seu client RLS. */
   humanRole?: Role;
+  /**
+   * Só este contato — o escopo do turno do agente. Vai no WHERE de cada
+   * consulta que carrega dado de cliente (negócios, demandas, propostas), antes
+   * do `SCAN_CAP`.
+   */
+  contactId?: string;
 }
 
 export async function carregaRadarDeRisco(
@@ -169,6 +175,7 @@ export async function carregaRadarDeRisco(
   if (funisArquivados.length > 0) {
     consultaDeLeads = consultaDeLeads.not("pipeline_id", "in", `(${funisArquivados.join(",")})`);
   }
+  if (opts.contactId) consultaDeLeads = consultaDeLeads.eq("contact_id", opts.contactId);
   const { data: leads, error: leadsErr } = await consultaDeLeads
     .order("last_activity_at", { ascending: true, nullsFirst: true })
     .limit(SCAN_CAP);
@@ -313,12 +320,14 @@ export async function carregaRadarDeRisco(
   // IA usa (lib/mcp/tools/retencao.ts), e a tela e o agente têm de dizer a
   // mesma coisa sobre o mesmo negócio. Reescrevê-la agora arriscaria essa
   // paridade sem necessidade; acrescentar não arrisca nada.
-  const { data: semPasso, error: demandaError } = await admin
+  let consultaDeDemandas = admin
     .from("demandas")
     .select("id, lead_id, contact_id, aberta_em, origem, contacts(name, display_name)")
     .eq("organization_id", organizationId)
     .is("fechada_em", null)
-    .is("proximo_passo", null)
+    .is("proximo_passo", null);
+  if (opts.contactId) consultaDeDemandas = consultaDeDemandas.eq("contact_id", opts.contactId);
+  const { data: semPasso, error: demandaError } = await consultaDeDemandas
     .order("aberta_em", { ascending: true })
     .limit(SCAN_CAP);
   if (demandaError) throw new Error(`radar_demandas_failed: ${demandaError.message}`);
@@ -407,10 +416,12 @@ export async function carregaRadarDeRisco(
   // Consulta paralela (como `sem_proximo_passo`), sem misturar com `items`.
   // Órfã (lead_id nulo) é descartada no JS abaixo, junto da ordenação
   // defensiva: sem negócio, não há linha do radar para ela.
-  const { data: todasAsPropostas, error: propostasErr } = await admin
+  let consultaDePropostas = admin
     .from("crm_proposals")
     .select("id, lead_id, contact_id, titulo, status, numero, ano, valid_until, versao, created_at")
-    .eq("organization_id", organizationId)
+    .eq("organization_id", organizationId);
+  if (opts.contactId) consultaDePropostas = consultaDePropostas.eq("contact_id", opts.contactId);
+  const { data: todasAsPropostas, error: propostasErr } = await consultaDePropostas
     .order("lead_id", { ascending: true })
     .order("created_at", { ascending: false })
     .limit(SCAN_CAP);
