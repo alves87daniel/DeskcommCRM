@@ -1,8 +1,8 @@
 /**
  * Uma ESCRITA do agente num turno só alcança registros do CONTATO desse turno.
  *
- * As leituras já seguem essa regra, cada uma no seu handler (#2158, #2178,
- * #2184). As escritas recebem o alvo por campos de nomes diferentes
+ * As leituras já seguem essa regra, cada uma no seu handler (issues #2158,
+ * #2178, #2184; PRs #2271, #2274, #2276). As escritas recebem o alvo por campos de nomes diferentes
  * (`contact_id`, `conversation_id`, `appointment_id`, `followup_id`,
  * `case_id`, `target_id`), e um handler de escrita filtra só por
  * `organization_id`, porque ele serve também a rota HTTP e o integrador, onde a
@@ -15,7 +15,14 @@
  *
  *  - escrita AUSENTE da tabela é RECUSADA no turno, não liberada;
  *  - `tests/unit/escrita-do-turno-escopo.test.ts` reprova escrita do catálogo
- *    sem entrada, e campo `*_id` sem dono declarado.
+ *    sem entrada, e campo `*_id`/`*_ids` sem dono declarado;
+ *  - campo declarado que chega com valor que não é texto (lista, objeto) é
+ *    RECUSADO: a conferência abaixo é por um id por campo.
+ *
+ * Granularidade de caso, de propósito diferente da nativa: o dono `chamado`
+ * aceita caso de QUALQUER conversa do contato, enquanto o `provide_case_update`
+ * do motor exige a conversa do turno (`human-cases.ts`). Os dois ficam dentro
+ * do mesmo cliente. Não "alinhe" afrouxando o nativo.
  *
  * A recusa é UMA só para id inexistente e para id de outro cliente, com o
  * mesmo número de consultas: a resposta não distingue os dois casos.
@@ -139,7 +146,7 @@ async function campoEhDoContato(
     case "configuracao":
       return true;
     case "contato":
-      return id === contato;
+      return id.toLowerCase() === contato.toLowerCase();
     case "conversa":
       return existeDoContato(supabase, "conversations", organizationId, contato, id);
     case "compromisso":
@@ -172,7 +179,7 @@ async function campoEhDoContato(
     case "alvo_de_tag":
       switch (args.target_kind) {
         case "contact":
-          return id === contato;
+          return id.toLowerCase() === contato.toLowerCase();
         case "conversation":
           return existeDoContato(supabase, "conversations", organizationId, contato, id);
         case "lead":
@@ -186,7 +193,8 @@ async function campoEhDoContato(
 /**
  * O veredito da ponte para uma escrita (`write` ou `handoff`) durante um turno.
  *
- * Campo ausente ou não-texto não é conferido: não há alvo a mirar. Falha de
+ * Campo ausente (`undefined`/`null`) não é conferido: não há alvo a mirar.
+ * Campo presente que não é texto é recusado, nunca pulado. Falha de
  * leitura vira `indisponivel`, nunca `fora_da_conversa` — o modelo leria a
  * segunda como veredito e pararia de tentar.
  */
@@ -208,7 +216,8 @@ export async function escritaCabeNoTurno(
   try {
     for (const [campo, dono] of Object.entries(campos)) {
       const valor = args[campo];
-      if (typeof valor !== "string") continue;
+      if (valor === undefined || valor === null) continue;
+      if (typeof valor !== "string") return FORA_DA_CONVERSA;
       if (!(await campoEhDoContato(supabase, organizationId, contatoDoTurno, dono, valor, args))) {
         return FORA_DA_CONVERSA;
       }

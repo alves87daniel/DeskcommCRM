@@ -18,7 +18,7 @@ vi.mock("@/lib/mcp/audit", () => ({ auditMcpToolCall: vi.fn().mockResolvedValue(
 const { pickToolsFromMcp } = await import("@/lib/ai/runtime/tools");
 const { allTools, getToolByName } = await import("@/lib/mcp/tools");
 const { catalogEntry } = await import("@/lib/mcp/tools/catalog");
-const { ESCOPO_DAS_ESCRITAS } = await import("@/lib/ai/runtime/escopo-das-escritas");
+const { ESCOPO_DAS_ESCRITAS, escritaCabeNoTurno } = await import("@/lib/ai/runtime/escopo-das-escritas");
 const { MODULOS_OPCIONAIS } = await import("@/lib/instalacao/modulos");
 const { CAPACIDADES_DA_ORGANIZACAO } = await import("@/lib/organizacao/capacidades");
 
@@ -173,7 +173,8 @@ describe("toda escrita montável no turno tem o dono de cada identificador decla
   it.each(escritas.map((t) => [t.name, t] as const))("%s", (nome, def) => {
     const campos = ESCOPO_DAS_ESCRITAS[nome];
     expect(campos, `${nome} sem entrada em ESCOPO_DAS_ESCRITAS`).toBeDefined();
-    const ids = Object.keys(def.inputSchema).filter((c) => c.endsWith("_id"));
+    // `_ids` também: uma lista de ids sem dono passaria pela ponte sem conferência.
+    const ids = Object.keys(def.inputSchema).filter((c) => /_ids?$/.test(c));
     for (const c of ids) expect(campos![c], `${nome}.${c} sem dono declarado`).toBeDefined();
     for (const c of Object.keys(campos!)) expect(def.inputSchema, `${nome}.${c} não existe`).toHaveProperty(c);
   });
@@ -188,5 +189,36 @@ describe("toda escrita montável no turno tem o dono de cada identificador decla
     } finally {
       (ESCOPO_DAS_ESCRITAS as Record<string, unknown>).crm_save_org_memory = original;
     }
+  });
+});
+
+describe("forma do valor num campo declarado", () => {
+  it("lista no lugar do id é recusada, não pulada", async () => {
+    const lista = await executar("crm_book_appointment", { contact_id: [DE_B] }, DO_TURNO);
+    expect(lista.r).toMatchObject({ permitido: false, motivo: "fora_da_conversa" });
+    expect(lista.chamou).toBe(false);
+  });
+
+  it("campo ausente ou nulo não é conferido", async () => {
+    const sem = { from: () => { throw new Error("nada a conferir"); } };
+    for (const args of [{ contact_id: null }, {}]) {
+      expect(await escritaCabeNoTurno(sem as never, ORG, DO_TURNO, "crm_book_appointment", args)).toEqual({
+        permitido: true,
+      });
+    }
+  });
+
+  it("o id do próprio contato em maiúsculas passa, como passaria no Postgres", async () => {
+    const contato = "abcdef12-3456-4789-8abc-def123456789";
+    const sem = { from: () => { throw new Error("o dono contato não consulta"); } };
+    const r = await escritaCabeNoTurno(sem as never, ORG, contato, "crm_propose_contact_field", {
+      contact_id: contato.toUpperCase(),
+    });
+    expect(r).toEqual({ permitido: true });
+    const tag = await escritaCabeNoTurno(sem as never, ORG, contato, "crm_manage_tags", {
+      target_kind: "contact",
+      target_id: contato.toUpperCase(),
+    });
+    expect(tag).toEqual({ permitido: true });
   });
 });
