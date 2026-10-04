@@ -519,6 +519,12 @@ describe("S23 — supressor v2: só o gêmeo da mutação canonizada some", () =
     contexto: { v: 1, source: "http_session", request_id: requestId },
   });
 
+  // CONTRATO GREEN-03 (0508): o supressor temporal saiu. O gêmeo é reconhecido pelo ESCOPO de
+  // execução do servidor (`x-green-scope-id`), e um relato SEM escopo de lead Green não é fato
+  // nenhum — nem gêmeo nem "segundo evento". Estes casos mandam o legado sem escopo (transporte
+  // antigo / PostgREST direto); o livro-razão não registra mais o gêmeo (`legacy_*` é histórico).
+  // O "evento legítimo que não pode ser engolido" agora é o relato de OUTRO escopo, provado em
+  // `green-canonical-event-cutover.test.ts` (S1, S4, S13), com o gêmeo por escopo (S2-S8).
   it("o gêmeo legado some (e fica registrado no livro-razão); um segundo lead.stage_changed igual NÃO é engolido", async () => {
     const lead = await novoLead(FUNIL_GREEN, ETAPA_A);
     const requestId = randomUUID();
@@ -531,10 +537,11 @@ describe("S23 — supressor v2: só o gêmeo da mutação canonizada some", () =
     );
     expect(await eventosDe(lead)).toHaveLength(1);
     const [linha] = await livroDe(lead);
-    expect(linha!.legacy_suppressed_at).not.toBeNull();
-    expect(linha!.legacy_request_id).toBe(requestId);
+    // CONTRATO GREEN-03: o livro-razão não guarda mais o gêmeo (era `not.toBeNull()` / `requestId`)
+    expect(linha!.legacy_suppressed_at).toBeNull();
+    expect(linha!.legacy_request_id).toBeNull();
 
-    // evento futuro legítimo, com a MESMA transição e sem mutação nova: passa
+    // CONTRATO GREEN-03: um segundo relato sem escopo também não nasce (era: passa, 2 eventos)
     await emitComo(
       humano,
       lead,
@@ -542,10 +549,13 @@ describe("S23 — supressor v2: só o gêmeo da mutação canonizada some", () =
       { request_id: randomUUID() },
     );
     const eventos = await eventosDe(lead);
-    expect(eventos).toHaveLength(2);
-    expect(eventos[1]!.metadata).not.toHaveProperty("green_canonical");
+    expect(eventos).toHaveLength(1);
+    expect(eventos[0]!.metadata).toHaveProperty("green_canonical");
   });
 
+  // CONTRATO GREEN-03: em lead Green, reordenação não é fato de etapa e relato sem escopo de uma
+  // transição que nenhum UPDATE fez não é fato (eram 2 eventos; agora 0). Lead comum segue o
+  // upstream (`green-canonical-event-cutover.test.ts`, COM-1 e S11).
   it("reordenação (mesma etapa) e transição nunca canonizada passam como no upstream", async () => {
     const lead = await novoLead(FUNIL_GREEN, ETAPA_A);
     // reordenar: o UPDATE não muda a etapa, não há canônico — o evento da rota nasce
@@ -564,11 +574,12 @@ describe("S23 — supressor v2: só o gêmeo da mutação canonizada some", () =
       { request_id: randomUUID() },
     );
     const eventos = await eventosDe(lead);
-    expect(eventos).toHaveLength(2);
-    expect(eventos.every((e) => !("green_canonical" in e.metadata))).toBe(true);
+    expect(eventos).toHaveLength(0);
     expect(await livroDe(lead)).toHaveLength(0);
   });
 
+  // CONTRATO GREEN-03: sem janela, o gêmeo atrasado não vira segundo fato (eram 2 eventos). Era o
+  // defeito S3 medido na 0507.
   it("o gêmeo atrasado além da janela passa (não há mais o que deduplicar)", async () => {
     const lead = await novoLead(FUNIL_GREEN, ETAPA_A);
     await mover(lead, ETAPA_B, humano);
@@ -582,7 +593,7 @@ describe("S23 — supressor v2: só o gêmeo da mutação canonizada some", () =
       { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B },
       { request_id: randomUUID() },
     );
-    expect(await eventosDe(lead)).toHaveLength(2);
+    expect(await eventosDe(lead)).toHaveLength(1);
   });
 
   // CONTRATO v3 (AUDIT-08.2, ADV-04 / GAP-SUPPRESSOR-V3): o v2 afirmava que o
@@ -602,22 +613,21 @@ describe("S23 — supressor v2: só o gêmeo da mutação canonizada some", () =
       "select id, advisory_request_id from green.stage_event_ledger where lead_id=$1 order by created_at, id",
       [lead],
     );
-    const linha = (r: string) => livro0.find((l) => l.advisory_request_id === r)!.id;
+    expect(livro0.map((l) => l.advisory_request_id)).toEqual([r1, r2, r3]);
     expect((await livroDe(lead)).every((l) => l.request_id === null)).toBe(true);
-    // o gêmeo do PRIMEIRO A→B chega depois do terceiro: casa com a mais recente (a de r3)
+    // o gêmeo do PRIMEIRO A→B chega depois do terceiro
     await emitComo(
       humano,
       lead,
       { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B },
       { request_id: r1 },
     );
-    let livro = await livroDe(lead);
-    expect(livro.find((l) => l.id === linha(r3))!.legacy_request_id).toBe(r1);
-    expect(livro.find((l) => l.id === linha(r1))!.legacy_suppressed_at).toBeNull();
-    // o gêmeo seguinte casa com a que sobrou
+    // CONTRATO GREEN-03: não há mais "casar a linha mais recente" — o livro-razão não registra o
+    // gêmeo (eram as asserções de `legacy_request_id`/`legacy_suppressed_at` por linha). O que o
+    // supressor protegia, a contagem, continua: 3 mutações, 3 fatos.
     await emitComo(humano, lead, { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B }, {});
-    livro = await livroDe(lead);
-    expect(livro.find((l) => l.id === linha(r1))!.legacy_suppressed_at).not.toBeNull();
+    const livro = await livroDe(lead);
+    expect(livro.every((l) => l.legacy_suppressed_at === null)).toBe(true);
     expect(await eventosDe(lead)).toHaveLength(3);
   });
 });

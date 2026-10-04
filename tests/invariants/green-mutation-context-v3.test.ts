@@ -796,14 +796,20 @@ describe("ADV-07 (controle) — o supressor do gêmeo não piora com a separaç�
       [id, JSON.stringify(payload), JSON.stringify(metadata), ORG],
     );
 
+  // CONTRATO GREEN-03 (0508): o supressor temporal saiu; o gêmeo é reconhecido pelo escopo de
+  // execução do servidor (`x-green-scope-id`), e relato SEM escopo de lead Green não é fato. Estes
+  // casos mandam o legado sem escopo: o "segundo evento" também não nasce, e o livro-razão não
+  // registra mais o gêmeo (`legacy_*` é histórico). O desempate por chave virou o escopo, provado
+  // em `green-canonical-event-cutover.test.ts` (S2, S5, S6, S7, S8).
   it("o gêmeo legado da mutação canonizada continua sumindo; o segundo evento igual continua passando", async () => {
     const id = await novoLead(FUNIL_GREEN, ETAPA_A);
     await request(humano, "update crm_leads set stage_id=$2 where id=$1", [id, ETAPA_B]);
     const gemeo = await emit(humano, id, { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B }, { request_id: "r1" });
     expect(gemeo.rows[0]!.id).toBeNull();
     const segundo = await emit(humano, id, { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B }, { request_id: "r2" });
-    expect(segundo.rows[0]!.id).not.toBeNull();
-    expect(await eventosDe(id)).toHaveLength(2);
+    // CONTRATO GREEN-03: era `not.toBeNull()` e 2 eventos
+    expect(segundo.rows[0]!.id).toBeNull();
+    expect(await eventosDe(id)).toHaveLength(1);
   });
 
   it("request_id CONFIÁVEL (writer privilegiado) ainda escolhe a linha certa; o advisory humano não escolhe", async () => {
@@ -813,11 +819,14 @@ describe("ADV-07 (controle) — o supressor do gêmeo não piora com a separaç�
     await mover(servico({ request_id: "req-1" }), ETAPA_B);
     await mover(servico({ request_id: "req-2" }), ETAPA_A);
     await mover(servico({ request_id: "req-3" }), ETAPA_B);
-    // o gêmeo da PRIMEIRA A→B chega depois da terceira: casa pela chave confiável
+    // o gêmeo da PRIMEIRA A→B chega depois da terceira
     await emit(servicoSemContexto, id, { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B }, { request_id: "req-1" });
     let livro = await livroDe(id);
-    expect(livro.find((l) => l.request_id === "req-1")!.legacy_suppressed_at).not.toBeNull();
-    expect(livro.find((l) => l.request_id === "req-3")!.legacy_suppressed_at).toBeNull();
+    // CONTRATO GREEN-03: nenhuma linha é "escolhida" (eram `not.toBeNull()` em req-1 e `toBeNull()`
+    // em req-3): o request_id não é chave, o relato sem escopo não nasce, a contagem fica certa
+    expect(livro.map((l) => l.request_id)).toEqual(["req-1", "req-2", "req-3"]);
+    expect(livro.every((l) => l.legacy_suppressed_at === null)).toBe(true);
+    expect(await eventosDe(id)).toHaveLength(3);
 
     // mutações humanas com request_id no header: o livro não o trata como chave
     const h = await novoLead(FUNIL_GREEN, ETAPA_A);
@@ -830,9 +839,10 @@ describe("ADV-07 (controle) — o supressor do gêmeo não piora com a separaç�
     await request(comHeader("h-3"), "update crm_leads set stage_id=$2 where id=$1", [h, ETAPA_B]);
     await emit(humano, h, { from_stage_id: ETAPA_A, to_stage_id: ETAPA_B }, { request_id: "h-1" });
     livro = await livroDe(h);
-    // GAP-SUPPRESSOR-V3: sem chave confiável, casa a mais recente (h-3), não a "sua" (h-1)
-    expect(livro.find((l) => l.advisory_request_id === "h-3")!.legacy_suppressed_at).not.toBeNull();
-    expect(livro.find((l) => l.advisory_request_id === "h-1")!.legacy_suppressed_at).toBeNull();
+    // CONTRATO GREEN-03 (fecha o GAP-SUPPRESSOR-V3): nada casa "a mais recente"; eram
+    // `not.toBeNull()` em h-3 e `toBeNull()` em h-1
+    expect(livro.map((l) => l.advisory_request_id)).toEqual(["h-1", "h-2", "h-3"]);
+    expect(livro.every((l) => l.legacy_suppressed_at === null)).toBe(true);
     expect(await eventosDe(h)).toHaveLength(3);
   });
 
