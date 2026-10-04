@@ -572,11 +572,14 @@ describe.skipIf(!TEM_STACK)("E2E PostgREST real — Green Mutation Boundary v2",
         causation_event_id: E!.id,
         actor: { kind: "webhook_source", id: REGRA },
       });
+      // CONTRATO GREEN-AUTO-01: origem da execução da regra (regra + evento), não a
+      // régua de atendimento (`kind=event`); o contato deixou de viajar (o banco o
+      // deriva do sujeito do evento)
       expect(E2.payload.service_origin).toEqual({
-        kind: "event",
+        kind: "automation",
+        rule_id: REGRA,
         event_id: E!.id,
         organization_id: ORG,
-        contact_id: CONTATO_AUTOMACAO,
       });
       expect(
         espiao.vistos.some((v) => v.url.startsWith(`${STACK.url}/rest/v1/crm_leads`) && v.header),

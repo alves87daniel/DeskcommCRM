@@ -682,6 +682,60 @@ describe("C — censo: todo gatilho do produto move a Opportunity Green pelo mot
     expect(prov.rows[0]!.p.trusted).toMatchObject(trustedDaRegra(r, e));
   });
 
+  /** Etapa de perda no funil: o encerramento da transferência leva a origem para ela. */
+  async function etapaDePerda(t: Tenant, funil: string): Promise<string> {
+    const id = randomUUID();
+    await pool.query(
+      "insert into crm_stages (id, organization_id, pipeline_id, name, slug, position, is_lost) values ($1,$2,$3,'Perdido',$4,9000,true)",
+      [id, t.org, funil, `perdido-${id.slice(0, 8)}`],
+    );
+    return id;
+  }
+
+  it("C-transferência comum→Green: a regra clona o negócio do contato para o funil Green (nascimento com a origem da regra) e encerra a origem comum", async () => {
+    const t = await tenant();
+    const perdaComum = await etapaDePerda(t, t.funilComum);
+    const origemComum = await leadDe(t, t.funilComum, t.etapaC1);
+    const r = await regra(t, "contact.birthday", { funil: t.funilGreen, etapa: t.etapaG2 });
+    const e = await EMISSOR_DE_RELOGIO["contact.birthday"]!(t, r, "");
+    await drenar(e);
+    const { rows } = await pool.query<{ id: string; stage_id: string }>(
+      "select id, stage_id from crm_leads where organization_id=$1 and contact_id=$2 and pipeline_id=$3",
+      [t.org, t.contato, t.funilGreen],
+    );
+    const l = await linha("C-transferência-comum→Green", rows[0]?.id ?? null, e, "PASS");
+    expect(l.run).toBe("success");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.stage_id).toBe(t.etapaG2);
+    const prov = await pool.query<{ p: Record<string, unknown> }>(
+      "select to_jsonb(p) p from green.lead_birth_provenance p where lead_id=$1",
+      [rows[0]!.id],
+    );
+    expect(prov.rows[0]!.p.service_origin).toEqual(origemDaRegra(t, r, e));
+    expect(await etapaDe(origemComum)).toBe(perdaComum);
+  });
+
+  it("C-transferência Green→comum: a regra encerra a Opportunity Green (canônico com a origem da regra) e clona no funil comum", async () => {
+    const t = await tenant();
+    const perdaGreen = await etapaDePerda(t, t.funilGreen);
+    const origemGreen = await leadDe(t, t.funilGreen, t.etapaG1);
+    const r = await regra(t, "contact.birthday", { funil: t.funilComum, etapa: t.etapaC2 });
+    const e = await EMISSOR_DE_RELOGIO["contact.birthday"]!(t, r, "");
+    await drenar(e);
+    const l = await linha("C-transferência-Green→comum", origemGreen, e, "PASS");
+    expect(l.run).toBe("success");
+    expect(await etapaDe(origemGreen)).toBe(perdaGreen);
+    const [c] = (await canonicosDe(origemGreen)).slice(-1);
+    expect(c!.payload).toMatchObject({ to_stage_id: perdaGreen, green_transition: "stay" });
+    expect(c!.payload.service_origin).toEqual(origemDaRegra(t, r, e));
+    expect(c!.metadata.green!.trusted).toMatchObject(trustedDaRegra(r, e));
+    const { rows } = await pool.query<{ stage_id: string }>(
+      "select stage_id from crm_leads where organization_id=$1 and contact_id=$2 and pipeline_id=$3",
+      [t.org, t.contato, t.funilComum],
+    );
+    expect(rows.map((x) => x.stage_id)).toEqual([t.etapaC2]);
+  });
+
   for (const gatilho of Object.keys(EMISSOR_DE_RELOGIO)) {
     it(`C-${gatilho} forjado por sessão: FAIL ESPERADO — o relógio não é um membro da organização`, async () => {
       const t = await tenant();
