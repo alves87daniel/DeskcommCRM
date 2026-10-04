@@ -299,11 +299,14 @@ export const crmRenderMessageTemplate: McpToolDefinition<typeof renderTemplateSh
     // não é o do turno caem no MESMO `fora_da_conversa` — negócio inexistente
     // e negócio sem contato inclusive. Sem nenhum dos dois, o contato do turno
     // preenche. Sem contato do turno (integrador, pessoa), nada muda.
+    // `lead_id` igual ao contato do turno é a confusão contato × negócio (como
+    // em `crm_list_appointments`): o contato já cobre o pedido.
     const doTurno = ctx.contatoDoTurno;
+    const leadId = doTurno && input.lead_id === doTurno ? undefined : input.lead_id;
     if (doTurno) {
       const foraDoTurno =
         (input.contact_id !== undefined && input.contact_id !== doTurno) ||
-        (input.lead_id !== undefined && (await contatoDoNegocio(deps(ctx), input.lead_id)) !== doTurno);
+        (leadId !== undefined && (await contatoDoNegocio(deps(ctx), leadId)) !== doTurno);
       if (foraDoTurno) {
         return {
           permitido: false,
@@ -317,7 +320,7 @@ export const crmRenderMessageTemplate: McpToolDefinition<typeof renderTemplateSh
     return preencherModeloDeMensagem(deps(ctx), {
       templateId: input.template_id,
       contactId: input.contact_id ?? doTurno,
-      leadId: input.lead_id,
+      leadId,
       valores: input.valores,
     });
   },

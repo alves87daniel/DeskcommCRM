@@ -125,6 +125,12 @@ describe("crm_render_message_template com contato do turno", () => {
     expect(r.texto).toBe("Olá Ana, seu telefone é +5511900000001");
   });
 
+  it("lead_id igual ao contato do turno é a confusão contato × negócio: preenche com o contato", async () => {
+    const r = await preencher({ lead_id: DO_TURNO }, DO_TURNO);
+
+    expect(r.texto).toBe("Olá Ana, seu telefone é +5511900000001");
+  });
+
   it("lead_id de negócio do turno preenche com o contato dele", async () => {
     const r = await preencher({ lead_id: NEGOCIO_DO_TURNO }, DO_TURNO);
 

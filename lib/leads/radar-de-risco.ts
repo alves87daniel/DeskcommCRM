@@ -467,8 +467,15 @@ export async function carregaRadarDeRisco(
     .eq("status", "open");
   if (avisosErr) throw new Error(`radar_avisos_failed: ${avisosErr.message}`);
   const comAvisoAberto = new Set((avisosDeRevisao ?? []).map((a) => a.ref_id as string));
+  // Com `contactId` (turno do agente), o negócio da proposta também tem de ser
+  // do contato: a proposta guarda o contato de quando foi feita, e o negócio
+  // pode ter mudado de dono depois. Mesmo cruzamento de `leadsValidos` acima.
   const rascunhosEsperando = (todasAsPropostas ?? []).filter(
-    (p) => p.status === "rascunho" && p.lead_id != null && comAvisoAberto.has(p.id as string),
+    (p) =>
+      p.status === "rascunho" &&
+      p.lead_id != null &&
+      comAvisoAberto.has(p.id as string) &&
+      (!opts.contactId || leadsValidos.has(p.lead_id as string)),
   );
   const nomePorContato = new Map<string, string | null>(nameByContact);
   const contatosFaltando = [

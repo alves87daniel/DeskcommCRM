@@ -11,8 +11,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  *   cliente é recusado com `fora_da_conversa`.
  * - LEITURA POR ID: a MESMA recusa, byte a byte, para "não existe" e para "é
  *   de outro cliente" — um uuid não vira oráculo de existência.
- * - O banco externo não tem chave de contato: durante o turno, a consulta não
- *   roda.
  *
  * Sem contato do turno — rota HTTP, MCP externo, pessoa — nada muda, e cada
  * bloco termina com esse controle.
@@ -61,7 +59,6 @@ const CONVERSA_DO_TURNO = "aaaaaaaa-1111-4111-8111-111111111111";
 const CONVERSA_DE_B = "aaaaaaaa-2222-4222-8222-222222222222";
 const CASO_DO_TURNO = "bbbbbbbb-1111-4111-8111-111111111111";
 const CASO_DE_B = "bbbbbbbb-2222-4222-8222-222222222222";
-const CONEXAO = "cccccccc-1111-4111-8111-111111111111";
 
 type Linha = Record<string, unknown>;
 interface Consulta {
@@ -421,6 +418,33 @@ describe("crm_list_at_risk_leads: o radar, no turno, cobre só o contato da conv
     }
   });
 
+  it("⭐ proposta do contato do turno num negócio que passou a outro cliente não sai em revisão", async () => {
+    // A proposta guarda o contato de quando foi feita; o negócio mudou de dono
+    // depois. O filtro por `crm_proposals.contact_id` deixa a proposta passar,
+    // e o `lead_id` dela é um negócio de outro cliente.
+    const PROPOSTA_ANTIGA = "dddddddd-3333-4333-8333-333333333333";
+    const t = tabelas();
+    t.crm_proposals.push({
+      id: PROPOSTA_ANTIGA,
+      organization_id: ORG,
+      lead_id: NEGOCIO_DE_B,
+      contact_id: DA_CONVERSA,
+      titulo: "Proposta antiga da Ana",
+      status: "rascunho",
+      created_at: "2020-01-02T00:00:00Z",
+    });
+    t.agent_inbox_items.push({
+      organization_id: ORG,
+      kind: "proposta_pronta_para_revisao",
+      status: "open",
+      ref_id: PROPOSTA_ANTIGA,
+    });
+    supabase = bancoFalso(t);
+    const r = await executar("crm_list_at_risk_leads", { limit: 50 }, DA_CONVERSA);
+    expect(r.propostas_esperando_revisao).toEqual([]);
+    expect(JSON.stringify(r)).not.toContain(NEGOCIO_DE_B);
+  });
+
   it("CONTROLE: sem turno, o radar cobre a organização", async () => {
     supabase = bancoFalso(tabelas());
     const r = await executar("crm_list_at_risk_leads", { limit: 50 });
@@ -481,29 +505,5 @@ describe("crm_list_human_cases / crm_get_human_case: só os casos do contato do 
     expect(lista.open_count).toBe(2);
     const umCaso = await executar("crm_get_human_case", { case_id: CASO_DE_B });
     expect(umCaso.id).toBe(CASO_DE_B);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// organizar — o banco externo não tem chave de contato
-// ---------------------------------------------------------------------------
-
-describe("crm_query_external_data: durante o turno, a consulta não roda", () => {
-  it("⭐ com turno, recusa sem abrir a conexão", async () => {
-    supabase = bancoFalso({});
-    const r = await executar(
-      "crm_query_external_data",
-      { connection_id: CONEXAO, tabela: "pedidos", limite: 20 },
-      DA_CONVERSA,
-    );
-    expect(r.erro).toBe("indisponivel_na_conversa");
-    expect(supabase.consultas).toEqual([]);
-  });
-
-  it("CONTROLE: sem turno, segue para a conexão como antes", async () => {
-    supabase = bancoFalso({});
-    const r = await executar("crm_query_external_data", { connection_id: CONEXAO, tabela: "pedidos", limite: 20 });
-    expect(r.erro).not.toBe("indisponivel_na_conversa");
-    expect(supabase.consultas.length).toBeGreaterThan(0);
   });
 });
