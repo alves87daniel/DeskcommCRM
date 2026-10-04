@@ -127,21 +127,27 @@ async function eventosDe(lead: string): Promise<Evento[]> {
   return rows;
 }
 async function livroDe(lead: string) {
+  // CONTRATO GREEN-03: lido por `to_jsonb` (a coluna `scope_id` é da 0508)
   return (
-    await pool.query(
-      "select request_id, legacy_request_id, legacy_suppressed_at, canonical_event_id from green.stage_event_ledger where lead_id=$1 order by created_at",
+    await pool.query<{ l: Record<string, unknown> }>(
+      "select to_jsonb(l) l from green.stage_event_ledger l where lead_id=$1 order by created_at",
       [lead],
     )
-  ).rows;
+  ).rows.map((r) => r.l);
 }
 
 /** Registra cada request HTTP que sai do processo (sem alterar nada nela). */
 function espiaoDeFetch() {
-  const vistos: { url: string; header: string | null }[] = [];
+  const vistos: { url: string; header: string | null; escopo: string | null }[] = [];
   const original = globalThis.fetch;
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-    vistos.push({ url, header: new Headers(init?.headers).get("x-green-mutation-context") });
+    const h = new Headers(init?.headers);
+    vistos.push({
+      url,
+      header: h.get("x-green-mutation-context"),
+      escopo: h.get("x-green-scope-id"),
+    });
     return original(input, init);
   }) as typeof fetch;
   return { vistos, restaurar: () => (globalThis.fetch = original) };
@@ -298,9 +304,16 @@ describe.skipIf(!TEM_STACK)("E2E PostgREST real — Green Mutation Boundary v2",
       (v) => v.url.startsWith(`${STACK.url}/rest/v1/crm_leads`) && v.header,
     );
     expect(update).toBeDefined();
-    // o gêmeo legado do writer foi o ÚNICO suprimido
+    // CONTRATO GREEN-03: era "o gêmeo legado do writer foi o ÚNICO suprimido"
+    // (`legacy_suppressed_at`). O gêmeo agora é reconhecido pelo escopo: a mutação e a emissão
+    // legada saíram com o MESMO `x-green-scope-id`, que é o que o livro-razão guarda.
     const [linha] = await livroDe(lead);
-    expect(linha.legacy_suppressed_at).not.toBeNull();
+    expect(linha!.legacy_suppressed_at).toBeNull();
+    const emissao = espiao.vistos.find((v) =>
+      v.url.startsWith(`${STACK.url}/rest/v1/rpc/emit_event`),
+    );
+    expect(update!.escopo).toBe(linha!.scope_id);
+    expect(emissao?.escopo).toBe(linha!.scope_id);
   });
 
   it("S19 — requisição humana REAL (rota do Kanban): actor = usuário, request/correlation = da rota", async () => {
@@ -358,11 +371,23 @@ describe.skipIf(!TEM_STACK)("E2E PostgREST real — Green Mutation Boundary v2",
       },
     });
     expect(eventos[0]!.metadata).not.toHaveProperty("request_id");
-    // o gêmeo legado casou com ESTA mutação; o request_id da rota fica registrado
-    // como diagnóstico (`legacy_request_id`), não como chave confiável (`request_id`)
+    // CONTRATO GREEN-03: era "o gêmeo legado casou com ESTA mutação" pelo livro-razão
+    // (`legacy_request_id: requestId`, `legacy_suppressed_at`). O gêmeo agora é reconhecido pelo
+    // escopo da requisição: UPDATE e emissão legada da rota levam o MESMO `x-green-scope-id`.
     const [linha] = await livroDe(lead);
-    expect(linha).toMatchObject({ request_id: null, legacy_request_id: requestId });
-    expect(linha.legacy_suppressed_at).not.toBeNull();
+    expect(linha).toMatchObject({
+      request_id: null,
+      legacy_request_id: null,
+      legacy_suppressed_at: null,
+    });
+    const doUpdate = espiao.vistos.find(
+      (v) => v.url.startsWith(`${STACK.url}/rest/v1/crm_leads`) && v.header,
+    );
+    const daEmissao = espiao.vistos.find((v) =>
+      v.url.startsWith(`${STACK.url}/rest/v1/rpc/emit_event`),
+    );
+    expect(doUpdate!.escopo).toBe(linha!.scope_id);
+    expect(daEmissao?.escopo).toBe(linha!.scope_id);
     // e o header humano saiu por HTTP (advisory, sem ator)
     const update = espiao.vistos.find(
       (v) => v.url.startsWith(`${STACK.url}/rest/v1/crm_leads`) && v.header,
