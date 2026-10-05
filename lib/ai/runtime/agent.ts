@@ -461,6 +461,26 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       };
     }
 
+    // O contato do turno sai da CONVERSA quando a linha do run não o traz: o
+    // dispatcher antigo gravava o contato da mensagem, que pode vir vazio com a
+    // conversa tendo dono. As ferramentas restringem a leitura por ele
+    // (`contatoDoTurno`); um turno de conversa sem ele lê como integrador.
+    // Sem contato nenhum, o turno não roda — a mesma recusa do motor
+    // (`turn_without_contact` em `runAgentTurn`).
+    let contatoDoTurno = run.contact_id;
+    if (!contatoDoTurno && run.conversation_id) {
+      const { data: dono } = await admin
+        .from("conversations")
+        .select("contact_id")
+        .eq("id", run.conversation_id)
+        .eq("organization_id", run.organization_id)
+        .maybeSingle();
+      contatoDoTurno = (dono?.contact_id as string | null | undefined) ?? null;
+      if (!contatoDoTurno) {
+        return await failRun(run, "turn_without_contact", "conversation has no contact", startedAt);
+      }
+    }
+
     // 7) Mint ephemeral token + build MCP context.
     const ephemeral = await mintEphemeralToken({
       organizationId: run.organization_id,
@@ -516,7 +536,7 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
       modulosLigados: await modulosLigados(admin),
       capacidadesLigadas: await capacidadesDaOrganizacao(admin, run.organization_id),
       handoffSignal,
-      ...(run.contact_id ? { contatoDoTurno: run.contact_id } : {}),
+      ...(contatoDoTurno ? { contatoDoTurno } : {}),
     });
 
     // 8) Load history with budget.
