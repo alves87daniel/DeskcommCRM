@@ -41,6 +41,16 @@ tabelas que as migrations-stub `0001`–`0009` nunca criaram — medido: 21 apli
 O caminho de instalação suportado é o `supabase/baseline.sql`, que é o que o kit self-host
 aplica.
 
+## Nota - 0501 a 0508 são a fundação do ConectorGreen (GREEN-BASELINE-1.0, 2026-10-04)
+
+As linhas `0501_spike_green_*` a `0508_spike_green_*` da tabela abaixo dizem "SPIKE ... descartável; não vai para
+produção". Isso descrevia o estado de cada spike quando ela foi escrita e fica como registro histórico, assim como os
+nomes dos arquivos, que não mudam. Desde a GREEN-BASELINE-1.0 essas oito migrations são a fundação adotada do
+ConectorGreen sobre o Deskcomm v1.69.0: ver `docs/green/GREEN-BASELINE-1.0.md` e a decisão de não seguir o upstream em
+`docs/adr/GREEN-001-deskcomm-fundacao-congelada.md`. A próxima migration do ConectorGreen é a `0509`; migration
+portada do upstream ganha número e timestamp desta sequência, nunca os de origem (os números 0501-0508 e três
+timestamps já colidem com migrations do upstream).
+
 ## Applied
 
 | Version | Name | Description |
