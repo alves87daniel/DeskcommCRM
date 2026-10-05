@@ -6,7 +6,7 @@
  * recusado. Aqui ficam os dois caminhos que o harness de banco não alcança sem
  * fixture desproporcional, medidos no ponto exato da escrita:
  *
- *   - pos-entrada (WAHA/Meta/Zernio/replay): a recusa do nascimento não pode
+ *   - pos-entrada (toda ingestão de canal, e o replay): a recusa do nascimento não pode
  *     virar `info` sem o motivo — é a falha silenciosa do EV-01B;
  *   - prospecção (`activateCampaign`): o `createLeadHandler` tem de rodar sob
  *     contexto Green confiável (é ele que vira o header da request).
@@ -15,6 +15,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import { capabilitiesOf, PROVIDERS_DE_MENSAGEM } from "@/lib/channels/capabilities";
 import { currentGreenMutationContext } from "@/lib/green/mutation-context";
 
 const logger = vi.hoisted(() => ({ info: vi.fn(), warn: vi.fn(), error: vi.fn() }));
@@ -101,7 +102,7 @@ describe("pos-entrada: nascimento Green recusado não é falha silenciosa", () =
         channelSessionId: "00000000-0000-4000-8000-000000000004",
         texto: "oi",
         nomeDoContato: "Maria",
-        origem: "waha",
+        origem: "teste",
       } as never),
     ).resolves.toBeUndefined();
     const erros = logger.error.mock.calls.filter(([msg]) => String(msg).includes("lead"));
@@ -122,7 +123,7 @@ describe("pos-entrada: nascimento Green recusado não é falha silenciosa", () =
       channelSessionId: "00000000-0000-4000-8000-000000000004",
       texto: "oi",
       nomeDoContato: "Maria",
-      origem: "waha",
+      origem: "teste",
     } as never);
     expect(logger.error.mock.calls.filter(([msg]) => String(msg).includes("lead"))).toHaveLength(0);
     nascimento.resultado = {
@@ -136,6 +137,8 @@ describe("pos-entrada: nascimento Green recusado não é falha silenciosa", () =
 describe("prospecção: o lead da campanha nasce sob contexto Green confiável", () => {
   const ORG = "00000000-0000-4000-8000-0000000000f1";
   const CAMPANHA = "00000000-0000-4000-8000-0000000000f2";
+  /** `activateCampaign` só aceita canal que inicia conversa de texto livre: pede-se a capacidade. */
+  const PROVIDER = PROVIDERS_DE_MENSAGEM.find((p) => capabilitiesOf(p).freeformOutsideWindow)!;
   const config = {
     agent_id: "00000000-0000-4000-8000-00000000a6e0",
     channel_session_id: "00000000-0000-4000-8000-0000000000f3",
@@ -160,7 +163,7 @@ describe("prospecção: o lead da campanha nasce sob contexto Green confiável",
             rows: [{ tool_ids: ["crm_move_lead_stage"], pipeline_ids: [config.pipeline_id] }],
           };
         if (s.includes("from channel_sessions"))
-          return { rows: [{ provider: "waha", status: "WORKING" }] };
+          return { rows: [{ provider: PROVIDER, status: "WORKING" }] };
         if (s.includes("from crm_stages"))
           return { rows: [{ id: config.stage_id }, { id: config.qualified_stage_id }] };
         if (s.startsWith("select * from prospecting_campaigns"))
