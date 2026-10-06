@@ -43874,6 +43874,3503 @@ create trigger trg_fechar_aviso_do_jev_ao_bloquear
  execute function public.fn_fechar_aviso_do_jev_ao_bloquear();
 
 notify pgrst, 'reload schema';
+-- ---- SPIKE Green: mutation context + evento canônico em crm_leads (migration 0501) ----
+-- 0501 (SPIKE Green — DESCARTÁVEL; não é produto, não vai para produção).
+--
+-- Green Mutation Boundary sobre `crm_leads`: prova que uma Opportunity Green
+-- hospedada em `crm_leads` pode ter (1) validação Green centralizada no banco,
+-- (2) `stage mutation + lead.stage_changed` na MESMA transação, (3) actor
+-- confiável, (4) request/correlation/causation, (5) `service_origin`
+-- preservada, (6) anti-loop de automação e (7) zero mudança para lead não-Green
+-- — SEM patchar os oito writers de `crm_leads.stage_id`.
+--
+-- Desenho: Conector Green, `docs/audits/deskcomm-fit/05A-SPIKE-MUTATION-CONTEXT.md`.
+-- Rodada v2: fecha os gaps da auditoria independente do SPIKE-DESKCOMM-07
+-- (`05-EVENTOS-IDEMPOTENCIA-ATOMICIDADE.md`) — produtor canônico não forjável,
+-- `service_origin.event` amarrada ao contato real do evento, helpers fora da
+-- API de `authenticated` e supressor restrito ao gêmeo da mutação canonizada.
+--
+-- ── Transporte ──────────────────────────────────────────────────────────────
+-- O contexto viaja no header `x-green-mutation-context` (JSON UTF-8 em Base64)
+-- da própria request PostgREST que executa o UPDATE, lido por
+-- `current_setting('request.headers', true)` — o mesmo lugar que a 0250 já lê
+-- em produção. Conexão `pg` direta (sem PostgREST, sem papel de request) usa o
+-- GUC transacional `green.mutation_context` (JSON), definido com
+-- `set_config(..., true)`.
+--
+-- ── Confiança ───────────────────────────────────────────────────────────────
+-- O contexto NUNCA concede autorização (RLS/roles continuam mandando):
+--   * `auth.uid()` presente  → actor = user/auth.uid(); actor e service_origin
+--                              do header são IGNORADOS; o resto é advisory;
+--   * service_role / direta  → contexto validado por schema; `source` e
+--                              `actor.kind` (nunca `user`) obrigatórios;
+--                              ausente ou inválido em lead Green ⇒ fail-closed;
+--   * anon / sem identidade  → nunca confiável; lead Green ⇒ fail-closed.
+--
+-- ── Privilégios (v2) ────────────────────────────────────────────────────────
+-- O schema `green` NÃO é API de `authenticated`/`anon`: sem USAGE, sem EXECUTE,
+-- sem tabela. Quem precisa dos helpers são os TRIGGERS, que rodam como dono
+-- (`security definer`, `search_path=''`). Função de trigger não pode ser chamada
+-- fora de trigger ("trigger functions can only be called as triggers"), então o
+-- definer só é exercido por uma escrita real em `crm_leads`/`event_log` que a
+-- RLS já autorizou — não é porta de escalada. Dentro do definer, `current_user`
+-- é o dono; por isso o chamador é classificado pelo claim do JWT e pelo GUC
+-- `role` da request (que o definer não troca), nunca por `current_user`.
+-- `service_role` mantém EXECUTE nos helpers (backend legítimo).
+--
+-- ── Hooks (core patch explícito do fork; módulo nativo não instala trigger em
+--    tabela core) ─────────────────────────────────────────────────────────────
+--   * BEFORE INSERT/UPDATE em crm_leads: só pipeline Green (binding) — confere
+--     etapa do funil, exige contexto em writer privilegiado, valida
+--     `service_origin` contra org/contato/fronteira vigente e, para
+--     `kind=event`, contra o contato REAL do evento (mesma regra de
+--     `public.fn_service_event_origin`);
+--   * AFTER UPDATE em crm_leads: OLD.stage_id IS DISTINCT FROM NEW.stage_id em
+--     pipeline Green ⇒ linha no livro-razão `green.stage_event_ledger` + prova de
+--     produtor (GUC transacional de uso único apontando para ela) +
+--     `public.emit_event('lead.stage_changed', ...)`. Erro NÃO é capturado:
+--     evento falha ⇒ UPDATE falha;
+--   * BEFORE INSERT/UPDATE em event_log: (a) a marca canônica
+--     (`green_canonical`/`green_context_version`) só nasce com a prova do
+--     produtor e é imutável depois; (b) `lead.stage_changed` legado sem marca é
+--     suprimido SÓ quando é o gêmeo de uma mutação já canonizada (mesmo lead,
+--     mesma transição, janela curta, gêmeo ainda não visto). O resto passa
+--     intacto — inclusive lead não-Green, que nunca tem linha no livro-razão.
+--
+-- Sem o binding físico (`to_regclass`) os hooks são no-op: Deskcomm puro.
+
+create schema if not exists green;
+-- v2: o schema deixa de ser alcançável por authenticated/anon (oracle fechado).
+revoke all on schema green from public, anon, authenticated;
+grant usage on schema green to service_role;
+
+-- ── binding mínimo de pipeline gerenciado (não é catálogo iGreen) ────────────
+create table if not exists green.product_pipeline_binding (
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  pipeline_id     uuid not null references public.crm_pipelines(id) on delete cascade,
+  product_key     text not null,
+  created_at      timestamptz not null default now(),
+  primary key (organization_id, pipeline_id)
+);
+comment on table green.product_pipeline_binding is
+  'SPIKE Green: pipeline gerenciado (organização + funil → produto). Existe antes do lead; é a âncora dos hooks de INSERT/UPDATE.';
+alter table green.product_pipeline_binding enable row level security;
+revoke all on green.product_pipeline_binding from public, anon, authenticated;
+grant select on green.product_pipeline_binding to service_role;
+
+-- ── livro-razão do produtor canônico (v2) ───────────────────────────────────
+-- Uma linha por mutação Green canonizada. É a PROVA de proveniência do evento
+-- canônico (só o trigger de crm_leads, como dono, escreve aqui) e a chave do
+-- supressor: o gêmeo legado é casado com a linha da SUA mutação, não com o lead.
+create table if not exists green.stage_event_ledger (
+  id                   uuid primary key default gen_random_uuid(),
+  organization_id      uuid not null,
+  lead_id              uuid not null,
+  from_stage_id        uuid,
+  to_stage_id          uuid not null,
+  request_id           text,
+  txid                 bigint not null default txid_current(),
+  canonical_event_id   uuid unique,
+  legacy_suppressed_at timestamptz,
+  legacy_request_id    text,
+  created_at           timestamptz not null default now()
+);
+comment on table green.stage_event_ledger is
+  'SPIKE Green: prova de produtor do lead.stage_changed canônico e chave do supressor do gêmeo legado. Escrita só pelos triggers (dono).';
+create index if not exists stage_event_ledger_twin_idx
+  on green.stage_event_ledger (organization_id, lead_id, created_at desc)
+  where legacy_suppressed_at is null;
+alter table green.stage_event_ledger enable row level security;
+revoke all on green.stage_event_ledger from public, anon, authenticated;
+grant select on green.stage_event_ledger to service_role;
+
+-- ── pipeline é Green? (invoker: dono pelos triggers, service_role direto) ────
+create or replace function green.fn_is_green_pipeline(p_org uuid, p_pipeline uuid)
+returns boolean
+language plpgsql stable
+set search_path = ''
+as $$
+begin
+  if p_org is null or p_pipeline is null then return false; end if;
+  -- módulo ausente ⇒ Deskcomm puro (fail-open só quanto à ausência FÍSICA)
+  if to_regclass('green.product_pipeline_binding') is null then return false; end if;
+  return exists (
+    select 1 from green.product_pipeline_binding b
+     where b.organization_id = p_org and b.pipeline_id = p_pipeline
+  );
+end $$;
+revoke all on function green.fn_is_green_pipeline(uuid, uuid) from public, anon, authenticated;
+grant execute on function green.fn_is_green_pipeline(uuid, uuid) to service_role;
+
+-- ── validadores de forma (imutáveis, sem I/O) ──────────────────────────────
+create or replace function green.fn_ctx_id_ok(p text)
+returns boolean language sql immutable set search_path = '' as $$
+  select p is null or p ~ '^[A-Za-z0-9_.:-]{1,128}$'
+$$;
+create or replace function green.fn_ctx_uuid_ok(p text)
+returns boolean language sql immutable set search_path = '' as $$
+  select p is null or p ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+$$;
+revoke all on function green.fn_ctx_id_ok(text) from public, anon, authenticated;
+revoke all on function green.fn_ctx_uuid_ok(text) from public, anon, authenticated;
+grant execute on function green.fn_ctx_id_ok(text) to service_role;
+grant execute on function green.fn_ctx_uuid_ok(text) to service_role;
+
+-- ── resolver do MutationContext ─────────────────────────────────────────────
+-- Devolve: { caller: user|service_role|direct|anonymous, valid, reason, actor,
+--            service_origin, source, request_id, correlation_id,
+--            causation_event_id, idempotency_key, source_job_id }
+create or replace function green.fn_mutation_context()
+returns jsonb
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_uid       uuid := auth.uid();
+  v_jwt_role  text;
+  v_role      text;
+  v_caller    text;
+  v_header    text;
+  v_raw       jsonb;
+  v_reason    text := null;
+  v_actor     jsonb := null;
+  v_origin    jsonb := null;
+  v_boundary  jsonb;
+  v_kind      text;
+  v_advisory  jsonb := '{}'::jsonb;
+begin
+  begin
+    v_jwt_role := coalesce(auth.jwt() ->> 'role', '');
+  exception when others then
+    v_jwt_role := '';
+  end;
+  -- Papel da REQUEST, não `current_user`: chamado de trigger definer,
+  -- `current_user` é o dono; o claim e o GUC `role` (SET ROLE do PostgREST)
+  -- continuam sendo os de quem fez a request.
+  v_role := coalesce(nullif(v_jwt_role, ''), nullif(current_setting('role', true), 'none'), '');
+  v_caller := case
+    when v_uid is not null then 'user'
+    when v_role = 'service_role' then 'service_role'
+    when v_role in ('anon', 'authenticated') then 'anonymous'
+    else 'direct'
+  end;
+
+  -- transporte 1: header da request PostgREST
+  begin
+    v_header := nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-green-mutation-context';
+  exception when others then
+    v_header := null;
+  end;
+  if v_header is not null then
+    begin
+      v_raw := convert_from(decode(v_header, 'base64'), 'UTF8')::jsonb;
+    exception when others then
+      v_raw := null; v_reason := 'undecodable_header';
+    end;
+  elsif v_caller = 'direct' then
+    -- transporte 2: GUC transacional — só conexão pg direta (sem papel de request)
+    begin
+      v_raw := nullif(current_setting('green.mutation_context', true), '')::jsonb;
+    exception when others then
+      v_raw := null; v_reason := 'undecodable_guc';
+    end;
+  end if;
+
+  -- ── validação de forma (vale para todo chamador; humano só a usa como advisory)
+  if v_raw is not null and jsonb_typeof(v_raw) <> 'object' then
+    v_raw := null; v_reason := coalesce(v_reason, 'not_object');
+  end if;
+  if v_raw is not null and octet_length(v_raw::text) > 4096 then
+    v_raw := null; v_reason := 'too_large';
+  end if;
+  if v_raw is not null and exists (
+       select 1 from jsonb_object_keys(v_raw) k
+        where k not in ('v','source','request_id','correlation_id','causation_event_id',
+                        'source_job_id','idempotency_key','actor','service_origin')) then
+    -- contrato fechado por chave: PII não tem por onde entrar
+    v_raw := null; v_reason := 'unknown_key';
+  end if;
+  if v_raw is not null then
+    if v_raw ->> 'v' is distinct from '1' then v_reason := 'version';
+    elsif not (coalesce(v_raw ->> 'source', '') ~ '^[a-z][a-z0-9_.:-]{0,63}$') then v_reason := 'source';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'request_id') then v_reason := 'request_id';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'correlation_id') then v_reason := 'correlation_id';
+    elsif not green.fn_ctx_uuid_ok(v_raw ->> 'causation_event_id') then v_reason := 'causation_event_id';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'source_job_id') then v_reason := 'source_job_id';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'idempotency_key') then v_reason := 'idempotency_key';
+    end if;
+  end if;
+  if v_raw is not null and v_reason is null then
+    v_advisory := jsonb_strip_nulls(jsonb_build_object(
+      'source',             v_raw ->> 'source',
+      'request_id',         v_raw ->> 'request_id',
+      'correlation_id',     v_raw ->> 'correlation_id',
+      'causation_event_id', v_raw ->> 'causation_event_id',
+      'idempotency_key',    v_raw ->> 'idempotency_key',
+      'source_job_id',      v_raw ->> 'source_job_id'));
+  end if;
+
+  -- ── sessão humana: actor é auth.uid(); actor/service_origin do header são ignorados
+  if v_caller = 'user' then
+    return jsonb_build_object(
+      'caller', 'user', 'valid', true, 'reason', null,
+      'actor', jsonb_build_object('kind', 'user', 'id', v_uid),
+      'service_origin', null) || v_advisory;
+  end if;
+
+  -- ── request sem identidade: nunca confiável, qualquer que seja o header
+  if v_caller = 'anonymous' then
+    return jsonb_build_object(
+      'caller', 'anonymous', 'valid', false, 'reason', 'anonymous',
+      'actor', null, 'service_origin', null);
+  end if;
+
+  -- ── writer privilegiado: actor explícito e service_origin validados por schema
+  if v_raw is not null and v_reason is null then
+    v_actor := v_raw -> 'actor';
+    if v_actor is null then v_reason := 'actor_required';
+    elsif jsonb_typeof(v_actor) <> 'object' then v_reason := 'actor';
+    elsif exists (select 1 from jsonb_object_keys(v_actor) k where k not in ('kind','id','agent_id','api_token_id')) then v_reason := 'actor_key';
+    elsif coalesce(v_actor ->> 'kind', '') not in ('ai_agent','api_token','webhook_source','system') then v_reason := 'actor_kind';
+    elsif not green.fn_ctx_id_ok(v_actor ->> 'id') or not green.fn_ctx_id_ok(v_actor ->> 'agent_id')
+       or not green.fn_ctx_id_ok(v_actor ->> 'api_token_id') then v_reason := 'actor_id';
+    end if;
+  end if;
+  if v_raw is not null and v_reason is null and v_raw ? 'service_origin' then
+    v_origin := v_raw -> 'service_origin';
+    v_kind := case when jsonb_typeof(v_origin) = 'object' then v_origin ->> 'kind' end;
+    if v_kind = 'event' then
+      if exists (select 1 from jsonb_object_keys(v_origin) k where k not in ('kind','event_id','organization_id','contact_id'))
+         or v_origin ->> 'event_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'event_id')
+         or v_origin ->> 'organization_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'organization_id')
+         or v_origin ->> 'contact_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'contact_id') then
+        v_reason := 'service_origin_event';
+      end if;
+    elsif v_kind = 'continuation' then
+      v_boundary := v_origin -> 'boundary';
+      if exists (select 1 from jsonb_object_keys(v_origin) k where k not in ('kind','boundary'))
+         or v_boundary is null or jsonb_typeof(v_boundary) <> 'object'
+         or exists (select 1 from jsonb_object_keys(v_boundary) k
+                     where k not in ('organization_id','contact_id','conversation_id','service_revision','demanda_id','demanda_revision'))
+         or v_boundary ->> 'organization_id' is null or not green.fn_ctx_uuid_ok(v_boundary ->> 'organization_id')
+         or v_boundary ->> 'contact_id' is null or not green.fn_ctx_uuid_ok(v_boundary ->> 'contact_id')
+         or v_boundary ->> 'conversation_id' is null or not green.fn_ctx_uuid_ok(v_boundary ->> 'conversation_id')
+         or jsonb_typeof(v_boundary -> 'service_revision') <> 'number'
+         or not (jsonb_typeof(v_boundary -> 'demanda_id') = 'null' or green.fn_ctx_uuid_ok(v_boundary ->> 'demanda_id'))
+         or jsonb_typeof(v_boundary -> 'demanda_revision') not in ('null','number') then
+        v_reason := 'service_origin_continuation';
+      end if;
+    else
+      -- `command` nunca viaja (o banco deriva); `unavailable` não é origem.
+      v_reason := 'service_origin_kind';
+    end if;
+  end if;
+
+  if v_raw is null or v_reason is not null then
+    return jsonb_build_object(
+      'caller', v_caller, 'valid', false, 'reason', coalesce(v_reason, 'missing'),
+      'actor', null, 'service_origin', null);
+  end if;
+  return jsonb_build_object(
+    'caller', v_caller, 'valid', true, 'reason', null,
+    'actor', v_actor, 'service_origin', v_origin) || v_advisory;
+end $$;
+revoke all on function green.fn_mutation_context() from public, anon, authenticated;
+grant execute on function green.fn_mutation_context() to service_role;
+
+-- ── contato REAL de um evento de origem (v2) ────────────────────────────────
+-- Projeção SEM EFEITO COLATERAL da regra canônica de
+-- `public.fn_service_event_origin` (última definição da cadeia): o contato de um
+-- evento é o da sua ENTIDADE, pela mesma tabela tipo → entidade → contato, e a
+-- cadeia `payload.service_origin.kind=event` é seguida até a raiz com o mesmo
+-- teto de ciclo. A função canônica não pode ser chamada aqui: ela trava o
+-- contato (advisory), pode abrir atendimento (`fn_service_begin`) e grava o
+-- memo `event_service_origins` — efeitos de CONSUMIR o evento, não de conferir
+-- uma referência. A paridade (mesmo conjunto de tipos, mesmo veredito de escopo)
+-- é cobrada em `tests/invariants/green-mutation-context.test.ts` (S16), contra a
+-- própria função canônica: se o upstream mudar a regra, o teste fica vermelho.
+create or replace function green.fn_assert_event_origin_contact(p_org uuid, p_event uuid, p_contact uuid)
+returns void
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  e        record;
+  v_root   uuid := p_event;
+  v_seen   uuid[] := array[]::uuid[];
+  v_entity uuid;
+  v_origin jsonb;
+begin
+  loop
+    if v_root = any(v_seen) or cardinality(v_seen) >= 32 then
+      raise exception 'green_service_origin_cycle' using errcode = '23503';
+    end if;
+    v_seen := array_append(v_seen, v_root);
+    v_entity := null;
+    select ev.event_type, ev.entity_kind, ev.entity_id, ev.payload into e
+      from public.event_log ev where ev.organization_id = p_org and ev.id = v_root;
+    if not found then
+      raise exception 'green_service_origin_event_not_found' using errcode = '23503';
+    end if;
+    if e.event_type in ('lead.created','lead.stage_changed','lead.tag_added') and e.entity_kind = 'crm_lead' then
+      select contact_id into v_entity from public.crm_leads where organization_id = p_org and id = e.entity_id;
+    elsif e.event_type = 'contact.tag_added' and e.entity_kind = 'contact' then
+      select id into v_entity from public.contacts where organization_id = p_org and id = e.entity_id;
+    elsif e.event_type = 'appointment.outcome_confirmed' and e.entity_kind = 'appointment' then
+      select contact_id into v_entity from public.calendar_appointments
+       where organization_id = p_org and id = e.entity_id
+         and revision = (e.payload ->> 'appointment_revision')::bigint
+         and status = 'no_show' and outcome_recorded_at is not null;
+    elsif e.event_type = 'message.received' and e.entity_kind = 'message' then
+      select contact_id into v_entity from public.messages
+       where organization_id = p_org and id = e.entity_id and direction = 'inbound';
+    else
+      -- a regra canônica também não ancora este tipo (`service_event_origin_unsupported`)
+      raise exception 'green_service_origin_unsupported' using errcode = '23503';
+    end if;
+    if v_entity is distinct from p_contact or not exists (
+         select 1 from public.contacts
+          where organization_id = p_org and id = p_contact
+            and not is_anonymized and is_merged_into is null) then
+      raise exception 'green_service_origin_contact_mismatch' using errcode = '23503';
+    end if;
+    v_origin := e.payload -> 'service_origin';
+    if v_origin ->> 'kind' = 'event' then
+      if v_origin ->> 'organization_id' is distinct from p_org::text
+         or v_origin ->> 'contact_id' is distinct from p_contact::text then
+        raise exception 'green_service_origin_contact_mismatch' using errcode = '23503';
+      end if;
+      v_root := (v_origin ->> 'event_id')::uuid;
+      if v_root is null then
+        raise exception 'green_service_origin_event_not_found' using errcode = '23503';
+      end if;
+      continue;
+    end if;
+    exit;
+  end loop;
+end $$;
+revoke all on function green.fn_assert_event_origin_contact(uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function green.fn_assert_event_origin_contact(uuid, uuid, uuid) to service_role;
+
+-- ── service_origin transportada tem de bater com o lead e com a fronteira vigente
+create or replace function green.fn_assert_service_origin(p_origin jsonb, p_org uuid, p_contact uuid)
+returns void
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_kind text;
+  v_b    jsonb;
+  v_conv record;
+begin
+  if p_origin is null or jsonb_typeof(p_origin) <> 'object' then return; end if;
+  v_kind := p_origin ->> 'kind';
+
+  if v_kind = 'event' then
+    if (p_origin ->> 'organization_id')::uuid is distinct from p_org
+       or (p_origin ->> 'contact_id')::uuid is distinct from p_contact then
+      raise exception 'green_service_origin_scope_mismatch' using errcode = '23503';
+    end if;
+    -- v2: o evento tem de ser DO contato declarado (não basta existir na org)
+    perform green.fn_assert_event_origin_contact(p_org, (p_origin ->> 'event_id')::uuid, p_contact);
+    return;
+  end if;
+
+  if v_kind = 'continuation' then
+    v_b := p_origin -> 'boundary';
+    if (v_b ->> 'organization_id')::uuid is distinct from p_org
+       or (v_b ->> 'contact_id')::uuid is distinct from p_contact then
+      raise exception 'green_service_origin_scope_mismatch' using errcode = '23503';
+    end if;
+    select c.service_revision, c.current_demanda_id, c.status,
+           d.revision as demanda_revision, d.fechada_em
+      into v_conv
+      from public.conversations c
+      left join public.demandas d
+        on d.id = c.current_demanda_id and d.organization_id = c.organization_id
+     where c.organization_id = p_org and c.contact_id = p_contact
+       and c.id = (v_b ->> 'conversation_id')::uuid;
+    -- Mesma régua de `assertCurrentServiceBoundary` (lib/atendimento/fronteira.ts):
+    -- conversa terminal, demanda fechada, revisão diferente ou demanda trocada
+    -- (quando a fronteira tinha demanda) ⇒ stale.
+    if not found
+       or v_conv.status in ('closed','resolved','archived')
+       or v_conv.fechada_em is not null
+       or v_conv.service_revision is distinct from (v_b ->> 'service_revision')::bigint
+       or (nullif(v_b ->> 'demanda_id', '') is not null and (
+             v_conv.current_demanda_id is distinct from (v_b ->> 'demanda_id')::uuid
+          or v_conv.demanda_revision is distinct from (v_b ->> 'demanda_revision')::bigint)) then
+      raise exception 'service_boundary_stale' using errcode = '40001';
+    end if;
+    return;
+  end if;
+
+  raise exception 'green_service_origin_kind' using errcode = '22023';
+end $$;
+revoke all on function green.fn_assert_service_origin(jsonb, uuid, uuid) from public, anon, authenticated;
+grant execute on function green.fn_assert_service_origin(jsonb, uuid, uuid) to service_role;
+
+-- ── hook BEFORE: guarda Green de crm_leads ──────────────────────────────────
+create or replace function green.fn_guard_crm_lead_stage()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_ctx jsonb;
+begin
+  -- só mutação de etapa/funil (ou nascimento) entra na guarda
+  if tg_op = 'UPDATE'
+     and new.stage_id is not distinct from old.stage_id
+     and new.pipeline_id is not distinct from old.pipeline_id then
+    return new;
+  end if;
+  if not green.fn_is_green_pipeline(new.organization_id, new.pipeline_id) then return new; end if;
+
+  -- binding da etapa: a etapa tem de ser deste funil e desta organização
+  if not exists (select 1 from public.crm_stages s
+                  where s.id = new.stage_id
+                    and s.organization_id = new.organization_id
+                    and s.pipeline_id = new.pipeline_id) then
+    raise exception 'green_stage_not_bound' using errcode = '23503';
+  end if;
+
+  v_ctx := green.fn_mutation_context();
+  if v_ctx ->> 'caller' <> 'user' then
+    if not coalesce((v_ctx ->> 'valid')::boolean, false) then
+      raise exception 'green_mutation_context_required'
+        using errcode = '42501', detail = coalesce(v_ctx ->> 'reason', 'missing');
+    end if;
+    perform green.fn_assert_service_origin(v_ctx -> 'service_origin', new.organization_id, new.contact_id);
+  end if;
+  return new;
+end $$;
+
+-- ── hook AFTER: evento canônico na MESMA transação ──────────────────────────
+create or replace function green.fn_emit_crm_lead_stage_changed()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_ctx     jsonb;
+  v_meta    jsonb;
+  v_payload jsonb;
+  v_ledger  uuid;
+  v_event   uuid;
+begin
+  if old.stage_id is not distinct from new.stage_id then return null; end if;
+  if not green.fn_is_green_pipeline(new.organization_id, new.pipeline_id) then return null; end if;
+
+  v_ctx := green.fn_mutation_context();
+  v_meta := jsonb_build_object(
+      'green_canonical', true,
+      'green_context_version', 1,
+      'caller', v_ctx ->> 'caller',
+      'actor', v_ctx -> 'actor')
+    || jsonb_strip_nulls(jsonb_build_object(
+      'source',             v_ctx ->> 'source',
+      'request_id',         v_ctx ->> 'request_id',
+      'correlation_id',     v_ctx ->> 'correlation_id',
+      'causation_event_id', v_ctx ->> 'causation_event_id',
+      'idempotency_key',    v_ctx ->> 'idempotency_key',
+      'source_job_id',      v_ctx ->> 'source_job_id',
+      -- compat com o metadata legado: rotas humanas gravam `actor_user_id`,
+      -- writers privilegiados gravam `actor_kind`
+      'actor_user_id', case when v_ctx ->> 'caller' = 'user' then v_ctx -> 'actor' ->> 'id' end,
+      'actor_kind',    v_ctx -> 'actor' ->> 'kind'));
+  v_payload := jsonb_build_object(
+      'pipeline_id',   new.pipeline_id,
+      'from_stage_id', old.stage_id,
+      'to_stage_id',   new.stage_id,
+      -- `fn_crm_lead_close_on_stage` é BEFORE: o status aqui já é o derivado
+      'status',        new.status);
+  -- `command` nunca é transportada: sem service_origin, `emit_event` deriva o
+  -- retrato no banco. Humano nunca transporta origem (emit_event recusaria).
+  if v_ctx ->> 'caller' <> 'user' and jsonb_typeof(v_ctx -> 'service_origin') = 'object' then
+    v_payload := v_payload || jsonb_build_object('service_origin', v_ctx -> 'service_origin');
+  end if;
+
+  -- Prova de produtor (v2): a linha do livro-razão só pode ser escrita aqui
+  -- (dono); o GUC de uso único aponta para ELA, na MESMA transação. O porteiro
+  -- de event_log só aceita a marca canônica se os dois baterem e carimba
+  -- `canonical_event_id` — um `emit_event` chamado por fora não tem linha.
+  insert into green.stage_event_ledger (organization_id, lead_id, from_stage_id, to_stage_id, request_id)
+  values (new.organization_id, new.id, old.stage_id, new.stage_id, v_ctx ->> 'request_id')
+  returning id into v_ledger;
+  perform set_config('green.canonical_proof', v_ledger::text, true);
+  -- Erro aqui NÃO é capturado: evento falha ⇒ UPDATE inteiro faz rollback.
+  v_event := public.emit_event('lead.stage_changed', 'crm_lead', new.id, v_payload, v_meta, new.organization_id);
+  perform set_config('green.canonical_proof', '', true);
+  if not exists (select 1 from green.stage_event_ledger l
+                  where l.id = v_ledger and l.canonical_event_id = v_event) then
+    raise exception 'green_canonical_not_recorded' using errcode = 'P0001';
+  end if;
+  return null;
+end $$;
+
+-- ── hook em event_log: porteiro da marca canônica + supressor do gêmeo legado ─
+create or replace function green.fn_suppress_legacy_stage_changed()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_proof uuid;
+  v_hit   uuid;
+begin
+  -- (0) a marca canônica é imutável depois de nascer — nem service_role a
+  --     acrescenta a um evento existente, nem a retira de um canônico.
+  if tg_op = 'UPDATE' then
+    if (old.metadata -> 'green_canonical') is distinct from (new.metadata -> 'green_canonical')
+       or (old.metadata -> 'green_context_version') is distinct from (new.metadata -> 'green_context_version') then
+      raise exception 'green_canonical_immutable' using errcode = '42501';
+    end if;
+    return new;
+  end if;
+
+  -- (a) marca reservada ao produtor: só passa com a prova da MESMA transação,
+  --     de uso único, amarrada a este lead e a esta transição.
+  if new.metadata ?| array['green_canonical', 'green_context_version'] then
+    begin
+      v_proof := nullif(current_setting('green.canonical_proof', true), '')::uuid;
+    exception when others then
+      v_proof := null;
+    end;
+    if v_proof is not null and new.event_type = 'lead.stage_changed' and new.entity_kind = 'crm_lead' then
+      update green.stage_event_ledger l
+         set canonical_event_id = new.id
+       where l.id = v_proof
+         and l.txid = txid_current()
+         and l.canonical_event_id is null
+         and l.organization_id = new.organization_id
+         and l.lead_id = new.entity_id
+         and l.to_stage_id::text = new.payload ->> 'to_stage_id'
+         and l.from_stage_id::text is not distinct from new.payload ->> 'from_stage_id'
+      returning l.id into v_hit;
+    end if;
+    if v_hit is null then
+      raise exception 'green_canonical_reserved' using errcode = '42501',
+        detail = 'a marca canônica só nasce do trigger de crm_leads, na transação da mutação';
+    end if;
+    perform set_config('green.canonical_proof', '', true);
+    return new;
+  end if;
+
+  -- (b) gêmeo legado: suprimido SÓ quando corresponde a uma mutação já
+  --     canonizada — mesmo lead, mesma transição, gêmeo ainda não visto, janela
+  --     curta. Lead não-Green nunca tem linha no livro-razão ⇒ passa intacto.
+  if new.event_type <> 'lead.stage_changed' or new.entity_kind is distinct from 'crm_lead'
+     or new.entity_id is null then
+    return new;
+  end if;
+  update green.stage_event_ledger l
+     set legacy_suppressed_at = clock_timestamp(),
+         legacy_request_id = left(new.metadata ->> 'request_id', 128)
+   where l.id = (
+     select c.id from green.stage_event_ledger c
+      where c.organization_id = new.organization_id
+        and c.lead_id = new.entity_id
+        and c.canonical_event_id is not null
+        and c.legacy_suppressed_at is null
+        and c.to_stage_id::text = new.payload ->> 'to_stage_id'
+        and (not (new.payload ? 'from_stage_id')
+             or c.from_stage_id::text is not distinct from new.payload ->> 'from_stage_id')
+        and c.created_at > clock_timestamp() - interval '5 minutes'
+      -- o MESMO request (quando os dois o têm) primeiro; depois o mais recente
+      order by (c.request_id is not null and c.request_id = new.metadata ->> 'request_id') desc,
+               c.created_at desc
+      limit 1
+      for update skip locked)
+  returning l.id into v_hit;
+  if v_hit is not null then return null; end if;
+  return new;
+end $$;
+
+-- Funções de trigger não passam por EXECUTE na hora de disparar (o Postgres só
+-- confere no CREATE TRIGGER) e não podem ser chamadas fora de trigger. Nenhum
+-- grant a authenticated/anon (v2): ninguém além do dono precisa delas.
+revoke all on function green.fn_guard_crm_lead_stage() from public, anon, authenticated;
+revoke all on function green.fn_emit_crm_lead_stage_changed() from public, anon, authenticated;
+revoke all on function green.fn_suppress_legacy_stage_changed() from public, anon, authenticated;
+grant execute on function green.fn_guard_crm_lead_stage() to service_role;
+grant execute on function green.fn_emit_crm_lead_stage_changed() to service_role;
+grant execute on function green.fn_suppress_legacy_stage_changed() to service_role;
+
+drop trigger if exists trg_green_guard_crm_lead_stage on public.crm_leads;
+create trigger trg_green_guard_crm_lead_stage
+  before insert or update on public.crm_leads
+  for each row execute function green.fn_guard_crm_lead_stage();
+
+drop trigger if exists trg_green_emit_crm_lead_stage_changed on public.crm_leads;
+create trigger trg_green_emit_crm_lead_stage_changed
+  after update on public.crm_leads
+  for each row execute function green.fn_emit_crm_lead_stage_changed();
+
+drop trigger if exists trg_green_suppress_legacy_stage_changed on public.event_log;
+create trigger trg_green_suppress_legacy_stage_changed
+  before insert on public.event_log
+  for each row execute function green.fn_suppress_legacy_stage_changed();
+
+drop trigger if exists trg_green_canonical_mark_immutable on public.event_log;
+create trigger trg_green_canonical_mark_immutable
+  before update on public.event_log
+  for each row when (old.metadata is distinct from new.metadata)
+  execute function green.fn_suppress_legacy_stage_changed();
+
+notify pgrst, 'reload schema';
+
+-- ---- SPIKE Green v3: fronteira bidirecional, canônico write-once, trusted x advisory (migration 0502) ----
+-- 0502 (SPIKE Green v3 — DESCARTÁVEL; não é produto, não vai para produção).
+--
+-- Green Mutation Boundary v3: delta experimental SOBRE a 0501 (v2), que fica
+-- intacta. Fecha os cinco pontos que a AUDIT-DESKCOMM-08.2 falsificou:
+--
+--   ADV-01  a fronteira vale na entrada, na permanência, na SAÍDA e no DELETE
+--           (a v2 decidia tudo por `NEW.pipeline_id`);
+--   ADV-02  o guard deixa de ser oracle cross-tenant: nenhuma leitura Green
+--           acontece antes de a RLS autorizar a escrita;
+--   ADV-03  o evento canônico emitido é write-once (allowlist do consumer) e
+--           não é apagável;
+--   ADV-04  o que o caller controla nunca ocupa o lugar do que o sistema
+--           deriva: envelope `metadata.green.{trusted,advisory}`;
+--   ADV-09  etapa e funil efetivo têm de concordar sempre que a mutação toca o
+--           domínio Green — decidido na fronteira, sem tocar nenhum writer.
+--
+-- ── Por que AFTER, e não BEFORE (ADV-02) ────────────────────────────────────
+-- Na v2 a guarda era um trigger BEFORE `security definer`. BEFORE ROW roda
+-- ANTES do `WITH CHECK` da RLS: num INSERT/UPDATE com `organization_id` de
+-- outra org, a guarda lia o binding daquela org e respondia
+-- `green_stage_not_bound`, enquanto um funil comum caía no erro de RLS — um
+-- oracle. A v3 não acrescenta uma checagem de membro por cima (seria uma
+-- segunda cópia da regra de acesso, que diverge da RLS: platform admin,
+-- suporte, dono do lead): ela MUDA O MOMENTO. Trigger AFTER ROW só é enfileirado
+-- para a linha que a RLS (USING + WITH CHECK) já aceitou e que foi de fato
+-- escrita. Quem não pode escrever na org nunca executa uma linha de código
+-- Green — indistinguível por construção. A recusa continua atômica: exceção em
+-- AFTER ROW aborta o comando inteiro.
+--
+-- ── Pertencimento ao domínio Green (ADV-01 + ADV-09) ────────────────────────
+-- Uma linha TOCA o domínio quando o funil dela é gerenciado OU a etapa dela
+-- pertence a um funil gerenciado DA MESMA organização. A mutação entra na
+-- fronteira se OLD ou NEW tocam o domínio. Etapa de outra organização nunca é
+-- consultada como Green (não vira oracle pelo lado da etapa).
+--
+-- ── Contratos decididos (V3-R01 / V3-R02) ───────────────────────────────────
+--   * saída Green → não-Green: é mutação Green. Writer privilegiado sem
+--     contexto ⇒ 42501; com contexto, ou humano ⇒ `lead.stage_changed` canônico
+--     com `from_pipeline_id` e `green_transition=exit`;
+--   * DELETE de Opportunity Green: writer privilegiado sem contexto ⇒ 42501;
+--     senão lápide canônica `lead.deleted` (`green_transition=delete`) na MESMA
+--     transação. Exceção única: a organização inteira sendo apagada (a própria
+--     `event_log` vai junto na cascata; não há onde gravar a lápide).
+--
+-- ── Confiança (ADV-04) ──────────────────────────────────────────────────────
+--   metadata.green.trusted   derivado pelo banco (caller, actor de `auth.uid()`,
+--                            `source=user_session`) ou, em writer privilegiado,
+--                            o contexto validado que o BACKEND enviou;
+--   metadata.green.advisory  tudo o que uma sessão humana mandou no header.
+-- No topo da metadata do canônico só aparece o que é trusted. Um
+-- `request_id=rule:*` enviado por humano fica em `advisory` e não é lido por
+-- nenhum consumidor de controle.
+
+-- ── livro-razão: lápide, funis da transição e request_id advisory separado ──
+alter table green.stage_event_ledger add column if not exists kind text not null default 'stage_changed';
+alter table green.stage_event_ledger add column if not exists from_pipeline_id uuid;
+alter table green.stage_event_ledger add column if not exists to_pipeline_id uuid;
+alter table green.stage_event_ledger add column if not exists advisory_request_id text;
+-- a lápide de DELETE não tem etapa de destino
+alter table green.stage_event_ledger alter column to_stage_id drop not null;
+comment on column green.stage_event_ledger.request_id is
+  'SPIKE Green v3: request_id CONFIÁVEL (contexto de writer privilegiado). Sessão humana nunca escreve aqui.';
+comment on column green.stage_event_ledger.advisory_request_id is
+  'SPIKE Green v3: request_id enviado por sessão humana — diagnóstico, nunca chave de decisão.';
+
+-- ── a linha toca o domínio Green? (funil gerenciado OU etapa de funil gerenciado da MESMA org)
+create or replace function green.fn_lead_touches_green(p_org uuid, p_pipeline uuid, p_stage uuid)
+returns boolean
+language plpgsql stable
+set search_path = ''
+as $$
+begin
+  if p_org is null then return false; end if;
+  if to_regclass('green.product_pipeline_binding') is null then return false; end if;
+  if green.fn_is_green_pipeline(p_org, p_pipeline) then return true; end if;
+  return exists (
+    select 1
+      from public.crm_stages s
+      join green.product_pipeline_binding b
+        on b.organization_id = s.organization_id and b.pipeline_id = s.pipeline_id
+     where s.id = p_stage and s.organization_id = p_org
+  );
+end $$;
+revoke all on function green.fn_lead_touches_green(uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function green.fn_lead_touches_green(uuid, uuid, uuid) to service_role;
+
+-- ── envelope trusted × advisory sobre o resolver da v2 (que fica intacto) ────
+-- Devolve: { caller, valid, reason, service_origin, trusted, advisory }.
+create or replace function green.fn_mutation_envelope()
+returns jsonb
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_ctx    jsonb := green.fn_mutation_context();
+  v_caller text := v_ctx ->> 'caller';
+  v_valid  boolean := coalesce((v_ctx ->> 'valid')::boolean, false);
+  v_campos jsonb := jsonb_strip_nulls(jsonb_build_object(
+      'source',             v_ctx ->> 'source',
+      'request_id',         v_ctx ->> 'request_id',
+      'correlation_id',     v_ctx ->> 'correlation_id',
+      'causation_event_id', v_ctx ->> 'causation_event_id',
+      'idempotency_key',    v_ctx ->> 'idempotency_key',
+      'source_job_id',      v_ctx ->> 'source_job_id'));
+  v_trusted  jsonb;
+  v_advisory jsonb := '{}'::jsonb;
+begin
+  if v_caller = 'user' then
+    -- Sessão humana: confiável é SÓ o que o banco deriva do canal real. O
+    -- header inteiro é advisory — inclusive `source`, que o cliente escolhe.
+    v_trusted := jsonb_build_object(
+      'caller', 'user', 'actor', v_ctx -> 'actor', 'source', 'user_session');
+    v_advisory := v_campos;
+  elsif v_valid then
+    -- Writer privilegiado: o contexto validado veio do backend (dono da chave).
+    v_trusted := jsonb_build_object('caller', v_caller, 'actor', v_ctx -> 'actor') || v_campos;
+  else
+    v_trusted := jsonb_build_object('caller', v_caller);
+  end if;
+  return jsonb_build_object(
+    'caller', v_caller, 'valid', v_valid, 'reason', v_ctx -> 'reason',
+    'service_origin', case when v_caller <> 'user' and v_valid then v_ctx -> 'service_origin' end,
+    'trusted', v_trusted, 'advisory', v_advisory);
+end $$;
+revoke all on function green.fn_mutation_envelope() from public, anon, authenticated;
+grant execute on function green.fn_mutation_envelope() to service_role;
+
+-- ── a fronteira: UM hook AFTER para INSERT, UPDATE e DELETE ──────────────────
+create or replace function green.fn_crm_lead_boundary()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_old_p   boolean := false;  -- funil de OLD é gerenciado
+  v_new_p   boolean := false;  -- funil de NEW é gerenciado
+  v_toca    boolean := false;
+  v_env     jsonb;
+  v_caller  text;
+  v_trusted jsonb;
+  v_meta    jsonb;
+  v_payload jsonb;
+  v_tipo    text;
+  v_kind    text;
+  v_ledger  uuid;
+  v_event   uuid;
+begin
+  -- só nascimento, exclusão e mudança de etapa/funil/organização entram
+  if tg_op = 'UPDATE'
+     and new.stage_id is not distinct from old.stage_id
+     and new.pipeline_id is not distinct from old.pipeline_id
+     and new.organization_id is not distinct from old.organization_id then
+    return null;
+  end if;
+
+  -- A organização inteira indo embora (cascata): `event_log` e o binding vão
+  -- junto; não há lápide possível nem domínio a proteger.
+  if tg_op = 'DELETE'
+     and not exists (select 1 from public.organizations o where o.id = old.organization_id) then
+    return null;
+  end if;
+
+  if tg_op <> 'INSERT' then
+    v_old_p := green.fn_is_green_pipeline(old.organization_id, old.pipeline_id);
+    v_toca := v_old_p or green.fn_lead_touches_green(old.organization_id, old.pipeline_id, old.stage_id);
+  end if;
+  if tg_op <> 'DELETE' then
+    v_new_p := green.fn_is_green_pipeline(new.organization_id, new.pipeline_id);
+    v_toca := v_toca or v_new_p
+              or green.fn_lead_touches_green(new.organization_id, new.pipeline_id, new.stage_id);
+  end if;
+  if not v_toca then return null; end if;
+
+  -- binding: a etapa de NEW tem de ser do funil e da organização de NEW
+  if tg_op <> 'DELETE' and not exists (
+       select 1 from public.crm_stages s
+        where s.id = new.stage_id
+          and s.organization_id = new.organization_id
+          and s.pipeline_id = new.pipeline_id) then
+    raise exception 'green_stage_not_bound' using errcode = '23503';
+  end if;
+
+  v_env := green.fn_mutation_envelope();
+  v_caller := v_env ->> 'caller';
+  v_trusted := v_env -> 'trusted';
+  if v_caller <> 'user' then
+    if not coalesce((v_env ->> 'valid')::boolean, false) then
+      raise exception 'green_mutation_context_required'
+        using errcode = '42501', detail = coalesce(v_env ->> 'reason', 'missing');
+    end if;
+    if tg_op <> 'DELETE' then
+      perform green.fn_assert_service_origin(v_env -> 'service_origin', new.organization_id, new.contact_id);
+    end if;
+  end if;
+
+  -- nascimento não tem evento canônico (EV-01B, fora desta spike)
+  if tg_op = 'INSERT' then return null; end if;
+
+  if tg_op = 'DELETE' then
+    v_tipo := 'lead.deleted';
+    v_kind := 'deleted';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      old.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'status',           old.status,
+      'green_transition', 'delete');
+  else
+    v_tipo := 'lead.stage_changed';
+    v_kind := 'stage_changed';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      new.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'to_stage_id',      new.stage_id,
+      -- `fn_crm_lead_close_on_stage` é BEFORE: o status aqui já é o derivado
+      'status',           new.status,
+      'green_transition', case when v_new_p then case when v_old_p then 'stay' else 'enter' end
+                               else 'exit' end);
+    if new.pipeline_id is distinct from old.pipeline_id then
+      v_payload := v_payload || jsonb_build_object('from_pipeline_id', old.pipeline_id);
+    end if;
+    -- `command` nunca é transportada (emit_event deriva); humano nunca transporta origem.
+    if jsonb_typeof(v_env -> 'service_origin') = 'object' then
+      v_payload := v_payload || jsonb_build_object('service_origin', v_env -> 'service_origin');
+    end if;
+  end if;
+
+  -- No TOPO só entra o que é trusted. O que a sessão humana mandou fica em
+  -- `green.advisory` e nenhum consumidor de controle lê de lá.
+  v_meta := jsonb_build_object('green_canonical', true, 'green_context_version', 1)
+    || v_trusted
+    || jsonb_strip_nulls(jsonb_build_object(
+         -- compat com o metadata legado
+         'actor_user_id', case when v_caller = 'user' then v_trusted -> 'actor' ->> 'id' end,
+         'actor_kind',    v_trusted -> 'actor' ->> 'kind'))
+    || jsonb_build_object('green', jsonb_build_object(
+         'v', 2, 'trusted', v_trusted, 'advisory', v_env -> 'advisory'));
+
+  -- Prova de produtor (v2, mantida): linha do livro-razão + GUC de uso único.
+  insert into green.stage_event_ledger
+    (organization_id, lead_id, kind, from_stage_id, to_stage_id, from_pipeline_id, to_pipeline_id,
+     request_id, advisory_request_id)
+  values
+    (old.organization_id, old.id, v_kind, old.stage_id,
+     case when tg_op = 'DELETE' then null else new.stage_id end,
+     old.pipeline_id,
+     case when tg_op = 'DELETE' then null else new.pipeline_id end,
+     v_trusted ->> 'request_id', v_env -> 'advisory' ->> 'request_id')
+  returning id into v_ledger;
+  perform set_config('green.canonical_proof', v_ledger::text, true);
+  -- Erro aqui NÃO é capturado: evento falha ⇒ a mutação inteira faz rollback.
+  v_event := public.emit_event(v_tipo, 'crm_lead', old.id, v_payload, v_meta,
+                               case when tg_op = 'DELETE' then old.organization_id else new.organization_id end);
+  perform set_config('green.canonical_proof', '', true);
+  if not exists (select 1 from green.stage_event_ledger l
+                  where l.id = v_ledger and l.canonical_event_id = v_event) then
+    raise exception 'green_canonical_not_recorded' using errcode = 'P0001';
+  end if;
+  return null;
+end $$;
+
+-- ── porteiro da marca + supressor do gêmeo (INSERT em event_log) ────────────
+-- v3: a lápide `lead.deleted` também nasce só do produtor; o envelope `green` é
+-- reservado junto com a marca; o desempate do supressor usa SÓ o request_id
+-- confiável do livro-razão (o de sessão humana deixou de ser elegível).
+create or replace function green.fn_suppress_legacy_stage_changed()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_proof uuid;
+  v_hit   uuid;
+begin
+  -- A imutabilidade do canônico é de `green.fn_event_log_canonical_guard` (v3).
+  if tg_op <> 'INSERT' then return new; end if;
+
+  -- (a) marca e envelope reservados ao produtor: só passam com a prova da
+  --     MESMA transação, de uso único, amarrada a este lead e a esta transição.
+  if new.metadata ?| array['green_canonical', 'green_context_version', 'green'] then
+    begin
+      v_proof := nullif(current_setting('green.canonical_proof', true), '')::uuid;
+    exception when others then
+      v_proof := null;
+    end;
+    if v_proof is not null and new.entity_kind = 'crm_lead'
+       and new.event_type in ('lead.stage_changed', 'lead.deleted') then
+      update green.stage_event_ledger l
+         set canonical_event_id = new.id
+       where l.id = v_proof
+         and l.txid = txid_current()
+         and l.canonical_event_id is null
+         and l.organization_id = new.organization_id
+         and l.lead_id = new.entity_id
+         and l.kind = case new.event_type when 'lead.deleted' then 'deleted' else 'stage_changed' end
+         and l.to_stage_id::text is not distinct from new.payload ->> 'to_stage_id'
+         and l.from_stage_id::text is not distinct from new.payload ->> 'from_stage_id'
+      returning l.id into v_hit;
+    end if;
+    if v_hit is null then
+      raise exception 'green_canonical_reserved' using errcode = '42501',
+        detail = 'a marca canônica só nasce do trigger de crm_leads, na transação da mutação';
+    end if;
+    perform set_config('green.canonical_proof', '', true);
+    return new;
+  end if;
+
+  -- (b) gêmeo legado: suprimido SÓ quando corresponde a uma mutação de etapa já
+  --     canonizada — mesmo lead, mesma transição, gêmeo ainda não visto, janela
+  --     curta. Lápide de DELETE nunca é gêmeo.
+  if new.event_type <> 'lead.stage_changed' or new.entity_kind is distinct from 'crm_lead'
+     or new.entity_id is null then
+    return new;
+  end if;
+  update green.stage_event_ledger l
+     set legacy_suppressed_at = clock_timestamp(),
+         legacy_request_id = left(new.metadata ->> 'request_id', 128)
+   where l.id = (
+     select c.id from green.stage_event_ledger c
+      where c.organization_id = new.organization_id
+        and c.lead_id = new.entity_id
+        and c.kind = 'stage_changed'
+        and c.canonical_event_id is not null
+        and c.legacy_suppressed_at is null
+        and c.to_stage_id::text = new.payload ->> 'to_stage_id'
+        and (not (new.payload ? 'from_stage_id')
+             or c.from_stage_id::text is not distinct from new.payload ->> 'from_stage_id')
+        and c.created_at > clock_timestamp() - interval '5 minutes'
+      -- o MESMO request CONFIÁVEL (quando os dois o têm) primeiro; depois o mais recente
+      order by (c.request_id is not null and c.request_id = new.metadata ->> 'request_id') desc,
+               c.created_at desc
+      limit 1
+      for update skip locked)
+  returning l.id into v_hit;
+  if v_hit is not null then return null; end if;
+  return new;
+end $$;
+
+-- ── o canônico emitido é registro histórico: write-once + allowlist (ADV-03) ─
+-- Colunas que o consumer (drain) continua mexendo: status, consumed_by,
+-- attempts, last_error, next_attempt_at, updated_at. TODO o resto — metadata
+-- inteira, payload, entity_id, organization_id, event_type, entity_kind,
+-- created_at — é imutável, para qualquer papel. DELETE do canônico é recusado;
+-- a única exceção é a organização inteira sendo apagada (cascata). Manutenção
+-- administrativa (retenção) fica FORA da API e fora do modelo desta spike: é o
+-- dono desligando o trigger numa janela explícita.
+create or replace function green.fn_event_log_canonical_guard()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  c_reservadas constant text[] := array['green_canonical', 'green_context_version', 'green'];
+  c_mutaveis   constant text[] := array['status', 'consumed_by', 'attempts', 'last_error',
+                                        'next_attempt_at', 'updated_at'];
+begin
+  if tg_op = 'DELETE' then
+    if old.metadata ?| c_reservadas
+       and exists (select 1 from public.organizations o where o.id = old.organization_id) then
+      raise exception 'green_canonical_immutable' using errcode = '42501',
+        detail = 'evento canônico Green não é apagável';
+    end if;
+    return old;
+  end if;
+
+  if (old.metadata ?| c_reservadas or new.metadata ?| c_reservadas)
+     and (to_jsonb(old) - c_mutaveis) is distinct from (to_jsonb(new) - c_mutaveis) then
+    raise exception 'green_canonical_immutable' using errcode = '42501',
+      detail = 'evento canônico Green é write-once; só os campos do consumer mudam';
+  end if;
+  return new;
+end $$;
+
+revoke all on function green.fn_crm_lead_boundary() from public, anon, authenticated;
+revoke all on function green.fn_suppress_legacy_stage_changed() from public, anon, authenticated;
+revoke all on function green.fn_event_log_canonical_guard() from public, anon, authenticated;
+grant execute on function green.fn_crm_lead_boundary() to service_role;
+grant execute on function green.fn_suppress_legacy_stage_changed() to service_role;
+grant execute on function green.fn_event_log_canonical_guard() to service_role;
+
+-- ── triggers: os dois hooks da v2 em crm_leads dão lugar a UM hook AFTER ─────
+drop trigger if exists trg_green_guard_crm_lead_stage on public.crm_leads;
+drop trigger if exists trg_green_emit_crm_lead_stage_changed on public.crm_leads;
+drop trigger if exists trg_green_crm_lead_boundary on public.crm_leads;
+create trigger trg_green_crm_lead_boundary
+  after insert or update or delete on public.crm_leads
+  for each row execute function green.fn_crm_lead_boundary();
+
+drop trigger if exists trg_green_canonical_mark_immutable on public.event_log;
+drop trigger if exists trg_green_canonical_immutable on public.event_log;
+create trigger trg_green_canonical_immutable
+  before update or delete on public.event_log
+  for each row execute function green.fn_event_log_canonical_guard();
+
+notify pgrst, 'reload schema';
+
+-- ---- SPIKE Green lifecycle: nascimento com proveniência, lápide registro, zona de perigo atômica (migration 0503) ----
+-- 0503 (SPIKE Green lifecycle — DESCARTÁVEL; não é produto, não vai para produção).
+--
+-- SPIKE-GREEN-01: ciclo de vida da Opportunity Green — INSERT, DELETE e
+-- lápide. Delta experimental SOBRE a 0502 (v3), que fica intacta.
+--
+-- ── 1. Nascimento Green deixa proveniência (EV-01B) ────────────────────────
+-- A v3 já exigia contexto válido de writer privilegiado no INSERT, mas o
+-- contexto era conferido e DESCARTADO: nada sobrava dizendo quem fez nascer a
+-- Opportunity, com que origem. `green.lead_birth_provenance` guarda, na MESMA
+-- transação do INSERT, o envelope trusted × advisory que a fronteira já monta.
+-- NÃO é evento: um `lead.created` canônico seria gêmeo do `lead.created` que o
+-- código já emite depois do insert (consumido por automação e follow-up), e
+-- resolver gêmeo é o supressor — fora desta spike. Tabela própria, e não o
+-- livro-razão de etapa, porque o livro-razão é a prova de produtor do evento
+-- canônico; nascimento não tem evento.
+--
+-- ── 2. A lápide `lead.deleted` é REGISTRO (L3) ──────────────────────────────
+-- Derivado do desenho do `event_log` (migration 0239, issue #753): `pending` é
+-- fila — o drain reivindica `pending` ∩ tipos com handler —, e tipo-fato sem
+-- consumidor nasce `done`. A lápide é fato consumado (o DELETE já aconteceu na
+-- mesma transação), não tem consumidor e não pode ter reprocessamento pela
+-- fila. Ela entra na lista do banco (`fn_event_log_e_registro`), que é o
+-- mecanismo que o upstream construiu para isto — não um status escolhido pelo
+-- produtor Green. A emissão passa a usar o tipo LITERAL para a cerca
+-- `tests/unit/evento-de-fato-nao-fica-pendente.test.ts` enxergá-la (com o tipo
+-- numa variável, a cerca era cega para a lápide). O estoque `pending` da v3 é
+-- fechado pelo backfill, como na 0239.
+--
+-- ── 3. Resíduo e rastro da cascata de organização ──────────────────────────
+-- O livro-razão é tenant-aware e nasceu sem FK: apagar a organização deixava
+-- linhas órfãs (contrário à doutrina do repo: `organization_id ... on delete
+-- cascade` em toda tabela tenant-aware). Ganha a FK. E a remoção de um funil
+-- gerenciado (cascata da organização, ou do funil) passa a deixar UMA linha em
+-- `api_audit_log` (append-only, sobrevive ao tenant com `organization_id`
+-- nulo), sem PII: organização, funil, produto, quem e por qual papel.
+--
+-- ── 4. Zona de perigo em UMA transação (L2) ─────────────────────────────────
+-- `fn_apagar_dados_operacionais_da_org` faz os sete DELETE da rotina numa
+-- transação só: com lead Green e sem contexto, a recusa da fronteira desfaz
+-- TUDO (antes: mensagens, conversas, agenda, pedidos e propostas já tinham
+-- ido). Precedente do próprio upstream para a mesma classe:
+-- `fn_apagar_contato_com_historico` (0488, #752). SECURITY INVOKER e EXECUTE
+-- só para `service_role` — não é porta nova (quem a executa já podia cada
+-- DELETE), é atomicidade. O header Green da request RPC chega à fronteira.
+
+-- ── 1 · livro-razão: FK de tenant ───────────────────────────────────────────
+delete from green.stage_event_ledger l
+ where not exists (select 1 from public.organizations o where o.id = l.organization_id);
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint
+     where conname = 'stage_event_ledger_organization_id_fkey'
+       and conrelid = 'green.stage_event_ledger'::regclass
+  ) then
+    alter table green.stage_event_ledger
+      add constraint stage_event_ledger_organization_id_fkey
+      foreign key (organization_id) references public.organizations(id) on delete cascade;
+  end if;
+end $$;
+
+-- ── 1 · registro de nascimento ──────────────────────────────────────────────
+create table if not exists green.lead_birth_provenance (
+  lead_id         uuid primary key,
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  pipeline_id     uuid not null,
+  stage_id        uuid not null,
+  caller          text not null,
+  trusted         jsonb not null,
+  advisory        jsonb not null default '{}'::jsonb,
+  service_origin  jsonb,
+  txid            bigint not null default txid_current(),
+  created_at      timestamptz not null default now()
+);
+comment on table green.lead_birth_provenance is
+  'SPIKE Green lifecycle: proveniência do nascimento de uma Opportunity Green (envelope trusted × advisory da fronteira), gravada pelo trigger na transação do INSERT. Sem FK para o lead: sobrevive à exclusão como histórico; morre com a organização.';
+alter table green.lead_birth_provenance enable row level security;
+revoke all on green.lead_birth_provenance from public, anon, authenticated, service_role;
+grant select on green.lead_birth_provenance to service_role;
+
+-- ── a fronteira (v3) com nascimento registrado e tipos literais ────────────
+create or replace function green.fn_crm_lead_boundary()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_old_p   boolean := false;  -- funil de OLD é gerenciado
+  v_new_p   boolean := false;  -- funil de NEW é gerenciado
+  v_toca    boolean := false;
+  v_env     jsonb;
+  v_caller  text;
+  v_trusted jsonb;
+  v_meta    jsonb;
+  v_payload jsonb;
+  v_kind    text;
+  v_ledger  uuid;
+  v_event   uuid;
+begin
+  if tg_op = 'UPDATE'
+     and new.stage_id is not distinct from old.stage_id
+     and new.pipeline_id is not distinct from old.pipeline_id
+     and new.organization_id is not distinct from old.organization_id then
+    return null;
+  end if;
+
+  -- A organização inteira indo embora (cascata): sem lápide possível.
+  if tg_op = 'DELETE'
+     and not exists (select 1 from public.organizations o where o.id = old.organization_id) then
+    return null;
+  end if;
+
+  if tg_op <> 'INSERT' then
+    v_old_p := green.fn_is_green_pipeline(old.organization_id, old.pipeline_id);
+    v_toca := v_old_p or green.fn_lead_touches_green(old.organization_id, old.pipeline_id, old.stage_id);
+  end if;
+  if tg_op <> 'DELETE' then
+    v_new_p := green.fn_is_green_pipeline(new.organization_id, new.pipeline_id);
+    v_toca := v_toca or v_new_p
+              or green.fn_lead_touches_green(new.organization_id, new.pipeline_id, new.stage_id);
+  end if;
+  if not v_toca then return null; end if;
+
+  if tg_op <> 'DELETE' and not exists (
+       select 1 from public.crm_stages s
+        where s.id = new.stage_id
+          and s.organization_id = new.organization_id
+          and s.pipeline_id = new.pipeline_id) then
+    raise exception 'green_stage_not_bound' using errcode = '23503';
+  end if;
+
+  v_env := green.fn_mutation_envelope();
+  v_caller := v_env ->> 'caller';
+  v_trusted := v_env -> 'trusted';
+  if v_caller <> 'user' then
+    if not coalesce((v_env ->> 'valid')::boolean, false) then
+      raise exception 'green_mutation_context_required'
+        using errcode = '42501', detail = coalesce(v_env ->> 'reason', 'missing');
+    end if;
+    if tg_op <> 'DELETE' then
+      perform green.fn_assert_service_origin(v_env -> 'service_origin', new.organization_id, new.contact_id);
+    end if;
+  end if;
+
+  -- lifecycle: o nascimento Green deixa a proveniência na MESMA transação.
+  -- Falha aqui não é capturada: sem registro, sem nascimento.
+  if tg_op = 'INSERT' then
+    insert into green.lead_birth_provenance
+      (lead_id, organization_id, pipeline_id, stage_id, caller, trusted, advisory, service_origin)
+    values
+      (new.id, new.organization_id, new.pipeline_id, new.stage_id, v_caller, v_trusted,
+       coalesce(v_env -> 'advisory', '{}'::jsonb),
+       case when jsonb_typeof(v_env -> 'service_origin') = 'object' then v_env -> 'service_origin' end);
+    return null;
+  end if;
+
+  if tg_op = 'DELETE' then
+    v_kind := 'deleted';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      old.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'status',           old.status,
+      'green_transition', 'delete');
+  else
+    v_kind := 'stage_changed';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      new.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'to_stage_id',      new.stage_id,
+      'status',           new.status,
+      'green_transition', case when v_new_p then case when v_old_p then 'stay' else 'enter' end
+                               else 'exit' end);
+    if new.pipeline_id is distinct from old.pipeline_id then
+      v_payload := v_payload || jsonb_build_object('from_pipeline_id', old.pipeline_id);
+    end if;
+    if jsonb_typeof(v_env -> 'service_origin') = 'object' then
+      v_payload := v_payload || jsonb_build_object('service_origin', v_env -> 'service_origin');
+    end if;
+  end if;
+
+  v_meta := jsonb_build_object('green_canonical', true, 'green_context_version', 1)
+    || v_trusted
+    || jsonb_strip_nulls(jsonb_build_object(
+         'actor_user_id', case when v_caller = 'user' then v_trusted -> 'actor' ->> 'id' end,
+         'actor_kind',    v_trusted -> 'actor' ->> 'kind'))
+    || jsonb_build_object('green', jsonb_build_object(
+         'v', 2, 'trusted', v_trusted, 'advisory', v_env -> 'advisory'));
+
+  insert into green.stage_event_ledger
+    (organization_id, lead_id, kind, from_stage_id, to_stage_id, from_pipeline_id, to_pipeline_id,
+     request_id, advisory_request_id)
+  values
+    (old.organization_id, old.id, v_kind, old.stage_id,
+     case when tg_op = 'DELETE' then null else new.stage_id end,
+     old.pipeline_id,
+     case when tg_op = 'DELETE' then null else new.pipeline_id end,
+     v_trusted ->> 'request_id', v_env -> 'advisory' ->> 'request_id')
+  returning id into v_ledger;
+  perform set_config('green.canonical_proof', v_ledger::text, true);
+  -- Tipo LITERAL em cada ramo: é o que a cerca de evento-fato enxerga.
+  if tg_op = 'DELETE' then
+    v_event := public.emit_event('lead.deleted', 'crm_lead', old.id, v_payload, v_meta, old.organization_id);
+  else
+    v_event := public.emit_event('lead.stage_changed', 'crm_lead', old.id, v_payload, v_meta, new.organization_id);
+  end if;
+  perform set_config('green.canonical_proof', '', true);
+  if not exists (select 1 from green.stage_event_ledger l
+                  where l.id = v_ledger and l.canonical_event_id = v_event) then
+    raise exception 'green_canonical_not_recorded' using errcode = 'P0001';
+  end if;
+  return null;
+end $$;
+revoke all on function green.fn_crm_lead_boundary() from public, anon, authenticated;
+grant execute on function green.fn_crm_lead_boundary() to service_role;
+
+-- ── 2 · a lápide é registro (mesma lista da 0417 + `lead.deleted`) ──────────
+create or replace function public.fn_event_log_e_registro(p_event_type text)
+returns boolean
+language sql
+immutable
+set search_path to 'public', 'pg_temp'
+as $$
+  select p_event_type = any (array[
+    -- IA e agente
+    'ai.responded',
+    'ai_agent.created',
+    'ai_agent.published',
+    'ai_agent.run_completed',
+    'ai_agent.run_failed',
+    'ai_agent.run_started',
+    -- agente (harness) — o motor registra quando não há negócio para pendurar
+    'agent.activity_unrouted',
+    -- canal e conversa
+    'channel_session.status_changed',
+    'conversation.claimed',
+    'conversation.transferred',
+    'whatsapp.chat_id_not_recognized',
+    'whatsapp.conversation_mark_failed',
+    -- contato, lead, organização e plataforma
+    'contact.anonymized',
+    'contact.created',
+    'contact.deleted',
+    'contact.updated',
+    'crm.activity_write_failed',
+    'incident.resolved',
+    'lead.bulk_assigned',
+    'lead.bulk_deleted',
+    'lead.bulk_tagged',
+    -- SPIKE Green lifecycle: a lápide canônica da Opportunity Green
+    'lead.deleted',
+    'lead.reopened',
+    'lead.risk_backlog_seeded',
+    'lead.updated',
+    'org.updated',
+    'tenant.onboarded',
+    'tenant.reactivated',
+    'tenant.suspended',
+    'user.profile_updated',
+    -- mensagem ('message.failed' saiu aqui na 0417: ele ganhou consumidor)
+    'message.outbound',
+    'message.sending',
+    'message.sent',
+    -- LGPD
+    'lgpd.export_delivered',
+    'lgpd.export_generated',
+    'lgpd.redact_applied',
+    'lgpd.redact_failed'
+  ]::text[]);
+$$;
+revoke all on function public.fn_event_log_e_registro(text) from public, anon;
+grant execute on function public.fn_event_log_e_registro(text) to authenticated, service_role;
+
+-- O estoque: lápides que a v3 deixou `pending`. Só o status (o guard do
+-- canônico deixa os campos do consumer mudarem); conteúdo intocado.
+update public.event_log
+   set status = 'done', updated_at = now()
+ where status = 'pending'
+   and event_type = 'lead.deleted';
+
+-- ── 3 · funil gerenciado removido deixa rastro auditável ────────────────────
+create or replace function green.fn_binding_removed_audit()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_env         jsonb := green.fn_mutation_envelope();
+  v_org_deleted boolean := not exists (select 1 from public.organizations o where o.id = old.organization_id);
+begin
+  -- `organization_id` nulo quando o tenant está indo embora: a FK de
+  -- `api_audit_log` não aceitaria uma org que já não existe, e é justamente
+  -- esta linha que tem de sobreviver a ela. O id fica no metadata.
+  insert into public.api_audit_log
+    (organization_id, actor_user_id, acting_as_platform_admin, action, resource_type, resource_id,
+     bypassed_rls, metadata)
+  values
+    (case when v_org_deleted then null else old.organization_id end,
+     auth.uid(),
+     coalesce(public.fn_is_platform_admin(), false),
+     'green.binding_removed', 'crm_pipeline', old.pipeline_id,
+     coalesce(v_env ->> 'caller', '') <> 'user',
+     jsonb_build_object(
+       'organization_id', old.organization_id,
+       'pipeline_id',     old.pipeline_id,
+       'product_key',     old.product_key,
+       'org_deleted',     v_org_deleted,
+       'caller',          v_env ->> 'caller',
+       'trusted',         v_env -> 'trusted'));
+  return null;
+end $$;
+revoke all on function green.fn_binding_removed_audit() from public, anon, authenticated;
+grant execute on function green.fn_binding_removed_audit() to service_role;
+
+drop trigger if exists trg_green_binding_removed_audit on green.product_pipeline_binding;
+create trigger trg_green_binding_removed_audit
+  after delete on green.product_pipeline_binding
+  for each row execute function green.fn_binding_removed_audit();
+
+-- ── 4 · zona de perigo numa transação só ────────────────────────────────────
+-- Mesma ordem de `RAIZES_DO_APAGAMENTO` (lib/settings/apagar-dados-operacionais.ts):
+-- quem tem FK RESTRICT para `contacts` sai antes dele. Todo DELETE filtra a
+-- organização recebida — quem chama a resolve da sessão, nunca do corpo.
+create or replace function public.fn_apagar_dados_operacionais_da_org(p_org uuid)
+returns jsonb
+language plpgsql
+volatile
+security invoker
+set search_path = ''
+as $$
+declare
+  v_contagens jsonb := '{}'::jsonb;
+  v_n bigint;
+begin
+  if p_org is null then
+    raise exception 'organization_required' using errcode = '22023';
+  end if;
+
+  delete from public.messages where organization_id = p_org;
+  get diagnostics v_n = row_count;
+  v_contagens := v_contagens || jsonb_build_object('messages', v_n);
+
+  delete from public.conversations where organization_id = p_org;
+  get diagnostics v_n = row_count;
+  v_contagens := v_contagens || jsonb_build_object('conversations', v_n);
+
+  delete from public.calendar_appointments where organization_id = p_org;
+  get diagnostics v_n = row_count;
+  v_contagens := v_contagens || jsonb_build_object('calendar_appointments', v_n);
+
+  delete from public.orders where organization_id = p_org;
+  get diagnostics v_n = row_count;
+  v_contagens := v_contagens || jsonb_build_object('orders', v_n);
+
+  delete from public.crm_proposals where organization_id = p_org;
+  get diagnostics v_n = row_count;
+  v_contagens := v_contagens || jsonb_build_object('crm_proposals', v_n);
+
+  -- Opportunity Green: a fronteira exige o contexto da request e deixa a
+  -- lápide; sem contexto, a recusa desfaz os cinco DELETE acima também.
+  delete from public.crm_leads where organization_id = p_org;
+  get diagnostics v_n = row_count;
+  v_contagens := v_contagens || jsonb_build_object('crm_leads', v_n);
+
+  delete from public.contacts where organization_id = p_org;
+  get diagnostics v_n = row_count;
+  v_contagens := v_contagens || jsonb_build_object('contacts', v_n);
+
+  return v_contagens;
+end $$;
+revoke all on function public.fn_apagar_dados_operacionais_da_org(uuid) from public, anon, authenticated;
+grant execute on function public.fn_apagar_dados_operacionais_da_org(uuid) to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ---- SPIKE Green lifecycle v1.2: identidade não reciclável, request_id advisory (migration 0504) ----
+-- 0504 (SPIKE Green lifecycle v1.2 — DESCARTÁVEL; não é produto, não vai para produção).
+--
+-- SPIKE-GREEN-01.2: correções da AUDIT-GREEN-01.1. Delta experimental SOBRE a 0503
+-- (lifecycle v1), que fica intacta junto com a 0501 e a 0502.
+--
+-- ── 1. LIFE-ADV-02: o x-request-id do cliente nunca é confiável ─────────────────
+-- O banco confia no contexto que o BACKEND manda (writer privilegiado). O defeito
+-- estava no backend, que copiava o header do cliente para `request_id` /
+-- `correlation_id`; o conserto de origem é do TS (o gate gera o id). Aqui o banco
+-- ganha o lugar do que o cliente mandou: a chave `client_request_id` do contexto,
+-- que o envelope põe SEMPRE em `advisory` (qualquer caller) e nunca em `trusted`.
+-- `fn_mutation_context` e `fn_mutation_envelope` são REDEFINIDAS (cópias das da
+-- 0501/0502 com só esse delta); o `advisory_request_id` do livro-razão passa a
+-- preferir o id do cliente.
+--
+-- ── 2. LIFE-ADV-03: o UUID de um lead Green NÃO é reciclável ─────────────────────
+-- Decisão arquitetural: um UUID identifica UMA existência lógica de lead. Depois de
+-- participar do lifecycle Green ele não representa outro lead; DELETE não o libera.
+-- `green.lead_identity (lead_id, state, first_seen_at, retired_at)` é o registro
+-- mínimo: SEM FK para o lead (sobrevive ao DELETE) e SEM FK para organização (a
+-- cascata do tenant não devolve o UUID), sem org/ator/origem/PII — o histórico
+-- vive no `event_log`, no livro-razão e na proveniência. `live` enquanto o lead
+-- existe, `retired` para sempre depois do DELETE (qualquer DELETE de um lead com
+-- identidade, Green ou não, inclusive pela cascata). A fronteira reivindica a
+-- identidade em toda ENTRADA no domínio (INSERT Green ou lead que vem de fora) e
+-- recusa um UUID aposentado com `green_lead_id_reuse_forbidden`, a mesma resposta
+-- para qualquer organização. Trocar o id de um lead com identidade é recusado
+-- (`green_lead_id_immutable`): trocar o id libertaria o antigo.
+-- `lead_birth_provenance` continua uma linha por lead: o reuso é recusado ANTES do
+-- insert, então a PK deixa de ser a barreira acidental.
+-- Backfill: leads que hoje tocam o domínio entram `live`; todo id com rastro Green
+-- (proveniência, livro-razão, lápide) cujo lead não existe mais entra `retired`.
+-- Limite honesto: UUIDs de leads cuja organização foi apagada ANTES da 0504 não
+-- deixaram rastro (a proveniência e o livro-razão cascateiam com o tenant) e não
+-- podem ser aposentados retroativamente.
+
+-- ── 1 · contexto e envelope: `client_request_id` é sempre advisory ────────────
+create or replace function green.fn_mutation_context()
+returns jsonb
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_uid       uuid := auth.uid();
+  v_jwt_role  text;
+  v_role      text;
+  v_caller    text;
+  v_header    text;
+  v_raw       jsonb;
+  v_reason    text := null;
+  v_actor     jsonb := null;
+  v_origin    jsonb := null;
+  v_boundary  jsonb;
+  v_kind      text;
+  v_advisory  jsonb := '{}'::jsonb;
+begin
+  begin
+    v_jwt_role := coalesce(auth.jwt() ->> 'role', '');
+  exception when others then
+    v_jwt_role := '';
+  end;
+  -- Papel da REQUEST, não `current_user`: chamado de trigger definer,
+  -- `current_user` é o dono; o claim e o GUC `role` (SET ROLE do PostgREST)
+  -- continuam sendo os de quem fez a request.
+  v_role := coalesce(nullif(v_jwt_role, ''), nullif(current_setting('role', true), 'none'), '');
+  v_caller := case
+    when v_uid is not null then 'user'
+    when v_role = 'service_role' then 'service_role'
+    when v_role in ('anon', 'authenticated') then 'anonymous'
+    else 'direct'
+  end;
+
+  -- transporte 1: header da request PostgREST
+  begin
+    v_header := nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-green-mutation-context';
+  exception when others then
+    v_header := null;
+  end;
+  if v_header is not null then
+    begin
+      v_raw := convert_from(decode(v_header, 'base64'), 'UTF8')::jsonb;
+    exception when others then
+      v_raw := null; v_reason := 'undecodable_header';
+    end;
+  elsif v_caller = 'direct' then
+    -- transporte 2: GUC transacional — só conexão pg direta (sem papel de request)
+    begin
+      v_raw := nullif(current_setting('green.mutation_context', true), '')::jsonb;
+    exception when others then
+      v_raw := null; v_reason := 'undecodable_guc';
+    end;
+  end if;
+
+  -- ── validação de forma (vale para todo chamador; humano só a usa como advisory)
+  if v_raw is not null and jsonb_typeof(v_raw) <> 'object' then
+    v_raw := null; v_reason := coalesce(v_reason, 'not_object');
+  end if;
+  if v_raw is not null and octet_length(v_raw::text) > 4096 then
+    v_raw := null; v_reason := 'too_large';
+  end if;
+  if v_raw is not null and exists (
+       select 1 from jsonb_object_keys(v_raw) k
+        where k not in ('v','source','request_id','correlation_id','causation_event_id',
+                        'source_job_id','idempotency_key','client_request_id','actor','service_origin')) then
+    -- contrato fechado por chave: PII não tem por onde entrar
+    v_raw := null; v_reason := 'unknown_key';
+  end if;
+  if v_raw is not null then
+    if v_raw ->> 'v' is distinct from '1' then v_reason := 'version';
+    elsif not (coalesce(v_raw ->> 'source', '') ~ '^[a-z][a-z0-9_.:-]{0,63}$') then v_reason := 'source';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'request_id') then v_reason := 'request_id';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'correlation_id') then v_reason := 'correlation_id';
+    elsif not green.fn_ctx_uuid_ok(v_raw ->> 'causation_event_id') then v_reason := 'causation_event_id';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'source_job_id') then v_reason := 'source_job_id';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'idempotency_key') then v_reason := 'idempotency_key';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'client_request_id') then v_reason := 'client_request_id';
+    end if;
+  end if;
+  if v_raw is not null and v_reason is null then
+    v_advisory := jsonb_strip_nulls(jsonb_build_object(
+      'source',             v_raw ->> 'source',
+      'request_id',         v_raw ->> 'request_id',
+      'correlation_id',     v_raw ->> 'correlation_id',
+      'causation_event_id', v_raw ->> 'causation_event_id',
+      'idempotency_key',    v_raw ->> 'idempotency_key',
+      'source_job_id',      v_raw ->> 'source_job_id',
+      'client_request_id',  v_raw ->> 'client_request_id'));
+  end if;
+
+  -- ── sessão humana: actor é auth.uid(); actor/service_origin do header são ignorados
+  if v_caller = 'user' then
+    return jsonb_build_object(
+      'caller', 'user', 'valid', true, 'reason', null,
+      'actor', jsonb_build_object('kind', 'user', 'id', v_uid),
+      'service_origin', null) || v_advisory;
+  end if;
+
+  -- ── request sem identidade: nunca confiável, qualquer que seja o header
+  if v_caller = 'anonymous' then
+    return jsonb_build_object(
+      'caller', 'anonymous', 'valid', false, 'reason', 'anonymous',
+      'actor', null, 'service_origin', null);
+  end if;
+
+  -- ── writer privilegiado: actor explícito e service_origin validados por schema
+  if v_raw is not null and v_reason is null then
+    v_actor := v_raw -> 'actor';
+    if v_actor is null then v_reason := 'actor_required';
+    elsif jsonb_typeof(v_actor) <> 'object' then v_reason := 'actor';
+    elsif exists (select 1 from jsonb_object_keys(v_actor) k where k not in ('kind','id','agent_id','api_token_id')) then v_reason := 'actor_key';
+    elsif coalesce(v_actor ->> 'kind', '') not in ('ai_agent','api_token','webhook_source','system') then v_reason := 'actor_kind';
+    elsif not green.fn_ctx_id_ok(v_actor ->> 'id') or not green.fn_ctx_id_ok(v_actor ->> 'agent_id')
+       or not green.fn_ctx_id_ok(v_actor ->> 'api_token_id') then v_reason := 'actor_id';
+    end if;
+  end if;
+  if v_raw is not null and v_reason is null and v_raw ? 'service_origin' then
+    v_origin := v_raw -> 'service_origin';
+    v_kind := case when jsonb_typeof(v_origin) = 'object' then v_origin ->> 'kind' end;
+    if v_kind = 'event' then
+      if exists (select 1 from jsonb_object_keys(v_origin) k where k not in ('kind','event_id','organization_id','contact_id'))
+         or v_origin ->> 'event_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'event_id')
+         or v_origin ->> 'organization_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'organization_id')
+         or v_origin ->> 'contact_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'contact_id') then
+        v_reason := 'service_origin_event';
+      end if;
+    elsif v_kind = 'continuation' then
+      v_boundary := v_origin -> 'boundary';
+      if exists (select 1 from jsonb_object_keys(v_origin) k where k not in ('kind','boundary'))
+         or v_boundary is null or jsonb_typeof(v_boundary) <> 'object'
+         or exists (select 1 from jsonb_object_keys(v_boundary) k
+                     where k not in ('organization_id','contact_id','conversation_id','service_revision','demanda_id','demanda_revision'))
+         or v_boundary ->> 'organization_id' is null or not green.fn_ctx_uuid_ok(v_boundary ->> 'organization_id')
+         or v_boundary ->> 'contact_id' is null or not green.fn_ctx_uuid_ok(v_boundary ->> 'contact_id')
+         or v_boundary ->> 'conversation_id' is null or not green.fn_ctx_uuid_ok(v_boundary ->> 'conversation_id')
+         or jsonb_typeof(v_boundary -> 'service_revision') <> 'number'
+         or not (jsonb_typeof(v_boundary -> 'demanda_id') = 'null' or green.fn_ctx_uuid_ok(v_boundary ->> 'demanda_id'))
+         or jsonb_typeof(v_boundary -> 'demanda_revision') not in ('null','number') then
+        v_reason := 'service_origin_continuation';
+      end if;
+    else
+      -- `command` nunca viaja (o banco deriva); `unavailable` não é origem.
+      v_reason := 'service_origin_kind';
+    end if;
+  end if;
+
+  if v_raw is null or v_reason is not null then
+    return jsonb_build_object(
+      'caller', v_caller, 'valid', false, 'reason', coalesce(v_reason, 'missing'),
+      'actor', null, 'service_origin', null);
+  end if;
+  return jsonb_build_object(
+    'caller', v_caller, 'valid', true, 'reason', null,
+    'actor', v_actor, 'service_origin', v_origin) || v_advisory;
+end $$;
+revoke all on function green.fn_mutation_context() from public, anon, authenticated;
+grant execute on function green.fn_mutation_context() to service_role;
+
+create or replace function green.fn_mutation_envelope()
+returns jsonb
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_ctx    jsonb := green.fn_mutation_context();
+  v_caller text := v_ctx ->> 'caller';
+  v_valid  boolean := coalesce((v_ctx ->> 'valid')::boolean, false);
+  v_campos jsonb := jsonb_strip_nulls(jsonb_build_object(
+      'source',             v_ctx ->> 'source',
+      'request_id',         v_ctx ->> 'request_id',
+      'correlation_id',     v_ctx ->> 'correlation_id',
+      'causation_event_id', v_ctx ->> 'causation_event_id',
+      'idempotency_key',    v_ctx ->> 'idempotency_key',
+      'source_job_id',      v_ctx ->> 'source_job_id'));
+  v_trusted  jsonb;
+  v_advisory jsonb := '{}'::jsonb;
+  -- o que o CLIENTE mandou como x-request-id: advisory em QUALQUER caller, nunca trusted
+  v_cliente  jsonb := jsonb_strip_nulls(jsonb_build_object('client_request_id', v_ctx ->> 'client_request_id'));
+begin
+  if v_caller = 'user' then
+    -- Sessão humana: confiável é SÓ o que o banco deriva do canal real. O
+    -- header inteiro é advisory — inclusive `source`, que o cliente escolhe.
+    v_trusted := jsonb_build_object(
+      'caller', 'user', 'actor', v_ctx -> 'actor', 'source', 'user_session');
+    v_advisory := v_campos || v_cliente;
+  elsif v_valid then
+    -- Writer privilegiado: o contexto validado veio do backend (dono da chave).
+    v_trusted := jsonb_build_object('caller', v_caller, 'actor', v_ctx -> 'actor') || v_campos;
+    v_advisory := v_cliente;
+  else
+    v_trusted := jsonb_build_object('caller', v_caller);
+  end if;
+  return jsonb_build_object(
+    'caller', v_caller, 'valid', v_valid, 'reason', v_ctx -> 'reason',
+    'service_origin', case when v_caller <> 'user' and v_valid then v_ctx -> 'service_origin' end,
+    'trusted', v_trusted, 'advisory', v_advisory);
+end $$;
+revoke all on function green.fn_mutation_envelope() from public, anon, authenticated;
+grant execute on function green.fn_mutation_envelope() to service_role;
+
+-- ── 2 · registro de identidade ──────────────────────────────────────────────
+create table if not exists green.lead_identity (
+  lead_id       uuid primary key,
+  state         text not null default 'live' check (state in ('live', 'retired')),
+  first_seen_at timestamptz not null default now(),
+  retired_at    timestamptz,
+  constraint lead_identity_retirada_coerente check ((state = 'retired') = (retired_at is not null))
+);
+comment on table green.lead_identity is
+  'SPIKE Green lifecycle v1.2: identidade mínima de um lead que participou do domínio Green. Sem FK (sobrevive ao DELETE do lead e à cascata do tenant), sem org/ator/origem/PII. live = o lead existe; retired = a existência lógica acabou e o UUID não pode representar outro lead.';
+alter table green.lead_identity enable row level security;
+revoke all on green.lead_identity from public, anon, authenticated, service_role;
+grant select on green.lead_identity to service_role;
+
+-- backfill (reaplicável): quem toca o domínio hoje está vivo; todo id com rastro Green
+-- cujo lead não existe mais está aposentado.
+insert into green.lead_identity (lead_id)
+select l.id
+  from public.crm_leads l
+ where exists (select 1 from green.product_pipeline_binding b
+                where b.organization_id = l.organization_id and b.pipeline_id = l.pipeline_id)
+    or exists (select 1
+                 from public.crm_stages s
+                 join green.product_pipeline_binding b
+                   on b.organization_id = s.organization_id and b.pipeline_id = s.pipeline_id
+                where s.id = l.stage_id and s.organization_id = l.organization_id)
+on conflict (lead_id) do nothing;
+
+insert into green.lead_identity (lead_id, state, retired_at)
+select h.lead_id,
+       case when exists (select 1 from public.crm_leads l where l.id = h.lead_id) then 'live' else 'retired' end,
+       case when exists (select 1 from public.crm_leads l where l.id = h.lead_id) then null else now() end
+  from (select p.lead_id from green.lead_birth_provenance p
+        union
+        select g.lead_id from green.stage_event_ledger g
+        union
+        select e.entity_id from public.event_log e
+         where e.entity_kind = 'crm_lead' and e.event_type = 'lead.deleted'
+           and e.metadata -> 'green_canonical' = 'true'::jsonb
+           and e.entity_id is not null) h
+on conflict (lead_id) do nothing;
+
+-- reivindica a identidade de um lead que entra no domínio; recusa a de um UUID aposentado.
+-- Só a fronteira (definer, dono) a executa: nenhum papel de API a alcança.
+create or replace function green.fn_claim_lead_identity(p_lead uuid)
+returns void
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_state text;
+begin
+  insert into green.lead_identity (lead_id) values (p_lead) on conflict (lead_id) do nothing;
+  select i.state into v_state from green.lead_identity i where i.lead_id = p_lead;
+  if v_state = 'retired' then
+    -- mesma mensagem para qualquer organização; nada do histórico vai no erro
+    raise exception 'green_lead_id_reuse_forbidden' using errcode = 'P0001';
+  end if;
+end $$;
+revoke all on function green.fn_claim_lead_identity(uuid) from public, anon, authenticated, service_role;
+
+-- ── 3 · fronteira: identidade não reciclável + advisory_request_id ────────────
+create or replace function green.fn_crm_lead_boundary()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_old_p   boolean := false;  -- funil de OLD é gerenciado
+  v_old_toca boolean := false; -- OLD toca o domínio (funil OU etapa gerenciados)
+  v_new_p   boolean := false;  -- funil de NEW é gerenciado
+  v_toca    boolean := false;
+  v_env     jsonb;
+  v_caller  text;
+  v_trusted jsonb;
+  v_meta    jsonb;
+  v_payload jsonb;
+  v_kind    text;
+  v_ledger  uuid;
+  v_event   uuid;
+begin
+  -- lifecycle v1.2: a identidade do lead acaba em QUALQUER exclusão (Green ou não, organização
+  -- viva ou indo embora), antes de qualquer retorno antecipado. É o que impede o UUID de voltar.
+  if tg_op = 'DELETE' then
+    update green.lead_identity
+       set state = 'retired', retired_at = now()
+     where lead_id = old.id and state = 'live';
+  end if;
+
+  if tg_op = 'UPDATE'
+     and new.id is not distinct from old.id
+     and new.stage_id is not distinct from old.stage_id
+     and new.pipeline_id is not distinct from old.pipeline_id
+     and new.organization_id is not distinct from old.organization_id then
+    return null;
+  end if;
+
+  -- A organização inteira indo embora (cascata): sem lápide possível.
+  if tg_op = 'DELETE'
+     and not exists (select 1 from public.organizations o where o.id = old.organization_id) then
+    return null;
+  end if;
+
+  if tg_op <> 'INSERT' then
+    v_old_p := green.fn_is_green_pipeline(old.organization_id, old.pipeline_id);
+    v_toca := v_old_p or green.fn_lead_touches_green(old.organization_id, old.pipeline_id, old.stage_id);
+    v_old_toca := v_toca;
+  end if;
+  if tg_op <> 'DELETE' then
+    v_new_p := green.fn_is_green_pipeline(new.organization_id, new.pipeline_id);
+    v_toca := v_toca or v_new_p
+              or green.fn_lead_touches_green(new.organization_id, new.pipeline_id, new.stage_id);
+  end if;
+  -- o id de um lead com identidade Green não muda: trocar o id libertaria o antigo
+  if tg_op = 'UPDATE' and new.id is distinct from old.id then
+    if v_toca or exists (select 1 from green.lead_identity i where i.lead_id = old.id) then
+      raise exception 'green_lead_id_immutable' using errcode = '23514';
+    end if;
+  end if;
+  if not v_toca then return null; end if;
+
+  if tg_op <> 'DELETE' and not exists (
+       select 1 from public.crm_stages s
+        where s.id = new.stage_id
+          and s.organization_id = new.organization_id
+          and s.pipeline_id = new.pipeline_id) then
+    raise exception 'green_stage_not_bound' using errcode = '23503';
+  end if;
+
+  v_env := green.fn_mutation_envelope();
+  v_caller := v_env ->> 'caller';
+  v_trusted := v_env -> 'trusted';
+  if v_caller <> 'user' then
+    if not coalesce((v_env ->> 'valid')::boolean, false) then
+      raise exception 'green_mutation_context_required'
+        using errcode = '42501', detail = coalesce(v_env ->> 'reason', 'missing');
+    end if;
+    if tg_op <> 'DELETE' then
+      perform green.fn_assert_service_origin(v_env -> 'service_origin', new.organization_id, new.contact_id);
+    end if;
+  end if;
+
+  -- lifecycle v1.2: toda ENTRADA no domínio (nascimento ou lead que vem de fora) reivindica a
+  -- identidade; um UUID já aposentado é recusado com erro de domínio, igual para qualquer org.
+  if tg_op <> 'DELETE' and (tg_op = 'INSERT' or not v_old_toca) then
+    perform green.fn_claim_lead_identity(new.id);
+  end if;
+
+  -- lifecycle: o nascimento Green deixa a proveniência na MESMA transação.
+  -- Falha aqui não é capturada: sem registro, sem nascimento.
+  if tg_op = 'INSERT' then
+    insert into green.lead_birth_provenance
+      (lead_id, organization_id, pipeline_id, stage_id, caller, trusted, advisory, service_origin)
+    values
+      (new.id, new.organization_id, new.pipeline_id, new.stage_id, v_caller, v_trusted,
+       coalesce(v_env -> 'advisory', '{}'::jsonb),
+       case when jsonb_typeof(v_env -> 'service_origin') = 'object' then v_env -> 'service_origin' end);
+    return null;
+  end if;
+
+  if tg_op = 'DELETE' then
+    v_kind := 'deleted';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      old.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'status',           old.status,
+      'green_transition', 'delete');
+  else
+    v_kind := 'stage_changed';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      new.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'to_stage_id',      new.stage_id,
+      'status',           new.status,
+      'green_transition', case when v_new_p then case when v_old_p then 'stay' else 'enter' end
+                               else 'exit' end);
+    if new.pipeline_id is distinct from old.pipeline_id then
+      v_payload := v_payload || jsonb_build_object('from_pipeline_id', old.pipeline_id);
+    end if;
+    if jsonb_typeof(v_env -> 'service_origin') = 'object' then
+      v_payload := v_payload || jsonb_build_object('service_origin', v_env -> 'service_origin');
+    end if;
+  end if;
+
+  v_meta := jsonb_build_object('green_canonical', true, 'green_context_version', 1)
+    || v_trusted
+    || jsonb_strip_nulls(jsonb_build_object(
+         'actor_user_id', case when v_caller = 'user' then v_trusted -> 'actor' ->> 'id' end,
+         'actor_kind',    v_trusted -> 'actor' ->> 'kind'))
+    || jsonb_build_object('green', jsonb_build_object(
+         'v', 2, 'trusted', v_trusted, 'advisory', v_env -> 'advisory'));
+
+  insert into green.stage_event_ledger
+    (organization_id, lead_id, kind, from_stage_id, to_stage_id, from_pipeline_id, to_pipeline_id,
+     request_id, advisory_request_id)
+  values
+    (old.organization_id, old.id, v_kind, old.stage_id,
+     case when tg_op = 'DELETE' then null else new.stage_id end,
+     old.pipeline_id,
+     case when tg_op = 'DELETE' then null else new.pipeline_id end,
+     v_trusted ->> 'request_id',
+     coalesce(v_env -> 'advisory' ->> 'client_request_id', v_env -> 'advisory' ->> 'request_id'))
+  returning id into v_ledger;
+  perform set_config('green.canonical_proof', v_ledger::text, true);
+  -- Tipo LITERAL em cada ramo: é o que a cerca de evento-fato enxerga.
+  if tg_op = 'DELETE' then
+    v_event := public.emit_event('lead.deleted', 'crm_lead', old.id, v_payload, v_meta, old.organization_id);
+  else
+    v_event := public.emit_event('lead.stage_changed', 'crm_lead', old.id, v_payload, v_meta, new.organization_id);
+  end if;
+  perform set_config('green.canonical_proof', '', true);
+  if not exists (select 1 from green.stage_event_ledger l
+                  where l.id = v_ledger and l.canonical_event_id = v_event) then
+    raise exception 'green_canonical_not_recorded' using errcode = 'P0001';
+  end if;
+  return null;
+end $$;
+revoke all on function green.fn_crm_lead_boundary() from public, anon, authenticated;
+grant execute on function green.fn_crm_lead_boundary() to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ---- SPIKE Green lifecycle v1.3: identidade por binding, DELETE defensivo (migration 0505) ----
+-- 0505 (SPIKE Green lifecycle v1.3 — DESCARTÁVEL; não é produto, não vai para produção).
+--
+-- SPIKE-GREEN-01.3: fecha o V12-ADV-01 da AUDIT-GREEN-01.2.1. Delta experimental SOBRE a
+-- 0504, que fica intacta junto com 0501, 0502 e 0503.
+--
+-- Contrato (definitivo): todo lead que EFETIVAMENTE tocar o domínio Green deixa uma
+-- identidade histórica não reciclável. Não protege o UUID de um lead que NUNCA tocou Green.
+-- (O relatório da v1.2 dizia que "o UUID de crm_leads não é reciclável": a política
+-- implementada sempre foi a de quem tocou o domínio; a v1.3 corrige o texto, não amplia o escopo.)
+--
+-- ── 1. Binding: o pipeline que vira Green registra a identidade dos leads que já estão nele
+-- Na 0504 a identidade só era reivindicada na ENTRADA do lead (INSERT já em Green, UPDATE
+-- comum → Green). Um pipeline que passa a ser gerenciado DEPOIS de ter leads os põe no domínio
+-- sem mutação nenhuma deles: sem linha em `green.lead_identity`, o DELETE não aposentava nada
+-- e o UUID voltava (AUDIT-GREEN-01.2.1, V12-ADV-01). Agora um trigger em
+-- `green.product_pipeline_binding` (AFTER INSERT e UPDATE de organization_id/pipeline_id)
+-- reivindica, na MESMA transação do binding, a identidade de todo lead da organização que está
+-- no pipeline ou numa etapa dele. `on conflict do nothing`: idempotente e sem duplicidade; um
+-- lead vivo cujo UUID já está `retired` (lead comum que reaproveitou um UUID Green) recusa o
+-- binding inteiro com o mesmo erro de domínio de sempre.
+--
+-- Corrida binding × escrita de lead: o trigger toma `SHARE ROW EXCLUSIVE` em `public.crm_leads`
+-- antes de ler. Ele espera as escritas em voo (que têm `ROW EXCLUSIVE`) terminarem, e as
+-- escritas seguintes esperam o binding terminar; depois do lock, o `select` do binding (READ
+-- COMMITTED) enxerga tudo que foi comitado, e a fronteira de quem esperou enxerga o binding.
+-- Custo: o binding é operação rara de administração e segura a escrita de leads só pelo tempo
+-- da própria transação. Sem lock haveria o buraco: lead em voo que o binding não vê e que a
+-- fronteira, sem enxergar o binding, não reivindica.
+--
+-- ── 2. DELETE defensivo
+-- Se um lead que TOCA o domínio é apagado sem linha de identidade (estado histórico inesperado),
+-- a fronteira grava a identidade já `retired`. O DELETE de lead que nunca tocou o domínio
+-- continua sem deixar identidade. Quando a organização inteira vai embora e a cascata já levou o
+-- binding, não há como avaliar o toque: a identidade criada pelo binding (item 1) é o que cobre.
+--
+-- ── 3. Backfill (reaplicável)
+-- Leads vivos que hoje tocam o domínio sem identidade entram `live` (inclui os que a 0504 deixou
+-- escapar por binding); todo id com rastro Green cujo lead não existe mais entra `retired`.
+
+-- ── 1 · binding → identidade dos leads existentes ────────────────────────────
+create or replace function green.fn_claim_binding_identities()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+begin
+  -- serializa com as escritas de lead em voo (ver o cabeçalho)
+  lock table public.crm_leads in share row exclusive mode;
+
+  insert into green.lead_identity (lead_id)
+  select l.id
+    from public.crm_leads l
+   where l.organization_id = new.organization_id
+     and (l.pipeline_id = new.pipeline_id
+          or l.stage_id in (select s.id
+                              from public.crm_stages s
+                             where s.organization_id = new.organization_id
+                               and s.pipeline_id = new.pipeline_id))
+  on conflict (lead_id) do nothing;
+
+  -- lead vivo com UUID já aposentado entrando no domínio: o mesmo erro de domínio, igual para
+  -- qualquer organização; a transação do binding desfaz inclusive as identidades acima
+  if exists (
+       select 1
+         from public.crm_leads l
+         join green.lead_identity i on i.lead_id = l.id
+        where i.state = 'retired'
+          and l.organization_id = new.organization_id
+          and (l.pipeline_id = new.pipeline_id
+               or l.stage_id in (select s.id
+                                   from public.crm_stages s
+                                  where s.organization_id = new.organization_id
+                                    and s.pipeline_id = new.pipeline_id))) then
+    raise exception 'green_lead_id_reuse_forbidden' using errcode = 'P0001';
+  end if;
+  return null;
+end $$;
+revoke all on function green.fn_claim_binding_identities() from public, anon, authenticated, service_role;
+
+drop trigger if exists trg_green_binding_claims_identities on green.product_pipeline_binding;
+create trigger trg_green_binding_claims_identities
+  after insert or update of organization_id, pipeline_id on green.product_pipeline_binding
+  for each row execute function green.fn_claim_binding_identities();
+
+-- ── 2 · fronteira: DELETE defensivo ──────────────────────────────────────────
+create or replace function green.fn_crm_lead_boundary()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_old_p   boolean := false;  -- funil de OLD é gerenciado
+  v_old_toca boolean := false; -- OLD toca o domínio (funil OU etapa gerenciados)
+  v_new_p   boolean := false;  -- funil de NEW é gerenciado
+  v_toca    boolean := false;
+  v_env     jsonb;
+  v_caller  text;
+  v_trusted jsonb;
+  v_meta    jsonb;
+  v_payload jsonb;
+  v_kind    text;
+  v_ledger  uuid;
+  v_event   uuid;
+begin
+  -- lifecycle v1.2: a identidade do lead acaba em QUALQUER exclusão (Green ou não, organização
+  -- viva ou indo embora), antes de qualquer retorno antecipado. É o que impede o UUID de voltar.
+  if tg_op = 'DELETE' then
+    update green.lead_identity
+       set state = 'retired', retired_at = now()
+     where lead_id = old.id and state = 'live';
+  end if;
+
+  if tg_op = 'UPDATE'
+     and new.id is not distinct from old.id
+     and new.stage_id is not distinct from old.stage_id
+     and new.pipeline_id is not distinct from old.pipeline_id
+     and new.organization_id is not distinct from old.organization_id then
+    return null;
+  end if;
+
+  -- A organização inteira indo embora (cascata): sem lápide possível.
+  if tg_op = 'DELETE'
+     and not exists (select 1 from public.organizations o where o.id = old.organization_id) then
+    -- lifecycle v1.3 (defesa em profundidade): se o lead ainda toca o domínio e a identidade
+    -- se perdeu, o UUID não pode ficar reutilizável
+    if green.fn_lead_touches_green(old.organization_id, old.pipeline_id, old.stage_id) then
+      insert into green.lead_identity (lead_id, state, retired_at)
+      values (old.id, 'retired', now())
+      on conflict (lead_id) do nothing;
+    end if;
+    return null;
+  end if;
+
+  if tg_op <> 'INSERT' then
+    v_old_p := green.fn_is_green_pipeline(old.organization_id, old.pipeline_id);
+    v_toca := v_old_p or green.fn_lead_touches_green(old.organization_id, old.pipeline_id, old.stage_id);
+    v_old_toca := v_toca;
+  end if;
+  -- lifecycle v1.3 (defesa em profundidade): lead que toca o domínio e é apagado deixa a
+  -- identidade aposentada mesmo que nunca tenha sido registrada (o `on conflict` preserva a linha
+  -- já aposentada pelo `update` do topo)
+  if tg_op = 'DELETE' and v_toca then
+    insert into green.lead_identity (lead_id, state, retired_at)
+    values (old.id, 'retired', now())
+    on conflict (lead_id) do nothing;
+  end if;
+  if tg_op <> 'DELETE' then
+    v_new_p := green.fn_is_green_pipeline(new.organization_id, new.pipeline_id);
+    v_toca := v_toca or v_new_p
+              or green.fn_lead_touches_green(new.organization_id, new.pipeline_id, new.stage_id);
+  end if;
+  -- o id de um lead com identidade Green não muda: trocar o id libertaria o antigo
+  if tg_op = 'UPDATE' and new.id is distinct from old.id then
+    if v_toca or exists (select 1 from green.lead_identity i where i.lead_id = old.id) then
+      raise exception 'green_lead_id_immutable' using errcode = '23514';
+    end if;
+  end if;
+  if not v_toca then return null; end if;
+
+  if tg_op <> 'DELETE' and not exists (
+       select 1 from public.crm_stages s
+        where s.id = new.stage_id
+          and s.organization_id = new.organization_id
+          and s.pipeline_id = new.pipeline_id) then
+    raise exception 'green_stage_not_bound' using errcode = '23503';
+  end if;
+
+  v_env := green.fn_mutation_envelope();
+  v_caller := v_env ->> 'caller';
+  v_trusted := v_env -> 'trusted';
+  if v_caller <> 'user' then
+    if not coalesce((v_env ->> 'valid')::boolean, false) then
+      raise exception 'green_mutation_context_required'
+        using errcode = '42501', detail = coalesce(v_env ->> 'reason', 'missing');
+    end if;
+    if tg_op <> 'DELETE' then
+      perform green.fn_assert_service_origin(v_env -> 'service_origin', new.organization_id, new.contact_id);
+    end if;
+  end if;
+
+  -- lifecycle v1.2: toda ENTRADA no domínio (nascimento ou lead que vem de fora) reivindica a
+  -- identidade; um UUID já aposentado é recusado com erro de domínio, igual para qualquer org.
+  if tg_op <> 'DELETE' and (tg_op = 'INSERT' or not v_old_toca) then
+    perform green.fn_claim_lead_identity(new.id);
+  end if;
+
+  -- lifecycle: o nascimento Green deixa a proveniência na MESMA transação.
+  -- Falha aqui não é capturada: sem registro, sem nascimento.
+  if tg_op = 'INSERT' then
+    insert into green.lead_birth_provenance
+      (lead_id, organization_id, pipeline_id, stage_id, caller, trusted, advisory, service_origin)
+    values
+      (new.id, new.organization_id, new.pipeline_id, new.stage_id, v_caller, v_trusted,
+       coalesce(v_env -> 'advisory', '{}'::jsonb),
+       case when jsonb_typeof(v_env -> 'service_origin') = 'object' then v_env -> 'service_origin' end);
+    return null;
+  end if;
+
+  if tg_op = 'DELETE' then
+    v_kind := 'deleted';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      old.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'status',           old.status,
+      'green_transition', 'delete');
+  else
+    v_kind := 'stage_changed';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      new.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'to_stage_id',      new.stage_id,
+      'status',           new.status,
+      'green_transition', case when v_new_p then case when v_old_p then 'stay' else 'enter' end
+                               else 'exit' end);
+    if new.pipeline_id is distinct from old.pipeline_id then
+      v_payload := v_payload || jsonb_build_object('from_pipeline_id', old.pipeline_id);
+    end if;
+    if jsonb_typeof(v_env -> 'service_origin') = 'object' then
+      v_payload := v_payload || jsonb_build_object('service_origin', v_env -> 'service_origin');
+    end if;
+  end if;
+
+  v_meta := jsonb_build_object('green_canonical', true, 'green_context_version', 1)
+    || v_trusted
+    || jsonb_strip_nulls(jsonb_build_object(
+         'actor_user_id', case when v_caller = 'user' then v_trusted -> 'actor' ->> 'id' end,
+         'actor_kind',    v_trusted -> 'actor' ->> 'kind'))
+    || jsonb_build_object('green', jsonb_build_object(
+         'v', 2, 'trusted', v_trusted, 'advisory', v_env -> 'advisory'));
+
+  insert into green.stage_event_ledger
+    (organization_id, lead_id, kind, from_stage_id, to_stage_id, from_pipeline_id, to_pipeline_id,
+     request_id, advisory_request_id)
+  values
+    (old.organization_id, old.id, v_kind, old.stage_id,
+     case when tg_op = 'DELETE' then null else new.stage_id end,
+     old.pipeline_id,
+     case when tg_op = 'DELETE' then null else new.pipeline_id end,
+     v_trusted ->> 'request_id',
+     coalesce(v_env -> 'advisory' ->> 'client_request_id', v_env -> 'advisory' ->> 'request_id'))
+  returning id into v_ledger;
+  perform set_config('green.canonical_proof', v_ledger::text, true);
+  -- Tipo LITERAL em cada ramo: é o que a cerca de evento-fato enxerga.
+  if tg_op = 'DELETE' then
+    v_event := public.emit_event('lead.deleted', 'crm_lead', old.id, v_payload, v_meta, old.organization_id);
+  else
+    v_event := public.emit_event('lead.stage_changed', 'crm_lead', old.id, v_payload, v_meta, new.organization_id);
+  end if;
+  perform set_config('green.canonical_proof', '', true);
+  if not exists (select 1 from green.stage_event_ledger l
+                  where l.id = v_ledger and l.canonical_event_id = v_event) then
+    raise exception 'green_canonical_not_recorded' using errcode = 'P0001';
+  end if;
+  return null;
+end $$;
+revoke all on function green.fn_crm_lead_boundary() from public, anon, authenticated;
+grant execute on function green.fn_crm_lead_boundary() to service_role;
+
+-- ── 3 · backfill (reaplicável) ───────────────────────────────────────────────
+insert into green.lead_identity (lead_id)
+select l.id
+  from public.crm_leads l
+ where exists (select 1 from green.product_pipeline_binding b
+                where b.organization_id = l.organization_id and b.pipeline_id = l.pipeline_id)
+    or exists (select 1
+                 from public.crm_stages s
+                 join green.product_pipeline_binding b
+                   on b.organization_id = s.organization_id and b.pipeline_id = s.pipeline_id
+                where s.id = l.stage_id and s.organization_id = l.organization_id)
+on conflict (lead_id) do nothing;
+
+insert into green.lead_identity (lead_id, state, retired_at)
+select h.lead_id,
+       case when exists (select 1 from public.crm_leads l where l.id = h.lead_id) then 'live' else 'retired' end,
+       case when exists (select 1 from public.crm_leads l where l.id = h.lead_id) then null else now() end
+  from (select p.lead_id from green.lead_birth_provenance p
+        union
+        select g.lead_id from green.stage_event_ledger g
+        union
+        select e.entity_id from public.event_log e
+         where e.entity_kind = 'crm_lead' and e.event_type = 'lead.deleted'
+           and e.metadata -> 'green_canonical' = 'true'::jsonb
+           and e.entity_id is not null) h
+on conflict (lead_id) do nothing;
+
+notify pgrst, 'reload schema';
+
+-- ---- SPIKE Green automation origin v1: origem de automação provada, carimbo do relógio (migration 0506) ----
+-- 0506 (SPIKE Green automation origin v1 — DESCARTÁVEL; não é produto, não vai para produção).
+--
+-- SPIKE-GREEN-AUTO-01: fecha o LIFE-ADV-01. Delta experimental SOBRE a 0505, que fica
+-- intacta junto com 0501, 0502, 0503 e 0504.
+--
+-- ── O defeito (medido) ────────────────────────────────────────────────────────────
+-- O motor de automação declarava `service_origin.kind=event` com o evento disparador, e
+-- `green.fn_assert_event_origin_contact` (projeção da régua de ATENDIMENTO,
+-- `fn_service_event_origin`) só ancora 6 tipos. Dos 16 gatilhos do produto, 11 eram
+-- recusados com `green_service_origin_unsupported` (os 4 de relógio, `message.failed` e os
+-- 6 `appointment.*`): a execução ficava `failed` e o lead não se movia. A régua de
+-- atendimento responde "de que atendimento é este evento"; a pergunta da automação é
+-- outra: "esta regra, desta organização, está executando por causa desta ocorrência".
+--
+-- ── O contrato: origem `automation` ───────────────────────────────────────────────
+-- service_origin = { kind:'automation', rule_id, event_id, organization_id }, declarada SÓ
+-- pelo motor (`lib/automation/engine.ts`) em toda execução de regra. Todo gatilho chega ao
+-- motor como uma linha de `event_log` (o motor é consumidor do event_log); o que muda
+-- entre as famílias é QUEM pode ter produzido a linha:
+--   * família `event` (12 gatilhos): a linha registra uma ocorrência de domínio, e há
+--     produtores legítimos com sessão humana (agenda pela tela, mover pela rota, falha de
+--     envio pelo cookie, trigger de cliente pela agenda) — qualquer emissor é aceito;
+--   * família `scheduler` (4 gatilhos de relógio): a linha é a materialização de uma
+--     decisão do relógio (cron com o client de serviço). Uma sessão que emite o mesmo
+--     tipo não é o relógio: a raiz é recusada.
+-- A família é DERIVADA pelo banco a partir do tipo, nunca declarada: não existe
+-- "origem de relógio declarada à mão".
+--
+-- A fronteira só aceita a escrita privilegiada com origem `automation` se provar, contra o
+-- banco e na transação da escrita:
+--   1. organização da origem = organização do lead;
+--   2. os marcadores confiáveis são os da regra: source=automation,
+--      request_id=rule:<rule_id>, causation_event_id=<event_id>,
+--      actor={webhook_source, rule_id} e correlation_id (quando houver) = a correlação
+--      confiável do evento raiz ou o próprio evento (a mesma que o dispatcher herda);
+--   3. a regra existe NESTA organização, está ativa e tem ação que escreve em Opportunity
+--      (`create_or_move_lead`);
+--   4. o evento existe NESTA organização (regra/evento de outra org ≡ inexistente: mesma
+--      resposta, sem oracle);
+--   5. o tipo do evento é o gatilho da regra, é um gatilho do produto, traz a entidade
+--      esperada e, se for dirigido (`payload.rule_id`), é dirigido a ESTA regra;
+--   6. família `scheduler`: o carimbo do relógio diz que o servidor emitiu o evento;
+--   7. o evento está vivo (`pending`/`processing`): replay de execução já drenada é
+--      recusado;
+--   8. o alvo é o sujeito do evento: o próprio lead (entidade `crm_lead`) ou um lead do
+--      contato do evento (contato, mensagem, compromisso), contato ativo.
+-- Nenhum event_log é inventado: a raiz é sempre a linha real que o motor consumiu.
+--
+-- ── Carimbo do relógio ────────────────────────────────────────────────────────────
+-- `green.scheduler_trigger_emission`: uma linha por evento de relógio, gravada pelo
+-- trigger AFTER INSERT de `event_log` com QUEM emitiu (mesma classificação de caller do
+-- `fn_mutation_context`: user + uid, service_role, direct, anonymous). Ninguém da API
+-- escreve nela (nem service_role); só o produtor. O `emit_event` continua aceitando o tipo
+-- de qualquer membro (comportamento upstream intacto para lead comum); o carimbo só decide
+-- a fronteira Green.
+--
+-- ── O que muda nas funções da cadeia ──────────────────────────────────────────────
+-- `fn_mutation_context` (cópia da 0504 + o ramo `automation`), `fn_crm_lead_boundary`
+-- (cópia da 0505; UMA linha: a chamada da prova passa também o id do lead e o trusted),
+-- overload `fn_assert_service_origin(jsonb, uuid, uuid, uuid, jsonb)` que despacha
+-- `automation` e delega `event`/`continuation` à de 3 argumentos (intacta).
+
+-- ── 1 · régua dos gatilhos de automação (espelho de lib/schemas/webhooks.ts) ──────
+-- A catraca `tests/invariants/green-automation-origin.test.ts` (K1/K2) cobra que estas
+-- funções e o WHEN do carimbo concordem com `ENTIDADE_ESPERADA_POR_GATILHO`.
+create or replace function green.fn_automation_trigger_entity(p_type text)
+returns text language sql immutable set search_path = '' as $$
+  select case p_type
+    when 'lead.created'            then 'crm_lead'
+    when 'lead.stage_changed'      then 'crm_lead'
+    when 'lead.tag_added'          then 'crm_lead'
+    when 'lead.date_field_due'     then 'crm_lead'
+    when 'lead.silent_for'         then 'crm_lead'
+    when 'lead.stage_stale'        then 'crm_lead'
+    when 'message.received'        then 'message'
+    when 'message.failed'          then 'message'
+    when 'contact.tag_added'       then 'contact'
+    when 'contact.birthday'        then 'contact'
+    when 'appointment.created'     then 'calendar_appointment'
+    when 'appointment.confirmed'   then 'calendar_appointment'
+    when 'appointment.rescheduled' then 'calendar_appointment'
+    when 'appointment.cancelled'   then 'calendar_appointment'
+    when 'appointment.completed'   then 'calendar_appointment'
+    when 'appointment.no_show'     then 'calendar_appointment'
+  end
+$$;
+create or replace function green.fn_automation_trigger_family(p_type text)
+returns text language sql immutable set search_path = '' as $$
+  select case
+    when p_type in ('contact.birthday','lead.date_field_due','lead.silent_for','lead.stage_stale') then 'scheduler'
+    when green.fn_automation_trigger_entity(p_type) is not null then 'event'
+  end
+$$;
+revoke all on function green.fn_automation_trigger_entity(text) from public, anon, authenticated;
+revoke all on function green.fn_automation_trigger_family(text) from public, anon, authenticated;
+grant execute on function green.fn_automation_trigger_entity(text) to service_role;
+grant execute on function green.fn_automation_trigger_family(text) to service_role;
+
+-- ── 2 · carimbo do relógio ───────────────────────────────────────────────────────
+create table if not exists green.scheduler_trigger_emission (
+  event_id        uuid primary key references public.event_log(id) on delete cascade,
+  organization_id uuid not null,
+  event_type      text not null,
+  caller          text not null check (caller in ('user','service_role','direct','anonymous')),
+  user_id         uuid,
+  created_at      timestamptz not null default now(),
+  constraint scheduler_trigger_emission_usuario_coerente check ((caller = 'user') = (user_id is not null))
+);
+comment on table green.scheduler_trigger_emission is
+  'SPIKE Green automation origin v1: quem emitiu cada evento de gatilho de relógio (contact.birthday, lead.date_field_due, lead.silent_for, lead.stage_stale). Gravada só pelo trigger AFTER INSERT de event_log. A fronteira Green só aceita a raiz de relógio emitida pelo servidor (service_role/direct).';
+alter table green.scheduler_trigger_emission enable row level security;
+revoke all on green.scheduler_trigger_emission from public, anon, authenticated, service_role;
+grant select on green.scheduler_trigger_emission to service_role;
+
+create or replace function green.fn_stamp_scheduler_trigger()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_uid      uuid;
+  v_jwt_role text;
+  v_role     text;
+  v_caller   text;
+begin
+  -- Mesma classificação do `fn_mutation_context`: o papel da REQUEST (claim/GUC `role`),
+  -- não `current_user` — dentro de `emit_event` (definer) o current_user é o dono.
+  begin
+    v_uid := auth.uid();
+  exception when others then
+    v_uid := null;
+  end;
+  begin
+    v_jwt_role := coalesce(auth.jwt() ->> 'role', '');
+  exception when others then
+    v_jwt_role := '';
+  end;
+  v_role := coalesce(nullif(v_jwt_role, ''), nullif(current_setting('role', true), 'none'), '');
+  v_caller := case
+    when v_uid is not null then 'user'
+    when v_role = 'service_role' then 'service_role'
+    when v_role in ('anon', 'authenticated') then 'anonymous'
+    else 'direct'
+  end;
+  insert into green.scheduler_trigger_emission (event_id, organization_id, event_type, caller, user_id)
+  values (new.id, new.organization_id, new.event_type, v_caller, v_uid);
+  return null;
+end $$;
+revoke all on function green.fn_stamp_scheduler_trigger() from public, anon, authenticated, service_role;
+
+drop trigger if exists trg_green_stamp_scheduler_trigger on public.event_log;
+create trigger trg_green_stamp_scheduler_trigger
+  after insert on public.event_log
+  for each row
+  when (new.event_type in ('contact.birthday','lead.date_field_due','lead.silent_for','lead.stage_stale'))
+  execute function green.fn_stamp_scheduler_trigger();
+
+-- ── 3 · contexto: o kind `automation` (cópia da 0504 com um ramo a mais) ──────────
+create or replace function green.fn_mutation_context()
+returns jsonb
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_uid       uuid := auth.uid();
+  v_jwt_role  text;
+  v_role      text;
+  v_caller    text;
+  v_header    text;
+  v_raw       jsonb;
+  v_reason    text := null;
+  v_actor     jsonb := null;
+  v_origin    jsonb := null;
+  v_boundary  jsonb;
+  v_kind      text;
+  v_advisory  jsonb := '{}'::jsonb;
+begin
+  begin
+    v_jwt_role := coalesce(auth.jwt() ->> 'role', '');
+  exception when others then
+    v_jwt_role := '';
+  end;
+  -- Papel da REQUEST, não `current_user`: chamado de trigger definer,
+  -- `current_user` é o dono; o claim e o GUC `role` (SET ROLE do PostgREST)
+  -- continuam sendo os de quem fez a request.
+  v_role := coalesce(nullif(v_jwt_role, ''), nullif(current_setting('role', true), 'none'), '');
+  v_caller := case
+    when v_uid is not null then 'user'
+    when v_role = 'service_role' then 'service_role'
+    when v_role in ('anon', 'authenticated') then 'anonymous'
+    else 'direct'
+  end;
+
+  -- transporte 1: header da request PostgREST
+  begin
+    v_header := nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-green-mutation-context';
+  exception when others then
+    v_header := null;
+  end;
+  if v_header is not null then
+    begin
+      v_raw := convert_from(decode(v_header, 'base64'), 'UTF8')::jsonb;
+    exception when others then
+      v_raw := null; v_reason := 'undecodable_header';
+    end;
+  elsif v_caller = 'direct' then
+    -- transporte 2: GUC transacional — só conexão pg direta (sem papel de request)
+    begin
+      v_raw := nullif(current_setting('green.mutation_context', true), '')::jsonb;
+    exception when others then
+      v_raw := null; v_reason := 'undecodable_guc';
+    end;
+  end if;
+
+  -- ── validação de forma (vale para todo chamador; humano só a usa como advisory)
+  if v_raw is not null and jsonb_typeof(v_raw) <> 'object' then
+    v_raw := null; v_reason := coalesce(v_reason, 'not_object');
+  end if;
+  if v_raw is not null and octet_length(v_raw::text) > 4096 then
+    v_raw := null; v_reason := 'too_large';
+  end if;
+  if v_raw is not null and exists (
+       select 1 from jsonb_object_keys(v_raw) k
+        where k not in ('v','source','request_id','correlation_id','causation_event_id',
+                        'source_job_id','idempotency_key','client_request_id','actor','service_origin')) then
+    -- contrato fechado por chave: PII não tem por onde entrar
+    v_raw := null; v_reason := 'unknown_key';
+  end if;
+  if v_raw is not null then
+    if v_raw ->> 'v' is distinct from '1' then v_reason := 'version';
+    elsif not (coalesce(v_raw ->> 'source', '') ~ '^[a-z][a-z0-9_.:-]{0,63}$') then v_reason := 'source';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'request_id') then v_reason := 'request_id';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'correlation_id') then v_reason := 'correlation_id';
+    elsif not green.fn_ctx_uuid_ok(v_raw ->> 'causation_event_id') then v_reason := 'causation_event_id';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'source_job_id') then v_reason := 'source_job_id';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'idempotency_key') then v_reason := 'idempotency_key';
+    elsif not green.fn_ctx_id_ok(v_raw ->> 'client_request_id') then v_reason := 'client_request_id';
+    end if;
+  end if;
+  if v_raw is not null and v_reason is null then
+    v_advisory := jsonb_strip_nulls(jsonb_build_object(
+      'source',             v_raw ->> 'source',
+      'request_id',         v_raw ->> 'request_id',
+      'correlation_id',     v_raw ->> 'correlation_id',
+      'causation_event_id', v_raw ->> 'causation_event_id',
+      'idempotency_key',    v_raw ->> 'idempotency_key',
+      'source_job_id',      v_raw ->> 'source_job_id',
+      'client_request_id',  v_raw ->> 'client_request_id'));
+  end if;
+
+  -- ── sessão humana: actor é auth.uid(); actor/service_origin do header são ignorados
+  if v_caller = 'user' then
+    return jsonb_build_object(
+      'caller', 'user', 'valid', true, 'reason', null,
+      'actor', jsonb_build_object('kind', 'user', 'id', v_uid),
+      'service_origin', null) || v_advisory;
+  end if;
+
+  -- ── request sem identidade: nunca confiável, qualquer que seja o header
+  if v_caller = 'anonymous' then
+    return jsonb_build_object(
+      'caller', 'anonymous', 'valid', false, 'reason', 'anonymous',
+      'actor', null, 'service_origin', null);
+  end if;
+
+  -- ── writer privilegiado: actor explícito e service_origin validados por schema
+  if v_raw is not null and v_reason is null then
+    v_actor := v_raw -> 'actor';
+    if v_actor is null then v_reason := 'actor_required';
+    elsif jsonb_typeof(v_actor) <> 'object' then v_reason := 'actor';
+    elsif exists (select 1 from jsonb_object_keys(v_actor) k where k not in ('kind','id','agent_id','api_token_id')) then v_reason := 'actor_key';
+    elsif coalesce(v_actor ->> 'kind', '') not in ('ai_agent','api_token','webhook_source','system') then v_reason := 'actor_kind';
+    elsif not green.fn_ctx_id_ok(v_actor ->> 'id') or not green.fn_ctx_id_ok(v_actor ->> 'agent_id')
+       or not green.fn_ctx_id_ok(v_actor ->> 'api_token_id') then v_reason := 'actor_id';
+    end if;
+  end if;
+  if v_raw is not null and v_reason is null and v_raw ? 'service_origin' then
+    v_origin := v_raw -> 'service_origin';
+    v_kind := case when jsonb_typeof(v_origin) = 'object' then v_origin ->> 'kind' end;
+    if v_kind = 'event' then
+      if exists (select 1 from jsonb_object_keys(v_origin) k where k not in ('kind','event_id','organization_id','contact_id'))
+         or v_origin ->> 'event_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'event_id')
+         or v_origin ->> 'organization_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'organization_id')
+         or v_origin ->> 'contact_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'contact_id') then
+        v_reason := 'service_origin_event';
+      end if;
+    elsif v_kind = 'continuation' then
+      v_boundary := v_origin -> 'boundary';
+      if exists (select 1 from jsonb_object_keys(v_origin) k where k not in ('kind','boundary'))
+         or v_boundary is null or jsonb_typeof(v_boundary) <> 'object'
+         or exists (select 1 from jsonb_object_keys(v_boundary) k
+                     where k not in ('organization_id','contact_id','conversation_id','service_revision','demanda_id','demanda_revision'))
+         or v_boundary ->> 'organization_id' is null or not green.fn_ctx_uuid_ok(v_boundary ->> 'organization_id')
+         or v_boundary ->> 'contact_id' is null or not green.fn_ctx_uuid_ok(v_boundary ->> 'contact_id')
+         or v_boundary ->> 'conversation_id' is null or not green.fn_ctx_uuid_ok(v_boundary ->> 'conversation_id')
+         or jsonb_typeof(v_boundary -> 'service_revision') <> 'number'
+         or not (jsonb_typeof(v_boundary -> 'demanda_id') = 'null' or green.fn_ctx_uuid_ok(v_boundary ->> 'demanda_id'))
+         or jsonb_typeof(v_boundary -> 'demanda_revision') not in ('null','number') then
+        v_reason := 'service_origin_continuation';
+      end if;
+    elsif v_kind = 'automation' then
+      -- SPIKE-GREEN-AUTO-01: origem do motor de automação (regra + evento). Aqui só a forma;
+      -- a prova contra o banco é da fronteira (`green.fn_assert_automation_origin`).
+      if exists (select 1 from jsonb_object_keys(v_origin) k where k not in ('kind','rule_id','event_id','organization_id'))
+         or v_origin ->> 'rule_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'rule_id')
+         or v_origin ->> 'event_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'event_id')
+         or v_origin ->> 'organization_id' is null or not green.fn_ctx_uuid_ok(v_origin ->> 'organization_id') then
+        v_reason := 'service_origin_automation';
+      end if;
+    else
+      -- `command` nunca viaja (o banco deriva); `unavailable` não é origem.
+      v_reason := 'service_origin_kind';
+    end if;
+  end if;
+
+  if v_raw is null or v_reason is not null then
+    return jsonb_build_object(
+      'caller', v_caller, 'valid', false, 'reason', coalesce(v_reason, 'missing'),
+      'actor', null, 'service_origin', null);
+  end if;
+  return jsonb_build_object(
+    'caller', v_caller, 'valid', true, 'reason', null,
+    'actor', v_actor, 'service_origin', v_origin) || v_advisory;
+end $$;
+revoke all on function green.fn_mutation_context() from public, anon, authenticated;
+grant execute on function green.fn_mutation_context() to service_role;
+
+-- ── 4 · a prova da origem de automação ───────────────────────────────────────────
+-- Ordem fixa das verificações (cada recusa tem UMA causa); todas as leituras filtram a
+-- organização do lead, então nada de outra organização é consultado como existente.
+create or replace function green.fn_assert_automation_origin(
+  p_origin jsonb, p_trusted jsonb, p_org uuid, p_lead uuid, p_contact uuid)
+returns void
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v_rule    uuid := (p_origin ->> 'rule_id')::uuid;
+  v_event   uuid := (p_origin ->> 'event_id')::uuid;
+  r         record;
+  e         record;
+  s         record;
+  v_family  text;
+  v_entity  text;
+  v_raiz    jsonb;
+  v_subject uuid;
+begin
+  -- 1. escopo
+  if (p_origin ->> 'organization_id')::uuid is distinct from p_org then
+    raise exception 'green_service_origin_scope_mismatch' using errcode = '23503';
+  end if;
+
+  -- 2. os marcadores confiáveis são os da regra (anti-loop e causa provados pela origem)
+  if p_trusted ->> 'source' is distinct from 'automation'
+     or p_trusted ->> 'request_id' is distinct from 'rule:' || v_rule::text
+     or p_trusted ->> 'causation_event_id' is distinct from v_event::text
+     or p_trusted -> 'actor' is distinct from jsonb_build_object('kind', 'webhook_source', 'id', v_rule::text) then
+    raise exception 'green_automation_origin_incoherent' using errcode = '23503';
+  end if;
+
+  -- 3. a regra: desta organização, ativa, com ação que escreve em Opportunity
+  select ar.trigger_event, ar.is_active, ar.actions into r
+    from public.automation_rules ar
+   where ar.organization_id = p_org and ar.id = v_rule;
+  if not found or not r.is_active or not exists (
+       select 1
+         from jsonb_array_elements(case when jsonb_typeof(r.actions) = 'array' then r.actions else '[]'::jsonb end) a
+        where a ->> 'type' = 'create_or_move_lead') then
+    raise exception 'green_automation_rule_invalid' using errcode = '23503';
+  end if;
+
+  -- 4. o evento: desta organização
+  select ev.event_type, ev.entity_kind, ev.entity_id, ev.payload, ev.metadata, ev.status into e
+    from public.event_log ev
+   where ev.organization_id = p_org and ev.id = v_event;
+  if not found then
+    raise exception 'green_automation_event_invalid' using errcode = '23503';
+  end if;
+
+  -- correlação: a confiável do evento raiz (canônico Green) ou o próprio evento — é o que
+  -- o dispatcher herda (`provenienciaConfiavel(row.metadata)?.correlation_id ?? row.id`)
+  if p_trusted ? 'correlation_id' then
+    if e.metadata -> 'green_canonical' = 'true'::jsonb then
+      v_raiz := case
+        when jsonb_typeof(e.metadata -> 'green' -> 'trusted') = 'object' then e.metadata -> 'green' -> 'trusted'
+        when e.metadata ->> 'caller' is distinct from 'user' then e.metadata
+      end;
+    end if;
+    if p_trusted ->> 'correlation_id' is distinct from coalesce(v_raiz ->> 'correlation_id', v_event::text) then
+      raise exception 'green_automation_origin_incoherent' using errcode = '23503';
+    end if;
+  end if;
+
+  -- 5. o gatilho: o da regra, do produto, com a entidade esperada, dirigido a esta regra
+  v_family := green.fn_automation_trigger_family(e.event_type);
+  v_entity := green.fn_automation_trigger_entity(e.event_type);
+  if e.event_type is distinct from r.trigger_event
+     or v_family is null
+     or e.entity_kind is distinct from v_entity
+     or (e.payload ? 'rule_id' and e.payload ->> 'rule_id' is distinct from v_rule::text)
+     or (e.event_type in ('lead.date_field_due','lead.silent_for','lead.stage_stale')
+         and not (e.payload ? 'rule_id')) then
+    raise exception 'green_automation_trigger_mismatch' using errcode = '23503';
+  end if;
+
+  -- 6. raiz de relógio: só o servidor é o relógio
+  if v_family = 'scheduler' then
+    select se.caller, se.event_type into s
+      from green.scheduler_trigger_emission se
+     where se.event_id = v_event and se.organization_id = p_org;
+    if not found or s.caller not in ('service_role', 'direct') or s.event_type is distinct from e.event_type then
+      raise exception 'green_automation_trigger_untrusted' using errcode = '23503';
+    end if;
+  end if;
+
+  -- 7. execução viva: o evento ainda está na fila do motor
+  if e.status not in ('pending', 'processing') then
+    raise exception 'green_automation_event_stale' using errcode = '23503';
+  end if;
+
+  -- 8. o alvo é o sujeito do evento
+  if v_entity = 'crm_lead' then
+    if e.entity_id is distinct from p_lead then
+      raise exception 'green_automation_subject_mismatch' using errcode = '23503';
+    end if;
+    return;
+  end if;
+  if v_entity = 'contact' then
+    select c.id into v_subject from public.contacts c
+     where c.organization_id = p_org and c.id = e.entity_id;
+  elsif v_entity = 'message' then
+    select m.contact_id into v_subject from public.messages m
+     where m.organization_id = p_org and m.id = e.entity_id;
+  elsif v_entity = 'calendar_appointment' then
+    select a.contact_id into v_subject from public.calendar_appointments a
+     where a.organization_id = p_org and a.id = e.entity_id;
+  end if;
+  if v_subject is null or v_subject is distinct from p_contact or not exists (
+       select 1 from public.contacts c
+        where c.organization_id = p_org and c.id = v_subject
+          and not c.is_anonymized and c.is_merged_into is null) then
+    raise exception 'green_automation_subject_mismatch' using errcode = '23503';
+  end if;
+end $$;
+revoke all on function green.fn_assert_automation_origin(jsonb, jsonb, uuid, uuid, uuid) from public, anon, authenticated;
+grant execute on function green.fn_assert_automation_origin(jsonb, jsonb, uuid, uuid, uuid) to service_role;
+
+-- Overload da prova: `automation` aqui; `event`/`continuation`/null seguem na de 3
+-- argumentos (0501, intacta).
+create or replace function green.fn_assert_service_origin(
+  p_origin jsonb, p_org uuid, p_contact uuid, p_lead uuid, p_trusted jsonb)
+returns void
+language plpgsql stable
+set search_path = ''
+as $$
+begin
+  if jsonb_typeof(p_origin) = 'object' and p_origin ->> 'kind' = 'automation' then
+    perform green.fn_assert_automation_origin(p_origin, coalesce(p_trusted, '{}'::jsonb), p_org, p_lead, p_contact);
+    return;
+  end if;
+  perform green.fn_assert_service_origin(p_origin, p_org, p_contact);
+end $$;
+revoke all on function green.fn_assert_service_origin(jsonb, uuid, uuid, uuid, jsonb) from public, anon, authenticated;
+grant execute on function green.fn_assert_service_origin(jsonb, uuid, uuid, uuid, jsonb) to service_role;
+
+-- ── 5 · fronteira: a prova recebe o lead e o trusted (cópia da 0505, uma linha) ────
+create or replace function green.fn_crm_lead_boundary()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_old_p   boolean := false;  -- funil de OLD é gerenciado
+  v_old_toca boolean := false; -- OLD toca o domínio (funil OU etapa gerenciados)
+  v_new_p   boolean := false;  -- funil de NEW é gerenciado
+  v_toca    boolean := false;
+  v_env     jsonb;
+  v_caller  text;
+  v_trusted jsonb;
+  v_meta    jsonb;
+  v_payload jsonb;
+  v_kind    text;
+  v_ledger  uuid;
+  v_event   uuid;
+begin
+  -- lifecycle v1.2: a identidade do lead acaba em QUALQUER exclusão (Green ou não, organização
+  -- viva ou indo embora), antes de qualquer retorno antecipado. É o que impede o UUID de voltar.
+  if tg_op = 'DELETE' then
+    update green.lead_identity
+       set state = 'retired', retired_at = now()
+     where lead_id = old.id and state = 'live';
+  end if;
+
+  if tg_op = 'UPDATE'
+     and new.id is not distinct from old.id
+     and new.stage_id is not distinct from old.stage_id
+     and new.pipeline_id is not distinct from old.pipeline_id
+     and new.organization_id is not distinct from old.organization_id then
+    return null;
+  end if;
+
+  -- A organização inteira indo embora (cascata): sem lápide possível.
+  if tg_op = 'DELETE'
+     and not exists (select 1 from public.organizations o where o.id = old.organization_id) then
+    -- lifecycle v1.3 (defesa em profundidade): se o lead ainda toca o domínio e a identidade
+    -- se perdeu, o UUID não pode ficar reutilizável
+    if green.fn_lead_touches_green(old.organization_id, old.pipeline_id, old.stage_id) then
+      insert into green.lead_identity (lead_id, state, retired_at)
+      values (old.id, 'retired', now())
+      on conflict (lead_id) do nothing;
+    end if;
+    return null;
+  end if;
+
+  if tg_op <> 'INSERT' then
+    v_old_p := green.fn_is_green_pipeline(old.organization_id, old.pipeline_id);
+    v_toca := v_old_p or green.fn_lead_touches_green(old.organization_id, old.pipeline_id, old.stage_id);
+    v_old_toca := v_toca;
+  end if;
+  -- lifecycle v1.3 (defesa em profundidade): lead que toca o domínio e é apagado deixa a
+  -- identidade aposentada mesmo que nunca tenha sido registrada (o `on conflict` preserva a linha
+  -- já aposentada pelo `update` do topo)
+  if tg_op = 'DELETE' and v_toca then
+    insert into green.lead_identity (lead_id, state, retired_at)
+    values (old.id, 'retired', now())
+    on conflict (lead_id) do nothing;
+  end if;
+  if tg_op <> 'DELETE' then
+    v_new_p := green.fn_is_green_pipeline(new.organization_id, new.pipeline_id);
+    v_toca := v_toca or v_new_p
+              or green.fn_lead_touches_green(new.organization_id, new.pipeline_id, new.stage_id);
+  end if;
+  -- o id de um lead com identidade Green não muda: trocar o id libertaria o antigo
+  if tg_op = 'UPDATE' and new.id is distinct from old.id then
+    if v_toca or exists (select 1 from green.lead_identity i where i.lead_id = old.id) then
+      raise exception 'green_lead_id_immutable' using errcode = '23514';
+    end if;
+  end if;
+  if not v_toca then return null; end if;
+
+  if tg_op <> 'DELETE' and not exists (
+       select 1 from public.crm_stages s
+        where s.id = new.stage_id
+          and s.organization_id = new.organization_id
+          and s.pipeline_id = new.pipeline_id) then
+    raise exception 'green_stage_not_bound' using errcode = '23503';
+  end if;
+
+  v_env := green.fn_mutation_envelope();
+  v_caller := v_env ->> 'caller';
+  v_trusted := v_env -> 'trusted';
+  if v_caller <> 'user' then
+    if not coalesce((v_env ->> 'valid')::boolean, false) then
+      raise exception 'green_mutation_context_required'
+        using errcode = '42501', detail = coalesce(v_env ->> 'reason', 'missing');
+    end if;
+    if tg_op <> 'DELETE' then
+      perform green.fn_assert_service_origin(v_env -> 'service_origin', new.organization_id, new.contact_id, new.id, v_trusted);
+    end if;
+  end if;
+
+  -- lifecycle v1.2: toda ENTRADA no domínio (nascimento ou lead que vem de fora) reivindica a
+  -- identidade; um UUID já aposentado é recusado com erro de domínio, igual para qualquer org.
+  if tg_op <> 'DELETE' and (tg_op = 'INSERT' or not v_old_toca) then
+    perform green.fn_claim_lead_identity(new.id);
+  end if;
+
+  -- lifecycle: o nascimento Green deixa a proveniência na MESMA transação.
+  -- Falha aqui não é capturada: sem registro, sem nascimento.
+  if tg_op = 'INSERT' then
+    insert into green.lead_birth_provenance
+      (lead_id, organization_id, pipeline_id, stage_id, caller, trusted, advisory, service_origin)
+    values
+      (new.id, new.organization_id, new.pipeline_id, new.stage_id, v_caller, v_trusted,
+       coalesce(v_env -> 'advisory', '{}'::jsonb),
+       case when jsonb_typeof(v_env -> 'service_origin') = 'object' then v_env -> 'service_origin' end);
+    return null;
+  end if;
+
+  if tg_op = 'DELETE' then
+    v_kind := 'deleted';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      old.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'status',           old.status,
+      'green_transition', 'delete');
+  else
+    v_kind := 'stage_changed';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      new.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'to_stage_id',      new.stage_id,
+      'status',           new.status,
+      'green_transition', case when v_new_p then case when v_old_p then 'stay' else 'enter' end
+                               else 'exit' end);
+    if new.pipeline_id is distinct from old.pipeline_id then
+      v_payload := v_payload || jsonb_build_object('from_pipeline_id', old.pipeline_id);
+    end if;
+    if jsonb_typeof(v_env -> 'service_origin') = 'object' then
+      v_payload := v_payload || jsonb_build_object('service_origin', v_env -> 'service_origin');
+    end if;
+  end if;
+
+  v_meta := jsonb_build_object('green_canonical', true, 'green_context_version', 1)
+    || v_trusted
+    || jsonb_strip_nulls(jsonb_build_object(
+         'actor_user_id', case when v_caller = 'user' then v_trusted -> 'actor' ->> 'id' end,
+         'actor_kind',    v_trusted -> 'actor' ->> 'kind'))
+    || jsonb_build_object('green', jsonb_build_object(
+         'v', 2, 'trusted', v_trusted, 'advisory', v_env -> 'advisory'));
+
+  insert into green.stage_event_ledger
+    (organization_id, lead_id, kind, from_stage_id, to_stage_id, from_pipeline_id, to_pipeline_id,
+     request_id, advisory_request_id)
+  values
+    (old.organization_id, old.id, v_kind, old.stage_id,
+     case when tg_op = 'DELETE' then null else new.stage_id end,
+     old.pipeline_id,
+     case when tg_op = 'DELETE' then null else new.pipeline_id end,
+     v_trusted ->> 'request_id',
+     coalesce(v_env -> 'advisory' ->> 'client_request_id', v_env -> 'advisory' ->> 'request_id'))
+  returning id into v_ledger;
+  perform set_config('green.canonical_proof', v_ledger::text, true);
+  -- Tipo LITERAL em cada ramo: é o que a cerca de evento-fato enxerga.
+  if tg_op = 'DELETE' then
+    v_event := public.emit_event('lead.deleted', 'crm_lead', old.id, v_payload, v_meta, old.organization_id);
+  else
+    v_event := public.emit_event('lead.stage_changed', 'crm_lead', old.id, v_payload, v_meta, new.organization_id);
+  end if;
+  perform set_config('green.canonical_proof', '', true);
+  if not exists (select 1 from green.stage_event_ledger l
+                  where l.id = v_ledger and l.canonical_event_id = v_event) then
+    raise exception 'green_canonical_not_recorded' using errcode = 'P0001';
+  end if;
+  return null;
+end $$;
+revoke all on function green.fn_crm_lead_boundary() from public, anon, authenticated;
+grant execute on function green.fn_crm_lead_boundary() to service_role;
+
+notify pgrst, 'reload schema';
+
+-- ---- SPIKE Green structural boundary v1: estrutura que decide o domínio Green (migration 0507) ----
+-- 0507 (SPIKE Green structural boundary — DESCARTÁVEL; não é produto, não vai para produção).
+--
+-- SPIKE-GREEN-02: a fronteira de `crm_leads` (0502-0506) protege a mutação que entra, fica,
+-- sai ou apaga um lead Green. Mas "o que é Green" também é decidido pela ESTRUTURA ao redor
+-- do lead: funil, etapa, binding e organização. Na 0506, uma escrita estrutural mudava a
+-- classificação de dezenas/milhares de leads sem tocar `crm_leads` (medido em
+-- `tests/invariants/green-structural-boundary.test.ts`, 41 de 73 casos vermelhos na base).
+-- Delta experimental SOBRE a 0506, que fica intacta junto com 0501-0505.
+--
+-- Contrato: nenhuma mutação estrutural faz um lead entrar, sair ou ficar em estado
+-- estruturalmente inválido no domínio Green sem passar por uma regra explícita, atômica e
+-- auditável. A proteção fica na estrutura, não nos writers (nenhum writer foi tocado).
+--
+-- ── 0. Estrutura impossível herdada: recusa explícita
+-- Antes de qualquer mudança, a migration conta o que a base deixava gravar (etapa/binding/lead
+-- apontando para estrutura de outra organização; lead Green com etapa fora do funil). Se
+-- houver qualquer linha, ela PARA com `green_structural_legacy_violation` e as contagens (sem
+-- PII) no detail. A transação desfaz tudo: o dono corrige os dados e reaplica.
+--
+-- ── 1. Tenant da estrutura por FK composta (constraint fortalecida, sem trigger)
+-- As FKs simples de upstream deixavam etapa, binding e lead apontarem para funil/etapa de
+-- OUTRA organização (a checagem de FK passa por cima da RLS). Elas são TROCADAS por FKs
+-- compostas com `organization_id`, com o MESMO nome e a mesma ação de DELETE:
+--   crm_stages (pipeline_id, organization_id)  → crm_pipelines (id, organization_id)  cascade
+--   crm_leads  (pipeline_id, organization_id)  → crm_pipelines (id, organization_id)  restrict
+--   crm_leads  (stage_id, organization_id)     → crm_stages    (id, organization_id)  restrict
+--   green.product_pipeline_binding (pipeline_id, organization_id) → crm_pipelines     cascade
+-- Mesmo nome porque o PostgREST embeda por nome de FK (`crm_stages!crm_leads_stage_id_fkey`,
+-- `etapas:crm_stages!crm_stages_pipeline_id_fkey`) e trocar, em vez de acrescentar, mantém UMA
+-- relação entre cada par de tabelas (acrescentar deixaria os embeds sem dica ambíguos). FK
+-- única também fecha o oracle de existência: estrutura de outra org e estrutura inexistente
+-- dão a MESMA recusa (mesma constraint, mesmo detail).
+--
+-- ── 2. Funil e etapa não trocam de organização
+-- Nenhum writer do produto altera `crm_pipelines.organization_id` ou `crm_stages.organization_id`
+-- (censo da spike: só o INSERT os define). Trocar o tenant de estrutura com histórico levaria
+-- binding, etapas, leads e rastro Green junto. BEFORE UPDATE OF organization_id recusa com
+-- `green_structure_tenant_immutable`; a decisão não lê dado de ninguém (não é oracle).
+--
+-- ── 3. Etapa não entra nem sai de funil Green por UPDATE
+-- `crm_stages.pipeline_id` também só é definido no INSERT pelo produto. Trocá-lo arrasta todo
+-- lead que aponta para a etapa: entra no Green sem identidade, ou fica com etapa de outro
+-- funil. Quando o funil de origem OU o de destino é Green, a troca é recusada
+-- (`green_stage_relocation_forbidden`), com ou sem leads. Entre funis comuns segue o upstream.
+-- Corrida com binding em voo: a guarda toma SHARE em `green.product_pipeline_binding` antes de
+-- ler (espera o binding em voo; o binding seguinte espera a realocação comitar e enxerga a
+-- etapa já no lugar novo, item 4).
+--
+-- ── 4. Binding só nasce sobre estrutura coerente
+-- O lifecycle v1.3 (0505) reivindica a identidade dos leads do funil que vira Green, mas não
+-- conferia se eles eram coerentes (o lote do produto pode deixar lead comum com etapa de outro
+-- funil). Um trigger NOVO no binding (o da 0505 fica intacto) toma o mesmo lock da 0505 e recusa
+-- o binding inteiro com `green_binding_structure_invalid` se algum lead que passaria a tocar o
+-- domínio tem etapa fora do próprio funil.
+--
+-- ── 5. Remoção / re-apontamento de binding: migração administrativa auditada
+-- Só o dono escreve no binding (nenhum papel de API tem DML). Remover ou re-apontar continua
+-- permitido (o lifecycle depende disso), mas deixa de ser silencioso: a auditoria da 0503
+-- passa a dizer QUANTOS leads saíram do domínio (`released_leads`, contados sob o mesmo lock
+-- da 0505) e cobre também o UPDATE que re-aponta o binding (antes só o DELETE era auditado).
+-- As identidades dos leads soltos continuam `live` (UUID não reciclável) e o histórico fica.
+-- Cascata de organização: `released_leads` nulo (os leads vão junto com o tenant).
+--
+-- Sem coluna nova, sem PII nova, sem evento novo (saída/entrada estrutural sem evento canônico
+-- é classificada para GREEN-03).
+
+-- ── 0 · estrutura impossível herdada ─────────────────────────────────────────
+do $$
+declare
+  v_contagens jsonb;
+begin
+  select jsonb_build_object(
+    'etapa_em_funil_alheio', (
+      select count(*) from public.crm_stages s
+        join public.crm_pipelines p on p.id = s.pipeline_id
+       where p.organization_id <> s.organization_id),
+    'binding_em_funil_alheio', (
+      select count(*) from green.product_pipeline_binding b
+        join public.crm_pipelines p on p.id = b.pipeline_id
+       where p.organization_id <> b.organization_id),
+    'lead_em_funil_alheio', (
+      select count(*) from public.crm_leads l
+        join public.crm_pipelines p on p.id = l.pipeline_id
+       where p.organization_id <> l.organization_id),
+    'lead_em_etapa_alheia', (
+      select count(*) from public.crm_leads l
+        join public.crm_stages s on s.id = l.stage_id
+       where s.organization_id <> l.organization_id),
+    'green_incoerente', (
+      select count(*) from public.crm_leads l
+       where (exists (select 1 from green.product_pipeline_binding b
+                       where b.organization_id = l.organization_id and b.pipeline_id = l.pipeline_id)
+              or exists (select 1 from public.crm_stages s
+                           join green.product_pipeline_binding b
+                             on b.organization_id = s.organization_id and b.pipeline_id = s.pipeline_id
+                          where s.id = l.stage_id and s.organization_id = l.organization_id))
+         and not exists (select 1 from public.crm_stages s
+                          where s.id = l.stage_id
+                            and s.pipeline_id = l.pipeline_id
+                            and s.organization_id = l.organization_id)))
+    into v_contagens;
+  if exists (select 1 from jsonb_each_text(v_contagens) where value::bigint > 0) then
+    raise exception 'green_structural_legacy_violation'
+      using errcode = '23514',
+            detail = v_contagens::text,
+            hint = 'Corrija a estrutura (etapa/binding/lead na própria organização; lead Green com etapa do próprio funil) e reaplique.';
+  end if;
+end $$;
+
+-- ── 1 · tenant da estrutura por FK composta ─────────────────────────────────
+create unique index if not exists uniq_crm_pipelines_id_org
+  on public.crm_pipelines (id, organization_id);
+create unique index if not exists uniq_crm_stages_id_org
+  on public.crm_stages (id, organization_id);
+
+do $$
+begin
+  if not exists (select 1 from pg_constraint
+                  where conname = 'crm_stages_pipeline_id_fkey'
+                    and conrelid = 'public.crm_stages'::regclass
+                    and cardinality(conkey) = 2) then
+    alter table public.crm_stages drop constraint if exists crm_stages_pipeline_id_fkey;
+    alter table public.crm_stages
+      add constraint crm_stages_pipeline_id_fkey
+      foreign key (pipeline_id, organization_id)
+      references public.crm_pipelines (id, organization_id) on delete cascade;
+  end if;
+
+  if not exists (select 1 from pg_constraint
+                  where conname = 'crm_leads_pipeline_id_fkey'
+                    and conrelid = 'public.crm_leads'::regclass
+                    and cardinality(conkey) = 2) then
+    alter table public.crm_leads drop constraint if exists crm_leads_pipeline_id_fkey;
+    alter table public.crm_leads
+      add constraint crm_leads_pipeline_id_fkey
+      foreign key (pipeline_id, organization_id)
+      references public.crm_pipelines (id, organization_id) on delete restrict;
+  end if;
+
+  if not exists (select 1 from pg_constraint
+                  where conname = 'crm_leads_stage_id_fkey'
+                    and conrelid = 'public.crm_leads'::regclass
+                    and cardinality(conkey) = 2) then
+    alter table public.crm_leads drop constraint if exists crm_leads_stage_id_fkey;
+    alter table public.crm_leads
+      add constraint crm_leads_stage_id_fkey
+      foreign key (stage_id, organization_id)
+      references public.crm_stages (id, organization_id) on delete restrict;
+  end if;
+
+  if not exists (select 1 from pg_constraint
+                  where conname = 'product_pipeline_binding_pipeline_id_fkey'
+                    and conrelid = 'green.product_pipeline_binding'::regclass
+                    and cardinality(conkey) = 2) then
+    alter table green.product_pipeline_binding drop constraint if exists product_pipeline_binding_pipeline_id_fkey;
+    alter table green.product_pipeline_binding
+      add constraint product_pipeline_binding_pipeline_id_fkey
+      foreign key (pipeline_id, organization_id)
+      references public.crm_pipelines (id, organization_id) on delete cascade;
+  end if;
+end $$;
+
+-- ── 2 · funil não troca de organização ──────────────────────────────────────
+create or replace function green.fn_structure_pipeline_guard()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+begin
+  raise exception 'green_structure_tenant_immutable' using errcode = '23514';
+end $$;
+revoke all on function green.fn_structure_pipeline_guard() from public, anon, authenticated, service_role;
+
+drop trigger if exists trg_green_structure_pipeline on public.crm_pipelines;
+create trigger trg_green_structure_pipeline
+  before update of organization_id on public.crm_pipelines
+  for each row
+  when (old.organization_id is distinct from new.organization_id)
+  execute function green.fn_structure_pipeline_guard();
+
+-- ── 2 + 3 · etapa não troca de organização nem entra/sai de funil Green ─────
+create or replace function green.fn_structure_stage_guard()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+begin
+  if new.organization_id is distinct from old.organization_id then
+    raise exception 'green_structure_tenant_immutable' using errcode = '23514';
+  end if;
+  if new.pipeline_id is distinct from old.pipeline_id then
+    -- serializa com binding em voo (ver o cabeçalho, item 3)
+    lock table green.product_pipeline_binding in share mode;
+    -- só a própria organização é consultada: funil de outra org nunca é lido como Green aqui
+    -- (a FK composta é quem recusa o destino estrangeiro, com a mesma resposta do inexistente)
+    if green.fn_is_green_pipeline(old.organization_id, old.pipeline_id)
+       or green.fn_is_green_pipeline(new.organization_id, new.pipeline_id) then
+      raise exception 'green_stage_relocation_forbidden' using errcode = '23514';
+    end if;
+  end if;
+  return new;
+end $$;
+revoke all on function green.fn_structure_stage_guard() from public, anon, authenticated, service_role;
+
+drop trigger if exists trg_green_structure_stage on public.crm_stages;
+create trigger trg_green_structure_stage
+  before update of organization_id, pipeline_id on public.crm_stages
+  for each row
+  when (old.organization_id is distinct from new.organization_id
+        or old.pipeline_id is distinct from new.pipeline_id)
+  execute function green.fn_structure_stage_guard();
+
+-- ── 4 · binding só sobre estrutura coerente ─────────────────────────────────
+create or replace function green.fn_binding_structure_check()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+begin
+  -- o mesmo lock da 0505: espera as escritas de lead em voo e segura as seguintes
+  lock table public.crm_leads in share row exclusive mode;
+
+  -- lead do funil com etapa de outro funil, ou lead de outro funil com etapa deste: os dois
+  -- passariam a tocar o domínio com etapa e funil discordando
+  if exists (select 1
+               from public.crm_leads l
+               join public.crm_stages s on s.id = l.stage_id
+              where l.organization_id = new.organization_id
+                and l.pipeline_id = new.pipeline_id
+                and (s.pipeline_id <> l.pipeline_id or s.organization_id <> l.organization_id))
+     or exists (select 1
+                  from public.crm_stages s
+                  join public.crm_leads l on l.stage_id = s.id and l.organization_id = s.organization_id
+                 where s.organization_id = new.organization_id
+                   and s.pipeline_id = new.pipeline_id
+                   and l.pipeline_id <> s.pipeline_id) then
+    raise exception 'green_binding_structure_invalid' using errcode = '23514';
+  end if;
+  return null;
+end $$;
+revoke all on function green.fn_binding_structure_check() from public, anon, authenticated, service_role;
+
+drop trigger if exists trg_green_binding_structure on green.product_pipeline_binding;
+create trigger trg_green_binding_structure
+  after insert or update of organization_id, pipeline_id on green.product_pipeline_binding
+  for each row execute function green.fn_binding_structure_check();
+
+-- ── 5 · remoção e re-apontamento de binding auditados com o que soltam ─────
+-- Cópia da 0503 + `operation`, `released_leads`, `new_pipeline_id` e o ramo de UPDATE.
+create or replace function green.fn_binding_removed_audit()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_env         jsonb := green.fn_mutation_envelope();
+  v_org_deleted boolean := not exists (select 1 from public.organizations o where o.id = old.organization_id);
+  v_soltos      bigint;
+begin
+  if tg_op = 'UPDATE'
+     and new.organization_id is not distinct from old.organization_id
+     and new.pipeline_id is not distinct from old.pipeline_id then
+    return null;
+  end if;
+
+  -- Quantos leads saem do domínio: os da organização no funil ou numa etapa dele, contados
+  -- sob o lock da 0505 (exato no commit). Na cascata do tenant os leads vão junto: nulo.
+  if not v_org_deleted then
+    lock table public.crm_leads in share row exclusive mode;
+    select count(*) into v_soltos
+      from public.crm_leads l
+     where l.organization_id = old.organization_id
+       and (l.pipeline_id = old.pipeline_id
+            or l.stage_id in (select s.id
+                                from public.crm_stages s
+                               where s.organization_id = old.organization_id
+                                 and s.pipeline_id = old.pipeline_id));
+  end if;
+
+  -- `organization_id` nulo quando o tenant está indo embora: a FK de
+  -- `api_audit_log` não aceitaria uma org que já não existe, e é justamente
+  -- esta linha que tem de sobreviver a ela. O id fica no metadata.
+  insert into public.api_audit_log
+    (organization_id, actor_user_id, acting_as_platform_admin, action, resource_type, resource_id,
+     bypassed_rls, metadata)
+  values
+    (case when v_org_deleted then null else old.organization_id end,
+     auth.uid(),
+     coalesce(public.fn_is_platform_admin(), false),
+     'green.binding_removed', 'crm_pipeline', old.pipeline_id,
+     coalesce(v_env ->> 'caller', '') <> 'user',
+     jsonb_build_object(
+       'organization_id', old.organization_id,
+       'pipeline_id',     old.pipeline_id,
+       'product_key',     old.product_key,
+       'org_deleted',     v_org_deleted,
+       'caller',          v_env ->> 'caller',
+       'trusted',         v_env -> 'trusted',
+       'operation',       lower(tg_op),
+       'released_leads',  v_soltos)
+     || case when tg_op = 'UPDATE'
+             then jsonb_build_object('new_pipeline_id', new.pipeline_id)
+             else '{}'::jsonb end);
+  return null;
+end $$;
+revoke all on function green.fn_binding_removed_audit() from public, anon, authenticated;
+grant execute on function green.fn_binding_removed_audit() to service_role;
+
+drop trigger if exists trg_green_binding_repointed_audit on green.product_pipeline_binding;
+create trigger trg_green_binding_repointed_audit
+  after update of organization_id, pipeline_id on green.product_pipeline_binding
+  for each row execute function green.fn_binding_removed_audit();
+
+notify pgrst, 'reload schema';
+
+-- ---- SPIKE Green canonical event cutover v1: um produtor por fato Green (migration 0508) ----
+-- 0508 (SPIKE Green canonical event cutover — DESCARTÁVEL; não é produto, não vai para produção).
+--
+-- SPIKE-GREEN-03: o barramento Green tinha dois produtores do MESMO fato. A fronteira de
+-- `crm_leads` (0502-0506) emite o `lead.stage_changed` canônico na transação da mutação; os
+-- writers do Deskcomm continuam emitindo o seu `lead.stage_changed` legado depois do commit, em
+-- outra request. Até a 0507 um supressor casava o legado com a mutação por (lead, transição,
+-- janela de 5 min, "o mais recente ainda sem gêmeo"). Medido na suíte
+-- `tests/invariants/green-canonical-event-cutover.test.ts` contra a 0507: gêmeo atrasado vira
+-- segundo fato, replay grava de novo (4 de 4), dois writers concorrentes com leitura velha da
+-- origem duplicam, uma linha sem gêmeo engole o fato verdadeiro de outro movimento, e uma regra
+-- de automação roda 3 vezes por um movimento.
+-- Delta experimental SOBRE a 0507, que fica intacta junto com 0501-0506.
+--
+-- Contrato (definitivo):
+--
+--   * Dono do fato "lead Green mudou de etapa": o BANCO (fronteira, mesma transação). O writer
+--     não é fonte de um segundo fato.
+--   * O gêmeo é reconhecido por CHAVE FORTE: o servidor manda, em toda request de um escopo de
+--     execução (requisição, tool, regra, job), o header `x-green-scope-id` (o mesmo id na
+--     mutação e na emissão legada). A fronteira grava esse id no livro-razão; o porteiro de
+--     `event_log` recusa em silêncio (a linha não nasce, `emit_event` devolve null) o
+--     `lead.stage_changed` legado do MESMO escopo, MESMO lead e MESMA etapa de destino de uma
+--     mutação canonizada. Sem janela, sem "mais recente", sem estado: atrasado, repetido,
+--     concorrente ou fora de ordem dá o mesmo veredito.
+--   * Fora do gêmeo, nada é engolido por casamento. Para um lead que toca o domínio Green:
+--       - sem escopo do servidor → não nasce (no-op, como o gêmeo): não é relato de uma
+--         mutação do servidor, e só o canônico fala pela mudança de etapa Green;
+--       - reordenação na mesma etapa (`from_stage_id = to_stage_id`) → não é fato de etapa;
+--       - escopo que não canonizou a transição (o movimento foi COMUM, e o funil virou Green
+--         depois) → passa: é o fato daquele movimento. O porteiro confia no escopo do servidor
+--         (o writer só relata a mutação que ele fez); forja de escopo é o AUTO-GAP-01.
+--   * Lead comum: intocado (nunca tem linha no livro-razão, nunca toca o domínio).
+--   * Binding: nenhum evento por lead (a etapa não mudou; nenhum consumidor precisa de
+--     "entrou/saiu do Green"). O registro é estrutural e atômico: entrada = a linha do binding +
+--     `green.lead_identity.first_seen_at` por lead (0505); saída = `green.binding_removed` com
+--     `released_leads` (0503/0507). Nada muda aqui.
+--
+-- ── Legado
+--   NECESSÁRIO     a marca reservada ao produtor (prova por livro-razão + GUC de uso único), a
+--                  imutabilidade do canônico, o livro-razão (prova + chave do gêmeo), a emissão
+--                  dos writers para lead comum.
+--   SÓ HISTÓRICO   `stage_event_ledger.legacy_suppressed_at` / `legacy_request_id` e o índice
+--                  `stage_event_ledger_twin_idx`: o que o supressor gravou até a 0507. Ninguém
+--                  escreve mais; o índice fica (o baseline o recria a cada update e a cerca de
+--                  índices proíbe criar-e-derrubar).
+--   MORTO (sai)    `green.fn_suppress_legacy_stage_changed` + `trg_green_suppress_legacy_stage_changed`;
+--                  `green.fn_guard_crm_lead_stage` e `green.fn_emit_crm_lead_stage_changed`
+--                  (órfãs de trigger desde a 0502).
+--
+-- ── Rollout
+-- Banco ANTES do servidor. Entre os dois, o servidor antigo não manda o escopo: o gêmeo dele para
+-- lead Green não nasce (no-op), nunca é gravado em dobro; lead comum segue igual.
+
+-- ── 1 · livro-razão: o escopo que fez a mutação ──────────────────────────────
+alter table green.stage_event_ledger add column if not exists scope_id uuid;
+comment on column green.stage_event_ledger.scope_id is
+  'SPIKE Green 0508: escopo de execução do servidor (header x-green-scope-id) da mutação canonizada. Chave do gêmeo legado.';
+comment on column green.stage_event_ledger.legacy_suppressed_at is
+  'HISTÓRICO (até a 0507): quando o supressor temporal casou um gêmeo. Não é mais escrita.';
+comment on column green.stage_event_ledger.legacy_request_id is
+  'HISTÓRICO (até a 0507): request_id do gêmeo que o supressor casou. Não é mais escrita.';
+comment on index green.stage_event_ledger_twin_idx is
+  'HISTÓRICO (até a 0507): índice do supressor temporal. Mantido: o baseline o recria a cada update.';
+create index if not exists stage_event_ledger_scope_idx
+  on green.stage_event_ledger (organization_id, lead_id, scope_id)
+  where scope_id is not null;
+
+-- ── 2 · o escopo da request (header do servidor; ausente/ inválido = null) ────
+create or replace function green.fn_request_scope()
+returns uuid
+language plpgsql stable
+set search_path = ''
+as $$
+declare
+  v text;
+begin
+  begin
+    v := nullif(current_setting('request.headers', true), '')::jsonb ->> 'x-green-scope-id';
+  exception when others then
+    return null;
+  end;
+  if v is null or not green.fn_ctx_uuid_ok(v) then return null; end if;
+  return v::uuid;
+end $$;
+revoke all on function green.fn_request_scope() from public, anon, authenticated;
+grant execute on function green.fn_request_scope() to service_role;
+
+-- ── 3 · fronteira: grava o escopo no livro-razão (cópia da 0506, uma coluna) ──
+create or replace function green.fn_crm_lead_boundary()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_old_p   boolean := false;  -- funil de OLD é gerenciado
+  v_old_toca boolean := false; -- OLD toca o domínio (funil OU etapa gerenciados)
+  v_new_p   boolean := false;  -- funil de NEW é gerenciado
+  v_toca    boolean := false;
+  v_env     jsonb;
+  v_caller  text;
+  v_trusted jsonb;
+  v_meta    jsonb;
+  v_payload jsonb;
+  v_kind    text;
+  v_ledger  uuid;
+  v_event   uuid;
+begin
+  -- lifecycle v1.2: a identidade do lead acaba em QUALQUER exclusão (Green ou não, organização
+  -- viva ou indo embora), antes de qualquer retorno antecipado. É o que impede o UUID de voltar.
+  if tg_op = 'DELETE' then
+    update green.lead_identity
+       set state = 'retired', retired_at = now()
+     where lead_id = old.id and state = 'live';
+  end if;
+
+  if tg_op = 'UPDATE'
+     and new.id is not distinct from old.id
+     and new.stage_id is not distinct from old.stage_id
+     and new.pipeline_id is not distinct from old.pipeline_id
+     and new.organization_id is not distinct from old.organization_id then
+    return null;
+  end if;
+
+  -- A organização inteira indo embora (cascata): sem lápide possível.
+  if tg_op = 'DELETE'
+     and not exists (select 1 from public.organizations o where o.id = old.organization_id) then
+    -- lifecycle v1.3 (defesa em profundidade): se o lead ainda toca o domínio e a identidade
+    -- se perdeu, o UUID não pode ficar reutilizável
+    if green.fn_lead_touches_green(old.organization_id, old.pipeline_id, old.stage_id) then
+      insert into green.lead_identity (lead_id, state, retired_at)
+      values (old.id, 'retired', now())
+      on conflict (lead_id) do nothing;
+    end if;
+    return null;
+  end if;
+
+  if tg_op <> 'INSERT' then
+    v_old_p := green.fn_is_green_pipeline(old.organization_id, old.pipeline_id);
+    v_toca := v_old_p or green.fn_lead_touches_green(old.organization_id, old.pipeline_id, old.stage_id);
+    v_old_toca := v_toca;
+  end if;
+  -- lifecycle v1.3 (defesa em profundidade): lead que toca o domínio e é apagado deixa a
+  -- identidade aposentada mesmo que nunca tenha sido registrada (o `on conflict` preserva a linha
+  -- já aposentada pelo `update` do topo)
+  if tg_op = 'DELETE' and v_toca then
+    insert into green.lead_identity (lead_id, state, retired_at)
+    values (old.id, 'retired', now())
+    on conflict (lead_id) do nothing;
+  end if;
+  if tg_op <> 'DELETE' then
+    v_new_p := green.fn_is_green_pipeline(new.organization_id, new.pipeline_id);
+    v_toca := v_toca or v_new_p
+              or green.fn_lead_touches_green(new.organization_id, new.pipeline_id, new.stage_id);
+  end if;
+  -- o id de um lead com identidade Green não muda: trocar o id libertaria o antigo
+  if tg_op = 'UPDATE' and new.id is distinct from old.id then
+    if v_toca or exists (select 1 from green.lead_identity i where i.lead_id = old.id) then
+      raise exception 'green_lead_id_immutable' using errcode = '23514';
+    end if;
+  end if;
+  if not v_toca then return null; end if;
+
+  if tg_op <> 'DELETE' and not exists (
+       select 1 from public.crm_stages s
+        where s.id = new.stage_id
+          and s.organization_id = new.organization_id
+          and s.pipeline_id = new.pipeline_id) then
+    raise exception 'green_stage_not_bound' using errcode = '23503';
+  end if;
+
+  v_env := green.fn_mutation_envelope();
+  v_caller := v_env ->> 'caller';
+  v_trusted := v_env -> 'trusted';
+  if v_caller <> 'user' then
+    if not coalesce((v_env ->> 'valid')::boolean, false) then
+      raise exception 'green_mutation_context_required'
+        using errcode = '42501', detail = coalesce(v_env ->> 'reason', 'missing');
+    end if;
+    if tg_op <> 'DELETE' then
+      perform green.fn_assert_service_origin(v_env -> 'service_origin', new.organization_id, new.contact_id, new.id, v_trusted);
+    end if;
+  end if;
+
+  -- lifecycle v1.2: toda ENTRADA no domínio (nascimento ou lead que vem de fora) reivindica a
+  -- identidade; um UUID já aposentado é recusado com erro de domínio, igual para qualquer org.
+  if tg_op <> 'DELETE' and (tg_op = 'INSERT' or not v_old_toca) then
+    perform green.fn_claim_lead_identity(new.id);
+  end if;
+
+  -- lifecycle: o nascimento Green deixa a proveniência na MESMA transação.
+  -- Falha aqui não é capturada: sem registro, sem nascimento.
+  if tg_op = 'INSERT' then
+    insert into green.lead_birth_provenance
+      (lead_id, organization_id, pipeline_id, stage_id, caller, trusted, advisory, service_origin)
+    values
+      (new.id, new.organization_id, new.pipeline_id, new.stage_id, v_caller, v_trusted,
+       coalesce(v_env -> 'advisory', '{}'::jsonb),
+       case when jsonb_typeof(v_env -> 'service_origin') = 'object' then v_env -> 'service_origin' end);
+    return null;
+  end if;
+
+  if tg_op = 'DELETE' then
+    v_kind := 'deleted';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      old.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'status',           old.status,
+      'green_transition', 'delete');
+  else
+    v_kind := 'stage_changed';
+    v_payload := jsonb_build_object(
+      'pipeline_id',      new.pipeline_id,
+      'from_stage_id',    old.stage_id,
+      'to_stage_id',      new.stage_id,
+      'status',           new.status,
+      'green_transition', case when v_new_p then case when v_old_p then 'stay' else 'enter' end
+                               else 'exit' end);
+    if new.pipeline_id is distinct from old.pipeline_id then
+      v_payload := v_payload || jsonb_build_object('from_pipeline_id', old.pipeline_id);
+    end if;
+    if jsonb_typeof(v_env -> 'service_origin') = 'object' then
+      v_payload := v_payload || jsonb_build_object('service_origin', v_env -> 'service_origin');
+    end if;
+  end if;
+
+  v_meta := jsonb_build_object('green_canonical', true, 'green_context_version', 1)
+    || v_trusted
+    || jsonb_strip_nulls(jsonb_build_object(
+         'actor_user_id', case when v_caller = 'user' then v_trusted -> 'actor' ->> 'id' end,
+         'actor_kind',    v_trusted -> 'actor' ->> 'kind'))
+    || jsonb_build_object('green', jsonb_build_object(
+         'v', 2, 'trusted', v_trusted, 'advisory', v_env -> 'advisory'));
+
+  insert into green.stage_event_ledger
+    (organization_id, lead_id, kind, from_stage_id, to_stage_id, from_pipeline_id, to_pipeline_id,
+     request_id, advisory_request_id, scope_id)
+  values
+    (old.organization_id, old.id, v_kind, old.stage_id,
+     case when tg_op = 'DELETE' then null else new.stage_id end,
+     old.pipeline_id,
+     case when tg_op = 'DELETE' then null else new.pipeline_id end,
+     v_trusted ->> 'request_id',
+     coalesce(v_env -> 'advisory' ->> 'client_request_id', v_env -> 'advisory' ->> 'request_id'),
+     green.fn_request_scope())
+  returning id into v_ledger;
+  perform set_config('green.canonical_proof', v_ledger::text, true);
+  -- Tipo LITERAL em cada ramo: é o que a cerca de evento-fato enxerga.
+  if tg_op = 'DELETE' then
+    v_event := public.emit_event('lead.deleted', 'crm_lead', old.id, v_payload, v_meta, old.organization_id);
+  else
+    v_event := public.emit_event('lead.stage_changed', 'crm_lead', old.id, v_payload, v_meta, new.organization_id);
+  end if;
+  perform set_config('green.canonical_proof', '', true);
+  if not exists (select 1 from green.stage_event_ledger l
+                  where l.id = v_ledger and l.canonical_event_id = v_event) then
+    raise exception 'green_canonical_not_recorded' using errcode = 'P0001';
+  end if;
+  return null;
+end $$;
+revoke all on function green.fn_crm_lead_boundary() from public, anon, authenticated;
+grant execute on function green.fn_crm_lead_boundary() to service_role;
+
+-- ── 4 · porteiro de INSERT em event_log (substitui o supressor temporal) ─────
+create or replace function green.fn_event_log_gate()
+returns trigger
+language plpgsql security definer
+set search_path = ''
+as $$
+declare
+  v_proof    uuid;
+  v_hit      uuid;
+  v_escopo   uuid;
+  v_de       uuid;
+  v_para     uuid;
+  v_pipeline uuid;
+  v_etapa    uuid;
+begin
+  -- (a) marca e envelope reservados ao produtor: só passam com a prova da MESMA transação, de
+  --     uso único, amarrada a este lead e a esta transição (idêntico à 0502).
+  if new.metadata ?| array['green_canonical', 'green_context_version', 'green'] then
+    begin
+      v_proof := nullif(current_setting('green.canonical_proof', true), '')::uuid;
+    exception when others then
+      v_proof := null;
+    end;
+    if v_proof is not null and new.entity_kind = 'crm_lead'
+       and new.event_type in ('lead.stage_changed', 'lead.deleted') then
+      update green.stage_event_ledger l
+         set canonical_event_id = new.id
+       where l.id = v_proof
+         and l.txid = txid_current()
+         and l.canonical_event_id is null
+         and l.organization_id = new.organization_id
+         and l.lead_id = new.entity_id
+         and l.kind = case new.event_type when 'lead.deleted' then 'deleted' else 'stage_changed' end
+         and l.to_stage_id::text is not distinct from new.payload ->> 'to_stage_id'
+         and l.from_stage_id::text is not distinct from new.payload ->> 'from_stage_id'
+      returning l.id into v_hit;
+    end if;
+    if v_hit is null then
+      raise exception 'green_canonical_reserved' using errcode = '42501',
+        detail = 'a marca canônica só nasce do trigger de crm_leads, na transação da mutação';
+    end if;
+    perform set_config('green.canonical_proof', '', true);
+    return new;
+  end if;
+
+  -- (b) só `lead.stage_changed` de `crm_lead` com sujeito; o resto segue o upstream.
+  if new.event_type <> 'lead.stage_changed' or new.entity_kind is distinct from 'crm_lead'
+     or new.entity_id is null then
+    return new;
+  end if;
+
+  v_escopo := green.fn_request_scope();
+  if green.fn_ctx_uuid_ok(new.payload ->> 'to_stage_id') then
+    v_para := (new.payload ->> 'to_stage_id')::uuid;
+  end if;
+  if green.fn_ctx_uuid_ok(new.payload ->> 'from_stage_id') then
+    v_de := (new.payload ->> 'from_stage_id')::uuid;
+  end if;
+
+  -- (c) o gêmeo: o MESMO escopo canonizou a mutação deste lead para esta etapa. O fato já existe
+  --     (é o canônico); o relato do writer não vira segundo fato. Vale mesmo que o lead já não
+  --     toque o domínio (binding removido entre a mutação e o relato).
+  if v_escopo is not null and exists (
+       select 1
+         from green.stage_event_ledger l
+        where l.organization_id = new.organization_id
+          and l.lead_id = new.entity_id
+          and l.scope_id = v_escopo
+          and l.kind = 'stage_changed'
+          and l.canonical_event_id is not null
+          and l.to_stage_id is not distinct from v_para) then
+    return null;
+  end if;
+
+  -- (d) fora do domínio Green: upstream intacto.
+  select l.pipeline_id, l.stage_id into v_pipeline, v_etapa
+    from public.crm_leads l
+   where l.id = new.entity_id and l.organization_id = new.organization_id;
+  if not (green.fn_lead_touches_green(new.organization_id, v_pipeline, v_etapa)
+          or (v_para is not null and green.fn_lead_touches_green(new.organization_id, null, v_para))
+          or (v_de is not null and green.fn_lead_touches_green(new.organization_id, null, v_de))) then
+    return new;
+  end if;
+
+  -- (e) domínio Green: só o canônico fala pela mudança de etapa.
+  if v_escopo is null then
+    return null; -- relato sem escopo do servidor: não descreve uma mutação dele
+  end if;
+  if v_para is not null and v_de is not distinct from v_para then
+    return null; -- reordenação na mesma etapa: não é mudança de etapa
+  end if;
+  return new; -- escopo que não canonizou esta transição: o movimento foi comum (fato dele)
+end $$;
+revoke all on function green.fn_event_log_gate() from public, anon, authenticated;
+grant execute on function green.fn_event_log_gate() to service_role;
+
+drop trigger if exists trg_green_suppress_legacy_stage_changed on public.event_log;
+drop trigger if exists trg_green_event_log_gate on public.event_log;
+create trigger trg_green_event_log_gate
+  before insert on public.event_log
+  for each row execute function green.fn_event_log_gate();
+
+-- ── 5 · código morto ─────────────────────────────────────────────────────────
+drop function if exists green.fn_suppress_legacy_stage_changed();
+drop function if exists green.fn_guard_crm_lead_stage();
+drop function if exists green.fn_emit_crm_lead_stage_changed();
+
+notify pgrst, 'reload schema';
+
 -- ---- VARREDURA anon: função nova nasce exposta em quem ATUALIZA (migration 0116) ----
 --
 -- ⚠️ DE PROPÓSITO, NENHUMA FUNÇÃO É CRIADA DEPOIS DESTE BLOCO. Apêndice que cria

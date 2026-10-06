@@ -50,6 +50,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { marcaDaOrigem, origemDeCampanhaDaConversa } from "@/lib/campanhas/origem-do-lead";
+import { withGreenSystemRoot } from "@/lib/green/mutation-context";
 
 import { logger } from "@/lib/logger";
 
@@ -373,26 +374,42 @@ export async function garantirLeadDaConversa(
   // advisory lock e devolve NULL quando já existe um aberto. O passo 2 fica
   // onde está: ele evita a ida ao banco no caso comum, que é a mensagem número
   // dez de uma conversa que já tem card.
-  const { data: novoId, error } = await db.rpc("fn_nascer_lead_da_conversa", {
-    p_org: organizationId,
-    p_contact: contactId,
-    p_pipeline: destino.pipelineId,
-    p_stage: destino.stageId,
-    p_title: titulo,
-    // A campanha ganha: quem montou a lista sabe de onde o card veio. Sem ela,
-    // vale a regra do upstream — anúncio mantém a origem do contato, e o resto
-    // usa `origem.source`.
-    p_source: marca ? marca.source : rotuloDeAnuncio ? contato!.source : origem.source,
-    p_source_metadata: marca
-      ? marca.source_metadata
-      : rotuloDeAnuncio
-        ? (contato!.source_metadata ?? {})
-        : {},
-    // O ponto ao lado do título só acende se a organização cadastrar este
-    // rótulo em `crm_pipelines.settings.canonical_tags` (Configurações do
-    // funil) — a tag sempre entra; o destaque visual é opt-in do operador.
-    p_tags: rotuloDeAnuncio ? [rotuloDeAnuncio] : [],
-  });
+  //
+  // SPIKE Green lifecycle (EV-01B): quando o funil de entrada é gerenciado
+  // (Green), o banco exige do writer privilegiado um contexto de mutação e
+  // grava a proveniência do nascimento. O ator é o MESMO que a timeline já
+  // declara logo abaixo (`webhook_source`/`canal-inbound`, módulo
+  // `canal.ingest`) — a ingestão do canal é a causa, não quem chamou: por isso
+  // raiz de sistema, sem herdar nada. Sem isto o nascimento Green era recusado
+  // (42501) e a conversa ficava sem lead. Funil comum: o banco ignora o header.
+  const { data: novoId, error } = await withGreenSystemRoot(
+    {
+      source: "canal.ingest",
+      correlation_id: conversationId,
+      actor: { kind: "webhook_source", id: "canal-inbound" },
+    },
+    () =>
+      db.rpc("fn_nascer_lead_da_conversa", {
+        p_org: organizationId,
+        p_contact: contactId,
+        p_pipeline: destino.pipelineId,
+        p_stage: destino.stageId,
+        p_title: titulo,
+        // A campanha ganha: quem montou a lista sabe de onde o card veio. Sem ela,
+        // vale a regra do upstream — anúncio mantém a origem do contato, e o resto
+        // usa `origem.source`.
+        p_source: marca ? marca.source : rotuloDeAnuncio ? contato!.source : origem.source,
+        p_source_metadata: marca
+          ? marca.source_metadata
+          : rotuloDeAnuncio
+            ? (contato!.source_metadata ?? {})
+            : {},
+        // O ponto ao lado do título só acende se a organização cadastrar este
+        // rótulo em `crm_pipelines.settings.canonical_tags` (Configurações do
+        // funil) — a tag sempre entra; o destaque visual é opt-in do operador.
+        p_tags: rotuloDeAnuncio ? [rotuloDeAnuncio] : [],
+      }),
+  );
 
   if (error) {
     return { criado: false, motivo: "erro", detalhe: error.message.slice(0, 120) };

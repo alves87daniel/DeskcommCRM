@@ -23,6 +23,10 @@ import { audit } from "@/lib/audit";
 import { regraDoEvento } from "@/lib/automation/gatilho-de-data-do-funil";
 import { ENTIDADE_ESPERADA_POR_GATILHO } from "@/lib/schemas/webhooks";
 import { logger } from "@/lib/logger";
+// SPIKE Green: a regra roda com `request_id=rule:<id>` + causation no contexto
+// async, para o evento canônico do hook de banco carregar a marca anti-loop.
+import { greenAutomationOrigin, withGreenMutationContext } from "@/lib/green/mutation-context";
+import { causadoPorRegra } from "@/lib/green/proveniencia";
 
 export const AUTOMATION_CONSUMER_KEY = "automation-rules";
 
@@ -156,10 +160,10 @@ export async function runAutomationForEvent(
   row: EventRow,
 ): Promise<HandlerResult> {
   const serviceBoundaries = new Map<string, Promise<ServiceBoundary>>();
-  const requestId = row.metadata?.request_id;
-  const causedByRule =
-    Boolean(row.metadata?.caused_by_rule) || (typeof requestId === "string" && requestId.startsWith("rule:"));
-  if (causedByRule) {
+  // SPIKE Green v3: em evento canônico Green o anti-loop decide SÓ pela
+  // proveniência confiável; `request_id` que um humano mandou no header é
+  // advisory e não desliga regra nenhuma. Evento não canônico: régua de sempre.
+  if (causadoPorRegra(row.metadata)) {
     return { consumer_key: AUTOMATION_CONSUMER_KEY, status: "skipped", detail: "caused_by_rule" };
   }
 
@@ -231,40 +235,55 @@ export async function runAutomationForEvent(
 
   for (const rule of applicable) {
     const results: ActionResultDetail[] = [];
-    // O índice é o da lista INTEIRA — a posição do resultado em
-    // `actions_result` e parte do id da entrega do webhook (#1529).
-    for (const [indiceDaAcao, action] of (rule.actions ?? []).entries()) {
-      const executor = getAction(action.type);
-      if (!executor) {
-        results.push({ type: action.type, status: "failed", error: "unknown_action" });
-        continue;
-      }
-      try {
-        results.push(
-          await executor.execute(
-            {
-              admin,
-              serviceBoundaries,
-              organizationId: row.organization_id,
-              ruleId: rule.id,
-              ruleName: rule.name,
-              event: row,
-              context,
-              requestId: row.id,
-              actionIndex: indiceDaAcao,
-              ruleActions: rule.actions ?? [],
-            },
-            action.config ?? {},
-          ),
-        );
-      } catch (err) {
-        results.push({
-          type: action.type,
-          status: "failed",
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-    }
+    // SPIKE-GREEN-AUTO-01: a origem é a EXECUÇÃO da regra sobre o evento consumido
+    // (regra + evento), para todo gatilho — o banco prova a regra, o evento, a raiz
+    // de relógio e o sujeito. A régua de atendimento (`kind=event`) só ancorava 5
+    // dos 16 gatilhos e recusava os outros 11 em lead Green (LIFE-ADV-01).
+    await withGreenMutationContext(
+      {
+        source: "automation",
+        request_id: `rule:${rule.id}`,
+        causation_event_id: row.id,
+        actor: { kind: "webhook_source", id: rule.id },
+        service_origin: greenAutomationOrigin(rule.id, row.id, row.organization_id),
+      },
+      async () => {
+        // O índice é o da lista INTEIRA — a posição do resultado em
+        // `actions_result` e parte do id da entrega do webhook (#1529).
+        for (const [indiceDaAcao, action] of (rule.actions ?? []).entries()) {
+          const executor = getAction(action.type);
+          if (!executor) {
+            results.push({ type: action.type, status: "failed", error: "unknown_action" });
+            continue;
+          }
+          try {
+            results.push(
+              await executor.execute(
+                {
+                  admin,
+                  serviceBoundaries,
+                  organizationId: row.organization_id,
+                  ruleId: rule.id,
+                  ruleName: rule.name,
+                  event: row,
+                  context,
+                  requestId: row.id,
+                  actionIndex: indiceDaAcao,
+                  ruleActions: rule.actions ?? [],
+                },
+                action.config ?? {},
+              ),
+            );
+          } catch (err) {
+            results.push({
+              type: action.type,
+              status: "failed",
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        }
+      },
+    );
 
     // ═══ O AGREGADOR TAMBÉM PRECISA DIZER A VERDADE ═══
     //

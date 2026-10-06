@@ -13,6 +13,10 @@
  */
 
 import { logger } from "@/lib/logger";
+// SPIKE Green: todo handler roda com a causalidade do evento corrente amarrada
+// ao contexto async — é o que o hook de banco carimba no evento canônico.
+import { withGreenSystemRoot } from "@/lib/green/mutation-context";
+import { provenienciaConfiavel } from "@/lib/green/proveniencia";
 
 export interface EventRow {
   id: string;
@@ -87,7 +91,20 @@ export async function dispatchEvent(row: EventRow): Promise<HandlerResult[]> {
   const results: HandlerResult[] = [];
   for (const handler of matches) {
     try {
-      const r = await handler.handle(row);
+      // v3: raiz própria — quem drenou o evento (um tick disparado por sessão
+      // admin, p.ex.) não é a causa do que o handler fizer. A correlação só é
+      // herdada do evento quando é CONFIÁVEL (canônico Green); a de um evento
+      // legado é escolhida por quem o emitiu e viraria trusted adiante.
+      const correlacao = provenienciaConfiavel(row.metadata)?.correlation_id;
+      const r = await withGreenSystemRoot(
+        {
+          source: "event_handler",
+          actor: { kind: "system", id: handler.key },
+          causation_event_id: row.id,
+          correlation_id: correlacao ?? row.id,
+        },
+        () => handler.handle(row),
+      );
       results.push(r);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);

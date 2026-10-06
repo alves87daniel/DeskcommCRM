@@ -24,6 +24,10 @@ import { loadAuthUser, mfaEmDivida, resolveActiveOrg } from "@/lib/auth/server";
 import { ROLE_RANK, type ActiveOrg, type AuthUser, type Role } from "@/lib/auth/types";
 import { traduzir } from "@/lib/i18n/dicionario";
 import { createClient } from "@/lib/supabase/server";
+import {
+  abrirContextoGreenDaRequisicao,
+  identificadoresDaRequisicao,
+} from "@/lib/green/mutation-context";
 
 export type RoleCheck =
   | { ok: true; user: AuthUser; org: ActiveOrg }
@@ -51,6 +55,12 @@ interface RequireRoleOpts {
  */
 export async function requireRole(min: Role, opts: RequireRoleOpts = {}): Promise<RoleCheck> {
   const { requestId, resource, allowPlatformAdmin = false, organizationId } = opts;
+  // SPIKE Green: a requisição humana ganha contexto — só metadata operacional;
+  // o ator é `auth.uid()`, derivado no banco. Síncrono, antes do primeiro await.
+  abrirContextoGreenDaRequisicao({
+    source: "http_session",
+    ...identificadoresDaRequisicao(requestId),
+  });
 
   const user = await loadAuthUser();
   if (!user) {

@@ -19,6 +19,8 @@ import { auditMcpToolCall } from "@/lib/mcp/audit";
 import { McpAuthError, ensureRole, ensureScope } from "@/lib/mcp/auth";
 import type { McpAuthResult } from "@/lib/mcp/auth";
 import { logger } from "@/lib/logger";
+// SPIKE Green: a tool in-process roda com o ator do agente no contexto async.
+import { greenActorFromActor, withGreenMutationContext } from "@/lib/green/mutation-context";
 import { allTools, getToolByName } from "@/lib/mcp/tools";
 import { catalogEntry, deCapacidadeDesligada, deModuloDesligado } from "@/lib/mcp/tools/catalog";
 import type { CapacidadeDaOrganizacao } from "@/lib/organizacao/capacidades";
@@ -347,7 +349,20 @@ function wrapMcpTool(
           return { permitido: false, motivo: veredito.motivo, mensagem: explicacao };
         }
 
-        const result = await def.handler(argsRecord as never, input.ctx);
+        const result = await withGreenMutationContext(
+          {
+            source: "agent_runtime",
+            request_id: input.ctx.requestId,
+            ...(input.ctx.sourceJobId !== undefined
+              ? { source_job_id: input.ctx.sourceJobId }
+              : {}),
+            ...(input.ctx.idempotencyKey !== undefined
+              ? { idempotency_key: input.ctx.idempotencyKey }
+              : {}),
+            actor: greenActorFromActor(input.ctx.actor, input.ctx.apiTokenId),
+          },
+          () => def.handler(argsRecord as never, input.ctx),
+        );
 
         // Capture handoff signal so the runtime can short-circuit the loop.
         if (def.name === HANDOFF_TOOL_NAME) {

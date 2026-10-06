@@ -16,6 +16,8 @@ import { type NextRequest } from "next/server";
 import { ApiError } from "@/lib/api/types";
 import { ok, fail } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
+// SPIKE Green v3: a rota declara a boundary de requisição do MutationContext.
+import { runGreenRequestBoundary } from "@/lib/green/mutation-context";
 import { encerraDemanda } from "@/lib/leads/encerramento";
 import { traduzir } from "@/lib/i18n/dicionario";
 import { loseLeadSchema, validateRequest } from "@/lib/schemas";
@@ -29,6 +31,14 @@ export async function POST(
 ): Promise<Response> {
   const supportDenied = await requireSupportWrite();
   if (supportDenied) return supportDenied;
+  // SPIKE Green v3: boundary de requisição do MutationContext (delimitada por `run`).
+  return runGreenRequestBoundary(() => handlePOST(req, ctx));
+}
+
+async function handlePOST(
+  req: NextRequest,
+  ctx: { params: Promise<{ id: string }> },
+): Promise<Response> {
 
   const requestId = randomUUID();
   const { id: leadId } = await ctx.params;

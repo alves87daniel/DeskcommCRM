@@ -15,6 +15,8 @@ import type { z } from "zod";
 import type { ModuloOpcional } from "@/lib/instalacao/modulos";
 import type { CapacidadeDaOrganizacao } from "@/lib/organizacao/capacidades";
 import { createAdminClient } from "@/lib/supabase/admin";
+// SPIKE Green: a tool roda com o ator técnico do token no contexto async.
+import { greenActorFromActor, withGreenMutationContext } from "@/lib/green/mutation-context";
 import { auditMcpToolCall } from "./audit";
 import { ensureRole, ensureScope, type McpAuthResult } from "./auth";
 import { verificarTetoMcp } from "./rate-limit";
@@ -97,7 +99,15 @@ export function createMcpServer(
           ensureScope(auth.scopes, tool.requiresScope);
           ensureRole(auth.role, tool.requiresRole);
 
-          const result = await tool.handler(args as never, ctx);
+          const result = await withGreenMutationContext(
+            {
+              source: "mcp",
+              request_id: requestId,
+              ...(idempotencyKey !== undefined ? { idempotency_key: idempotencyKey } : {}),
+              actor: greenActorFromActor(auth.actor, auth.apiTokenId),
+            },
+            () => tool.handler(args as never, ctx),
+          );
           const durationMs = Date.now() - startedAt;
           // Mesma regra do ingresso do agente (`lib/ai/runtime/tools.ts`, #484):
           // o vazio que a tool declara não é sucesso. Sem isto, a mesma busca

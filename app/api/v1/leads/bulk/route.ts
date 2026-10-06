@@ -15,6 +15,8 @@ import { audit, isServiceRoleConfigured } from "@/lib/audit";
 import { ApiError } from "@/lib/api/types";
 import { ok, fail } from "@/lib/api/wrappers";
 import { requireRole } from "@/lib/auth/require-role";
+// SPIKE Green v3: a rota declara a boundary de requisição do MutationContext.
+import { runGreenRequestBoundary } from "@/lib/green/mutation-context";
 import { resolveOwnerPatch } from "@/lib/leads/owner-patch";
 import { emitLeadActivity, stageChangeReason } from "@/lib/leads/activity-emitter";
 import { registraFalhaDeAtividade } from "@/lib/leads/activity-write-failure";
@@ -51,6 +53,11 @@ interface LeadMovidoEmLote {
 export async function POST(req: NextRequest): Promise<Response> {
   const supportDenied = await requireSupportWrite();
   if (supportDenied) return supportDenied;
+  // SPIKE Green v3: boundary de requisição do MutationContext (delimitada por `run`).
+  return runGreenRequestBoundary(() => handlePOST(req));
+}
+
+async function handlePOST(req: NextRequest): Promise<Response> {
 
   const requestId = randomUUID();
   const supabase = await createClient();

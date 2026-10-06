@@ -11,6 +11,8 @@
  * engine já importam (CrmEdgeConfig) — o conteúdo é a versão fundida.
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+// SPIKE Green: o fetch de servidor é o transporte do MutationContext (header).
+import { fetchDoServidor } from '@/lib/supabase/fetch-do-servidor';
 
 export interface CrmEdgeConfig {
   /** admin client (service role) — usado só pelas bordas que chamam handlers do app. */
@@ -37,6 +39,10 @@ export function crmEdgeConfigFromEnv(env: {
   return {
     supabase: createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
+      // SPIKE Green: sem isto o contexto de `withServiceJob`/`wrapMcpTool` fica
+      // no processo e o UPDATE de lead Green chega ao banco sem contexto (42501).
+      // Mesma URL nos dois lados = transporte idêntico, só com o header.
+      global: { fetch: fetchDoServidor(env.SUPABASE_URL, env.SUPABASE_URL) },
     }),
   };
 }

@@ -570,8 +570,47 @@ jobs:
       # Uma variável, os dois scripts: `scripts/test-db.sh` e
       # `scripts/test-update-com-dados.sh` leem esta para escolher a imagem.
       TEST_DB_IMAGE: pgvector/pgvector:pg${{ matrix.pg }}
+      # GREEN-BASELINE: a fundação Deskcomm está CONGELADA na v1.69.0 (ADR
+      # GREEN-001: "Não seguimos o upstream do Deskcomm. Observamos o upstream.").
+      # Com esta variável, scripts/conferir-isolamento-do-kit.sh não descobre a
+      # "última release": neste fork não há release Deskcomm, e `gh release view`
+      # terminava em FATAL antes de qualquer invariante rodar. Trocar a versão é
+      # decisão de PR explícito, junto com FUNDACAO_COMMIT no passo abaixo.
+      CONFERENCIA_KIT_RELEASE: "v1.69.0"
     steps:
       - uses: actions/checkout@v7
+
+      # As duas tags que a conferência do kit lê com `git show <tag>:...`: a
+      # fundação (CONFERENCIA_KIT_RELEASE) e a v1.63.0, fixa no script (a última
+      # sem filtro por tabela). Faltando, o script as busca em `origin`, e este
+      # fork não tem tag Deskcomm. Vêm da fundação histórica, sem remoto
+      # persistente e sem publicar tag ou release no fork; o commit da fundação é
+      # conferido aqui, antes de a conferência confiar nele.
+      - name: Referências congeladas do kit Deskcomm (fundação e v1.63.0)
+        timeout-minutes: 3
+        env:
+          UPSTREAM_HISTORICO: https://github.com/melgarafael/DeskcommCRM.git
+          FUNDACAO_COMMIT: e8e2912178031d321caf0912b270ee06bd2c36c7
+        run: |
+          set -euo pipefail
+          # Mesma regra do script: raso só quando o checkout já é raso.
+          profundidade=""
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then profundidade="--depth=1"; fi
+          git fetch -q --no-tags $profundidade "$UPSTREAM_HISTORICO" \
+            "+refs/tags/${CONFERENCIA_KIT_RELEASE}:refs/tags/${CONFERENCIA_KIT_RELEASE}" \
+            "+refs/tags/v1.63.0:refs/tags/v1.63.0"
+          fundacao="$(git rev-parse -q --verify "refs/tags/${CONFERENCIA_KIT_RELEASE}^{commit}" || true)"
+          if [ "$fundacao" != "$FUNDACAO_COMMIT" ]; then
+            echo "::error::${CONFERENCIA_KIT_RELEASE} resolve para '${fundacao:-nada}', esperado ${FUNDACAO_COMMIT} (fundação congelada, ADR GREEN-001)"
+            exit 1
+          fi
+          antes_do_filtro="$(git rev-parse -q --verify "refs/tags/v1.63.0^{commit}" || true)"
+          if [ -z "$antes_do_filtro" ]; then
+            echo "::error::v1.63.0 não resolve para commit depois do fetch"
+            exit 1
+          fi
+          echo "${CONFERENCIA_KIT_RELEASE} -> ${fundacao}"
+          echo "v1.63.0 -> ${antes_do_filtro}"
 
       - uses: ./.github/actions/preparar-node
         # O teto do preâmbulo mora aqui porque passo de composite action não

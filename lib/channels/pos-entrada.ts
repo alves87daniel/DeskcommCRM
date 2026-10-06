@@ -284,6 +284,22 @@ async function abrirDemanda(admin: Admin, entrada: EntradaDeMensagem): Promise<v
       nomeDoContato: entrada.nomeDoContato,
     });
 
+    // SPIKE Green lifecycle (EV-01B): `erro` é a ESCRITA que falhou (ex.: a
+    // fronteira Green recusando o nascimento) — a conversa ficou sem lead que o
+    // contrato exigia. Isso não pode ser `info` sem o motivo: vira `error`, com
+    // o detalhe do banco. A mensagem segue entrando (nada aqui derruba a
+    // ingestão); a próxima mensagem do contato tenta de novo.
+    if (!nascimento.criado && nascimento.motivo === "erro") {
+      logger.error("pos-entrada: nascimento do lead recusado (a conversa fica sem lead)", {
+        organization_id: entrada.organizationId,
+        conversation_id: entrada.conversationId,
+        origem: entrada.origem,
+        motivo: nascimento.motivo,
+        detalhe: nascimento.detalhe ?? null,
+      });
+      return;
+    }
+
     // Os DOIS desfechos viram log. Sem a linha do "não criou", o silêncio de
     // "já existia" e o de "a organização não tem funil configurado" têm a mesma
     // cara — e o segundo é falha de configuração que alguém precisa ver.

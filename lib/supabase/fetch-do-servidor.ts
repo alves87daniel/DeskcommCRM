@@ -31,6 +31,10 @@
  * pública.
  */
 
+// SPIKE Green: o MutationContext corrente (AsyncLocalStorage) entra como header
+// server-only NA HORA do fetch — nunca nos `global.headers` do singleton admin.
+import { initComContextoGreen } from "@/lib/green/mutation-context";
+
 /** Tira a barra que o `.env` pode trazer: `https://x/` + `storage/…` viraria `//`. */
 function semBarraFinal(url: string): string {
   return url.trim().replace(/\/+$/, "");
@@ -54,7 +58,7 @@ export function fetchDoServidor(urlInterna: string, urlPublica: string): typeof 
   const publica = semBarraFinal(urlPublica);
 
   if (!interna || interna === publica) {
-    return (input, init) => globalThis.fetch(input, init);
+    return (input, init) => globalThis.fetch(input, initComContextoGreen(input, init));
   }
 
   const desviar = (alvo: string): string => {
@@ -64,6 +68,8 @@ export function fetchDoServidor(urlInterna: string, urlPublica: string): typeof 
   };
 
   return (input, init) => {
+    init = initComContextoGreen(input, init);
+
     if (typeof input === "string") {
       return globalThis.fetch(desviar(input), init);
     }

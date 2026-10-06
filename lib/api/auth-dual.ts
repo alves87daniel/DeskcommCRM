@@ -43,6 +43,11 @@ import {
 import { JANELA_SEGUNDOS, TETO_DE_ESCRITA, TETO_POR_ORGANIZACAO } from "@/lib/mcp/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import {
+  abrirContextoGreenDaRequisicao,
+  greenActorFromActor,
+  identificadoresDaRequisicao,
+} from "@/lib/green/mutation-context";
 
 export type AuthDual =
   | {
@@ -96,6 +101,12 @@ export async function resolveAuthDual(
   const authHeader = req.headers.get("authorization");
 
   if (extractBearer(authHeader)) {
+    // SPIKE Green: a requisição por token abre o contexto aqui (síncrono, antes
+    // do primeiro await) e ganha o ator técnico do token quando ele é validado.
+    const green = abrirContextoGreenDaRequisicao({
+      source: "http_token",
+      ...identificadoresDaRequisicao(requestId),
+    });
     let auth;
     try {
       auth = await validateBearerToken(authHeader);
@@ -127,6 +138,7 @@ export async function resolveAuthDual(
       throw err;
     }
 
+    green.vincular({ actor: greenActorFromActor(auth.actor, auth.apiTokenId) });
     // organization_id vem do TOKEN (fonte confiável), nunca do cliente.
     return {
       ok: true,
