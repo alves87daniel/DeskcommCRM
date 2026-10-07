@@ -999,6 +999,13 @@ export const AUDIT_ACTIONS = [
   "company_people.updated",
   "contacts.person_linked",
   "imports.companies_people",
+
+  // ConectorGreen / GREEN-CRM-02 — catálogo de produtos Green e produto principal da
+  // oportunidade. Duas ações de catálogo (criar e editar/inativar) e uma de contexto.
+  // O EVENTO `lead.green_context_changed` é do banco; estas linhas são a auditoria da API.
+  "green.product.created",
+  "green.product.updated",
+  "green.lead_context.updated",
 ] as const;
 
 /** Um código de auditoria. Derivado de `AUDIT_ACTIONS` — não redigite a lista. */
