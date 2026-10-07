@@ -894,6 +894,19 @@ export const NAV_CATALOG = [
     minRole: "manager",
   },
   {
+    // GREEN-CRM-02: o catálogo aberto de produtos do ConectorGreen. `manager`, como as
+    // policies de `green_products` (a tela e o banco dizem a mesma coisa). Produto é dado
+    // estruturado do catálogo: não é funil (nenhum funil nasce de um produto) e não é tag.
+    href: "/app/settings/produtos-green",
+    label: "Produtos Green",
+    description:
+      "Os produtos que a empresa vende pelo ConectorGreen: cadastrar, editar e inativar. O produto não define o funil.",
+    icon: "Storefront",
+    group: "organizacao",
+    section: "Sua empresa",
+    minRole: "manager",
+  },
+  {
     // A área única dos recursos opcionais (pedido do mantenedor, doc 73/80):
     // tudo o que a empresa pode ligar, com o estado e o caminho até a tela onde
     // se liga. Só leitura — quem liga continua sendo a tela do assunto.
