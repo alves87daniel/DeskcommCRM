@@ -884,6 +884,9 @@ Nenhuma dessas pendências bloqueia a GREEN-CRM-02.
 
 ### 14.1 GREEN-CRM-02 - Catálogo de Produtos Green e Contexto Comercial da Oportunidade (escopo alterado em 01.1)
 
+> Estado: implementada, com escopo menor que o listado abaixo (contexto só com o produto principal). O que foi
+> feito e o que ficou de fora: [`GREEN-CRM-02-PRODUCT-CATALOG-CONTEXT.md`](GREEN-CRM-02-PRODUCT-CATALOG-CONTEXT.md).
+
 > Um administrador cadastra os produtos Green da organização (catálogo aberto); um usuário abre uma oportunidade
 > existente num funil Green e consegue **ver e editar o produto que está sendo trabalhado e o contexto comercial
 > Green** (situação da análise, elegibilidade com origem e motivo, estágio de cadastro/ativação, distribuidora

@@ -9,6 +9,7 @@ import { ROLE_RANK } from "@/lib/auth/types";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { useLeadTimeline } from "@/hooks/leads/useLeadTimeline";
 import type { Lead } from "@/lib/types/leads";
+import { ContextoGreenDoNegocio } from "@/components/green/ContextoGreenDoNegocio";
 import { ContatoDoNegocio } from "./ContatoDoNegocio";
 import { ConversaNoDossie } from "./ConversaNoDossie";
 import { LeadFieldsForm } from "./LeadFieldsForm";
@@ -71,6 +72,8 @@ export function LeadDossier({
   const activeOrg = useActiveOrg();
   const podeCriarProposta =
     user.is_platform_admin || (activeOrg && ROLE_RANK[activeOrg.role] >= ROLE_RANK.manager) || false;
+  // GREEN-CRM-02 - o produto principal é gravado por agent+ (a RLS do banco é quem decide).
+  const podeEditarProduto = (activeOrg && ROLE_RANK[activeOrg.role] >= ROLE_RANK.agent) || false;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -145,6 +148,14 @@ export function LeadDossier({
           </h3>
           <ContatoDoNegocio contactId={lead.contact_id} pipelineId={pipelineId} />
         </section>
+
+        {/* GREEN-CRM-02 - produto principal da oportunidade. Some sozinho (null) fora de funil
+            Green: o produto é independente do funil, a seção é que depende do funil ser Green. */}
+        <ContextoGreenDoNegocio
+          leadId={lead.id}
+          podeEditar={podeEditarProduto}
+          podeCadastrar={podeCriarProposta}
+        />
 
         {/* ② timeline */}
         <section className="flex-1 py-3">

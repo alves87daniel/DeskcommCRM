@@ -6623,6 +6623,99 @@ export type Database = {
           },
         ]
       }
+      green_lead_context: {
+        Row: {
+          created_at: string
+          lead_id: string
+          organization_id: string
+          product_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          lead_id: string
+          organization_id: string
+          product_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          lead_id?: string
+          organization_id?: string
+          product_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "green_lead_context_lead_fkey"
+            columns: ["lead_id", "organization_id"]
+            isOneToOne: true
+            referencedRelation: "crm_leads"
+            referencedColumns: ["id", "organization_id"]
+          },
+          {
+            foreignKeyName: "green_lead_context_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "green_lead_context_product_fkey"
+            columns: ["product_id", "organization_id"]
+            isOneToOne: false
+            referencedRelation: "green_products"
+            referencedColumns: ["id", "organization_id"]
+          },
+        ]
+      }
+      green_products: {
+        Row: {
+          code: string
+          created_at: string
+          description: string | null
+          family: string
+          id: string
+          is_active: boolean
+          metadata: Json
+          name: string
+          organization_id: string
+          updated_at: string
+        }
+        Insert: {
+          code: string
+          created_at?: string
+          description?: string | null
+          family?: string
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          name: string
+          organization_id: string
+          updated_at?: string
+        }
+        Update: {
+          code?: string
+          created_at?: string
+          description?: string | null
+          family?: string
+          id?: string
+          is_active?: boolean
+          metadata?: Json
+          name?: string
+          organization_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "green_products_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       idempotency_keys: {
         Row: {
           tenant_creation_trusted: boolean
@@ -10681,6 +10774,7 @@ export type Database = {
         Args: { p_contact: string; p_org: string; p_session: string }
         Returns: string
       }
+      fn_green_lead_eligible: { Args: { p_lead: string }; Returns: boolean }
       fn_user_org_ids: { Args: never; Returns: string[] }
       fn_user_role_in: { Args: { p_org: string }; Returns: number }
       fn_user_role_in_org: { Args: { p_org: string }; Returns: string }

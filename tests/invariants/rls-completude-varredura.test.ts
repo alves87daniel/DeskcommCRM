@@ -75,6 +75,8 @@ interface Excecao {
  * linhas da OUTRA organização, não uma leitura como superusuário.
  */
 const PROVA_PROPRIA: readonly Excecao[] = [
+  { tabela: "green_products", razao: "tests/invariants/green-product-catalog.test.ts — dois tenants reais por JWT: membro de B lê ZERO produtos de A e não escreve em A (42501); manager cria, agent e viewer não; FK composta recusa produto de outra organização, inclusive por service_role." },
+  { tabela: "green_lead_context", razao: "tests/invariants/green-product-catalog.test.ts — dois tenants reais por JWT: membro de B lê ZERO contextos de A e não escreve em A (42501); a leitura acompanha a visibilidade do lead (agent não vê o contexto de lead de outro agent, manager vê); FKs compostas recusam lead e produto de outra organização, inclusive por service_role." },
   { tabela: "golden_candidates", razao: "tests/invariants/golden-candidates.test.ts — dois tenants reais por JWT (agent): leitura positiva local e ZERO do vizinho nos dois sentidos, a tabela inteira sem filtro igual à própria, anon recusado, e insert/update/delete de authenticated sem efeito (só o servidor grava)." },
   { tabela: "jev_observacoes", razao: "tests/invariants/jev-observacoes.test.ts — dois tenants reais por JWT (agent): leitura positiva local e ZERO do vizinho nos dois sentidos, a tabela inteira sem filtro igual à própria, anon recusado, e insert/update/delete de authenticated sem efeito (só o servidor grava)." },
   { tabela: "prospecting_settings", razao: "tests/invariants/prospecting.test.ts — tabela exclusiva do servidor, ACL e RLS verificadas; FK composta e comandos autenticados cercam a organização." },

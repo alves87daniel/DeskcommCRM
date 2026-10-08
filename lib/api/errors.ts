@@ -266,6 +266,14 @@ export const ApiErrorCodes = {
   wacalls_not_connected: "wacalls_not_connected", // 503 + Retry-After: sessão pareada cujo socket com o WhatsApp caiu por um instante (ver `wacallsSemConexao`)
   ai_provider_error: "ai_provider_error",
   nuvemshop_error: "nuvemshop_error",
+
+  // ConectorGreen / GREEN-CRM-02 — catálogo de produtos e produto principal da oportunidade.
+  green_product_code_taken: "green_product_code_taken", // 409: o `code` já existe nesta organização
+  green_product_not_found: "green_product_not_found", // 422: produto inexistente OU de outra organização (mesma resposta)
+  green_product_inactive: "green_product_inactive", // 422: produto inativo não entra em nova associação
+  green_context_not_applicable: "green_context_not_applicable", // 404 (GET): o funil da oportunidade não é Green
+  green_context_outside_binding: "green_context_outside_binding", // 422 (PATCH): idem, ao tentar gravar
+  green_context_lead_closed: "green_context_lead_closed", // 409: oportunidade won/lost não troca de produto
 } as const;
 
 export type ApiErrorCode = (typeof ApiErrorCodes)[keyof typeof ApiErrorCodes];
