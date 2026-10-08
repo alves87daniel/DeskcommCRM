@@ -27,13 +27,15 @@ Fonte do "próximo número" de cada área: o maior listado + 1. Áreas sem linha
 | `CG-FND-08` | Fundação — Vocabulário e nomenclatura         | DOC   | EM ANDAMENTO | Este conjunto. Ratificado (`GOV-01` a `GOV-05`); merge não aprovado. Branch provisória `docs/green-vocabulary-naming` |
 | `CG-PRD-01` | Produtos — Catálogo e produto da oportunidade | FEAT  | CONCLUÍDO    | GREEN-CRM-02. Implementação concluída no checkpoint local; migration 0509. Merge e release não aprovados              |
 
-Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`; demais áreas, `01`. Próxima migration: `0510`.
+Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`; demais áreas, `01`. Próximo número livre de
+migration: `0510` (a 0509 é de `CG-PRD-01`; ver nota abaixo).
 
 **Integração à `main`.** Este registro foi preparado para integração à `main` (branch `docs/cg-fnd-08-vocabulary-naming`,
-sobre `b5962666`) sem os itens que ele lista como concluídos fora dela: `CG-FND-07` (GREEN-CRM-01, branch
-`green/crm-01-product-foundation`) e `CG-PRD-01` (GREEN-CRM-02, branch `green/crm-02-product-catalog-context`) **não
-estão integrados à `main`**. `CONCLUÍDO` registra o checkpoint do item (seção 6.3 da fonte), não a presença na `main`. A
-0509 pertence a `CG-PRD-01` e segue reservada: o MANIFEST da `main` termina na 0508, e a próxima livre continua `0510`.
+sobre `b5962666`). `CG-FND-07` (GREEN-CRM-01 e 01.1, commit `a2d202168` da branch `green/crm-01-product-foundation`)
+entra **junto com ele**, incorporado por cherry-pick a essa branch em 2026-10-08. `CG-PRD-01` (GREEN-CRM-02, branch
+`green/crm-02-product-catalog-context`) **não está integrado à `main`**. `CONCLUÍDO` registra o checkpoint do item (seção
+6.3 da fonte), não a presença na `main`. A 0509 pertence a `CG-PRD-01` e segue reservada: o MANIFEST da `main` termina na
+0508, a 0509 é a próxima a entrar na sequência, e `0510` é o próximo número livre para item novo, aplicado depois dela.
 
 **Nota sobre `CG-FND-01` a `CG-FND-07`.** Estes IDs foram reservados **retroativamente** em 2026-10-07, para dar nome canônico ao
 que já existia. `CG-FND-06` e `CG-FND-07` são **agrupamentos e equivalências históricas** (a baseline e os dois documentos de

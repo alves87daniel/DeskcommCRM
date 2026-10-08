@@ -14,13 +14,15 @@ mapeado, não renomeado ([`CONECTORGREEN-EQUIVALENCE-MAP.md`](CONECTORGREEN-EQUI
 | Não altera    | migrations 0501-0509, contratos selados, schema, API, UI, RLS, eventos, testes, nomes de branches, tags e commits existentes                                   |
 | Fora de lugar | regras de produto (vivem em `docs/green/product/`), desenho dos contratos selados (vivem em `docs/spike/` e na baseline), política de upstream (ADR-GREEN-001) |
 
-**Integração à `main`.** Este documento cita dois itens que, em 2026-10-07, estão concluídos só no checkpoint de cada
-um e **não estão integrados à `main`**: a GREEN-CRM-01.1 (`CG-FND-07`, branch `green/crm-01-product-foundation`, commit
-`a2d202168`), autoridade de semântica de domínio nas seções 1 e 9 e destino do link da linha "Base" acima, que só
-resolve depois que ela for integrada; e a GREEN-CRM-02 (`CG-PRD-01`, branch `green/crm-02-product-catalog-context`,
-commits `04ea1eb88` a `b36c81610`), dona da migration 0509 e de `public.green_products`. Na `main`, o MANIFEST termina na
-0508; a 0509 segue reservada a `CG-PRD-01`, e por isso a próxima livre continua sendo a 0510. As referências descrevem o
-estado factual desses checkpoints; integrar cada item à `main` é decisão separada (seção 6.3).
+**Integração à `main`.** Este documento cita dois itens concluídos fora da `main`. A GREEN-CRM-01.1 (`CG-FND-07`,
+commit `a2d202168` da branch `green/crm-01-product-foundation`), autoridade de semântica de domínio nas seções 1 e 9 e
+destino do link da linha "Base" acima, entra na `main` **junto com este documento**: foi incorporada por cherry-pick à
+branch `docs/cg-fnd-08-vocabulary-naming` em 2026-10-08, sem alteração. A GREEN-CRM-02 (`CG-PRD-01`, branch
+`green/crm-02-product-catalog-context`, commits `04ea1eb88` a `b36c81610`), dona da migration 0509 e de
+`public.green_products`, segue concluída só no checkpoint e **não está integrada à `main`**. Na `main`, o MANIFEST termina
+na 0508; a 0509 segue reservada a `CG-PRD-01` e é a próxima a entrar na sequência; `0510` é o próximo número livre para
+item novo e só entra no MANIFEST depois da 0509. As referências à GREEN-CRM-02 descrevem o estado factual do checkpoint;
+integrá-la à `main` é decisão separada (seção 6.3).
 
 ## 1. Precedência e uso
 
@@ -240,7 +242,7 @@ essas são decisões separadas, tomadas pelo dono do produto, e não se deduzem 
 | -------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------- |
 | `ADR-GREEN-NNN`                              | Decisão arquitetural                              | Série própria (ADR-GREEN-001). Cita o item de trabalho de origem |
 | `D-NN`, `R-NN` dentro de um documento        | Decisão e risco locais ao documento               | Citar com o ID do item: `CG-FND-07/D-15`                         |
-| `0509`, `0510`...                            | Número de migration                               | Sequência própria (MANIFEST). Próxima: `0510`                    |
+| `0509`, `0510`...                            | Número de migration                               | Sequência própria: `0509` reservada a `CG-PRD-01`; livre `0510`  |
 | `LIFE-ADV-NN`, `V12-ADV-NN`, `S23`, `MC1`... | Achados e casos de relatório                      | Escopo local do relatório; não viram ID de item                  |
 | `P0`, `P1`, `P2`                             | Classe de severidade do `PRODUCTION-READINESS.md` | Não é fase nem entrega                                           |
 | Tags (`GREEN-BASELINE-1.0`, `v1.69.0`)       | Marcos do Git                                     | Imutáveis; citar o ID do item que as produziu, se existir        |
