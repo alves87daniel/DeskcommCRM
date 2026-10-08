@@ -8,7 +8,7 @@ mapeado, não renomeado ([`CONECTORGREEN-EQUIVALENCE-MAP.md`](CONECTORGREEN-EQUI
 | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ID            | CG-FND-08                                                                                                                                                      |
 | Tipo          | DOC                                                                                                                                                            |
-| Estado        | PROPOSTO ao dono do produto. Vira ADOTADO com a aprovação registrada na seção 11                                                                               |
+| Estado        | ADOTADO. GOV-01 a GOV-05 aprovadas pelo dono do produto em 2026-10-07 (seção 11)                                                                               |
 | Data          | 2026-10-07                                                                                                                                                     |
 | Base          | `GREEN-BASELINE-1.0`; vocabulário alinhado à [GREEN-CRM-01.1](../product/GREEN-CRM-01-PRODUCT-FOUNDATION.md) (seções 3.1, 16.2 e 17) e ao `GREEN-CRM-02`       |
 | Não altera    | migrations 0501-0509, contratos selados, schema, API, UI, RLS, eventos, testes, nomes de branches, tags e commits existentes                                   |
@@ -114,13 +114,13 @@ FUNIL != PRODUTO     PRODUTO != TAG     CONTATO != OPORTUNIDADE
 Uma área responde à pergunta "**qual capacidade do ConectorGreen este item muda?**", não "quem faz" nem "qual tecnologia".
 Todo item tem **exatamente uma** área principal; áreas secundárias vão na descrição.
 
-### 4.1 Taxonomia aprovada para revisão (14 áreas)
+### 4.1 Taxonomia ratificada (14 áreas, GOV-02)
 
 | Prefixo  | Nome humano (usado nos títulos) | Escopo                                                                                                                                 | Não é (vai para)                                                        |
 | -------- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `CG-FND` | Fundação                        | Baseline, contratos selados e sua evolução, modelo de produto, política de upstream, vocabulário e governança do próprio projeto       | Deploy e CI (`CG-INF`); permissões de produto (`CG-IAM`)                |
-| `CG-COM` | Comercial                       | Contatos, **oportunidades**, funis, etapas, follow-up, tarefas, ganho e perda, dossiê da oportunidade                                  | Catálogo e produto (`CG-PRD`); pós-ganho (`CG-EXP`); métricas (`CG-BI`) |
-| `CG-PRD` | Produtos                        | Catálogo de produtos Green e o produto da oportunidade                                                                                 | Funil (`CG-COM`); tag (`CG-COM`)                                        |
+| `CG-COM` | Comercial                       | Contatos, **oportunidades**, funis, etapas, atividades comerciais, follow-up, tarefas, ganho e perda, dossiê da oportunidade           | Catálogo e produto (`CG-PRD`); pós-ganho (`CG-EXP`); métricas (`CG-BI`) |
+| `CG-PRD` | Produtos                        | Catálogo de produtos Green, regras dos produtos e o produto da oportunidade                                                            | Funil (`CG-COM`); tag (`CG-COM`)                                        |
 | `CG-EXP` | Expansão                        | Funil Expansão, regra de expansão pós-ganho, licenciado e pós-venda, parceiro de indicação                                             | Criar oportunidades de qualquer outro funil (`CG-COM`)                  |
 | `CG-ING` | Ingestão                        | **Entrada** de contato e oportunidade: webhook de entrada, formulário, importação de planilha, mapeamento de campos, deduplicação      | Atribuição e custo (`CG-MKT`); conectores bidirecionais (`CG-INT`)      |
 | `CG-MKT` | Aquisição                       | Origem, campanha, UTM, tráfego pago e orgânico, atribuição e custo de aquisição                                                        | O mecanismo de entrada (`CG-ING`); painel de resultado (`CG-BI`)        |
@@ -151,7 +151,7 @@ Resultado: 15 propostas, 14 áreas. Nenhuma criada.
 4. O resultado é **rodar** o sistema (deploy, CI, ambiente, banco local)? `CG-INF`.
 5. Toca o **WhatsApp ou a extensão ConectorZap**? `CG-ZAP`.
 6. É o **motor de regras** (gatilho, condição, ação)? `CG-AUT`.
-7. É o **catálogo ou o produto da oportunidade**? `CG-PRD`.
+7. É o **catálogo, as regras dos produtos ou o produto da oportunidade**? `CG-PRD`.
 8. É o **pós-ganho**: expansão, licenciado, parceiro? `CG-EXP`.
 9. Faz um contato ou uma oportunidade **entrar** (webhook, planilha, formulário)? `CG-ING`.
 10. É **origem, campanha, UTM, tráfego ou custo** de aquisição? `CG-MKT`.
@@ -207,6 +207,8 @@ CG-<ÁREA>-<NN>
 ### 6.3 Ciclo de vida do registro
 
 `RESERVADO` -> `EM ANDAMENTO` -> `CONCLUÍDO`; ou `CANCELADO`; ou `SUBSTITUÍDO` (aponta o item que o substituiu).
+`CONCLUÍDO` significa que a entrega do item chegou ao seu checkpoint. Não significa aprovação de push, PR, merge nem release:
+essas são decisões separadas, tomadas pelo dono do produto, e não se deduzem do estado nem de um `GOV-NN` de nomenclatura.
 **Nenhum ID é reutilizado nem removido.** Um item cancelado permanece com a linha e o motivo.
 
 ### 6.4 Revisão
@@ -246,7 +248,8 @@ CG-<ÁREA>-<NN>
 Exemplo: **Produtos — Catálogo e produto da oportunidade**, ID técnico `CG-PRD-01`.
 
 O separador é o travessão `—` com um espaço de cada lado, **apenas** nesta posição (entre a área humana e o resultado). O
-ID, o tipo e o estado ficam em campos próprios, nunca dentro do nome.
+ID, o tipo e o estado ficam em campos próprios, nunca dentro do nome. O travessão não vale para convenções técnicas
+(branch, commit, tag, nome de arquivo), que seguem a seção 8.
 
 ### 7.2 Regras
 
@@ -346,20 +349,23 @@ O mapa histórico para canônico, o registro de IDs emitidos e o vocabulário do
 
 ## 11. Registro de decisões desta fonte
 
-| ID       | Data       | Decisão                                                                                            | Estado   |
-| -------- | ---------- | -------------------------------------------------------------------------------------------------- | -------- |
-| `GOV-01` | 2026-10-07 | Adotar este documento como fonte única de vocabulário e nomenclatura (CG-FND-08)                   | PROPOSTA |
-| `GOV-02` | 2026-10-07 | Taxonomia de 14 áreas (remoção de `CG-LEAD`, seção 4.2)                                            | PROPOSTA |
-| `GOV-03` | 2026-10-07 | Sete tipos de trabalho e ID sem tipo (seções 5 e 6)                                                | PROPOSTA |
-| `GOV-04` | 2026-10-07 | Nome humano com travessão entre área e resultado; ID ao final nos títulos de PR e sessão (seção 7) | PROPOSTA |
-| `GOV-05` | 2026-10-07 | Convenções operacionais novas de branch, commit, documento, ADR e migration (seção 8)              | PROPOSTA |
+Ratificadas pelo dono do produto em 2026-10-07, em bloco, pelo procedimento da seção 9. Nenhuma decisão além destas cinco foi
+criada.
 
-## 12. Pendências abertas
+| ID       | Data       | Decisão                                                                                            | Estado   | Resultado da ratificação                                                                                                                                                                                                                                                                                                      |
+| -------- | ---------- | -------------------------------------------------------------------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GOV-01` | 2026-10-07 | Adotar este documento como fonte única de vocabulário e nomenclatura (CG-FND-08)                   | APROVADA | Documento ADOTADO. Mapa de equivalência aprovado em bloco: as linhas 1:1 viram `APROVADA`; `PARCIAL`, `SEM DECISÃO` e `PRESERVADO` não são promovidas. Esquema do v0 classificado como legado, com exceção de uso ativo registrada (seção 12, pendência 2). `CONCLUÍDO` não implica aprovação de merge ou release (seção 6.3) |
+| `GOV-02` | 2026-10-07 | Taxonomia de 14 áreas (remoção de `CG-LEAD`, seção 4.2)                                            | APROVADA | 14 áreas mantidas, sem `CG-LEAD`. Esclarecido no escopo: `CG-COM` inclui atividades comerciais; `CG-PRD` inclui as regras dos produtos                                                                                                                                                                                        |
+| `GOV-03` | 2026-10-07 | Sete tipos de trabalho e ID sem tipo (seções 5 e 6)                                                | APROVADA | Sete tipos (`FEAT`, `FIX`, `SPIKE`, `AUDIT`, `DOC`, `OPS`, `MIG`) e formato `CG-<ÁREA>-<NN>` mantidos sem alteração                                                                                                                                                                                                           |
+| `GOV-04` | 2026-10-07 | Nome humano com travessão entre área e resultado; ID ao final nos títulos de PR e sessão (seção 7) | APROVADA | Travessão `—` mantido como separador do nome humano, que vem primeiro nos títulos visíveis. Não altera as convenções técnicas de Git. Pendência 3 resolvida                                                                                                                                                                   |
+| `GOV-05` | 2026-10-07 | Convenções operacionais novas de branch, commit, documento, ADR e migration (seção 8)              | APROVADA | Convenções mantidas sem alteração. Nenhuma guarda automática de ID criada nesta ratificação (pendência 4)                                                                                                                                                                                                                     |
 
-| #   | Pendência                                                                                                                                                                               | Dono            |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- |
-| 1   | Aprovar `GOV-01` a `GOV-05` e promover as equivalências `PROPOSTA` a `APROVADA`                                                                                                         | dono do produto |
-| 2   | Decidir se o esquema do v0 (`F0`, `P0.x`, `T0.x.xx`, `ADR-NNN`, `PD-NNN`, `RAD-NNN`, repositório `conector-green`) continua em uso fora deste repositório e como se relaciona com `CG-` | dono do produto |
-| 3   | O travessão `—` do nome humano diverge da regra de separador ASCII do v0 (`F0 - P0.2 - ...`). Confirmar a escolha ou trocar para `-` (impacto: só a seção 7)                            | dono do produto |
-| 4   | Guarda automática opcional: formato do ID e do registro (teste de documentação). Precisa de decisão antes, para não criar check novo sem aprovação                                      | arquitetura     |
-| 5   | O relatório `GREEN-MUTATION-CONTEXT-V2.md` cita `docs/audits/deskcomm-fit/05-...`, caminho que não existe neste repositório. Não corrigido aqui por tocar histórico selado              | dono do produto |
+## 12. Pendências
+
+| #   | Pendência                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Dono            | Estado                 |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------- | ---------------------- |
+| 1   | Aprovar `GOV-01` a `GOV-05` e promover as equivalências `PROPOSTA` a `APROVADA`                                                                                                                                                                                                                                                                                                                                                                                          | dono do produto | RESOLVIDA (2026-10-07) |
+| 2   | Esquema do v0 (`F0`, `P0.x`, `T0.x.xx`, `ADR-NNN`, `PD-NNN`, `RAD-NNN`, repositório `conector-green`): é **legado** em relação a este padrão e não é nomenclatura oficial nova. **Exceção registrada:** continua em uso ativo dentro do repositório `conector-green` (o `CLAUDE.md` dele define a "Nomenclatura oficial" e há commits `T1.4.11` de 2026-09-28). Vale só ali; neste repositório não se usa e não se promove. A equivalência com `CG-` segue `SEM DECISÃO` | dono do produto | RESOLVIDA (2026-10-07) |
+| 3   | O travessão `—` do nome humano diverge da regra de separador ASCII do v0 (`F0 - P0.2 - ...`). Resolvida por `GOV-04`: o v0 mantém o seu padrão no seu repositório e o `—` vale para o nome humano do ConectorGreen                                                                                                                                                                                                                                                       | dono do produto | RESOLVIDA (2026-10-07) |
+| 4   | Guarda automática opcional: formato do ID e do registro (teste de documentação). Não criada na ratificação. Precisa de decisão e escopo próprios antes, para não criar check novo sem aprovação                                                                                                                                                                                                                                                                          | arquitetura     | ABERTA (adiada)        |
+| 5   | O relatório `GREEN-MUTATION-CONTEXT-V2.md` cita `docs/audits/deskcomm-fit/05-...`, caminho que não existe neste repositório. Não corrigido aqui por tocar histórico selado                                                                                                                                                                                                                                                                                               | dono do produto | ABERTA                 |
