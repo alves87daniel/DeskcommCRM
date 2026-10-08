@@ -192,3 +192,5 @@ nenhum item ali é BLOCKER da baseline.
 - Branches `spike/green-*` no `origin` ficam como estão; a linha oficial passa a ser a `main`, a partir do merge de
   `release/green-baseline-1.0`.
 - A próxima migration do ConectorGreen é a 0509, na sequência própria (ADR-GREEN-001, D4).
+- Vocabulário e nomenclatura de trabalho dos itens novos (áreas, tipos, IDs, nomes humanos) e o mapa de equivalência
+  histórica: [`governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md`](governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md).
