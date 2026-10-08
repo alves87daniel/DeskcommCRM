@@ -14,6 +14,14 @@ mapeado, não renomeado ([`CONECTORGREEN-EQUIVALENCE-MAP.md`](CONECTORGREEN-EQUI
 | Não altera    | migrations 0501-0509, contratos selados, schema, API, UI, RLS, eventos, testes, nomes de branches, tags e commits existentes                                   |
 | Fora de lugar | regras de produto (vivem em `docs/green/product/`), desenho dos contratos selados (vivem em `docs/spike/` e na baseline), política de upstream (ADR-GREEN-001) |
 
+**Integração à `main`.** Este documento cita dois itens que, em 2026-10-07, estão concluídos só no checkpoint de cada
+um e **não estão integrados à `main`**: a GREEN-CRM-01.1 (`CG-FND-07`, branch `green/crm-01-product-foundation`, commit
+`a2d202168`), autoridade de semântica de domínio nas seções 1 e 9 e destino do link da linha "Base" acima, que só
+resolve depois que ela for integrada; e a GREEN-CRM-02 (`CG-PRD-01`, branch `green/crm-02-product-catalog-context`,
+commits `04ea1eb88` a `b36c81610`), dona da migration 0509 e de `public.green_products`. Na `main`, o MANIFEST termina na
+0508; a 0509 segue reservada a `CG-PRD-01`, e por isso a próxima livre continua sendo a 0510. As referências descrevem o
+estado factual desses checkpoints; integrar cada item à `main` é decisão separada (seção 6.3).
+
 ## 1. Precedência e uso
 
 1. **Contratos selados e ADR-GREEN** mandam nos nomes **técnicos** (tabelas, colunas, funções, chaves, nomes de

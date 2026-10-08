@@ -29,6 +29,12 @@ Fonte do "próximo número" de cada área: o maior listado + 1. Áreas sem linha
 
 Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`; demais áreas, `01`. Próxima migration: `0510`.
 
+**Integração à `main`.** Este registro foi preparado para integração à `main` (branch `docs/cg-fnd-08-vocabulary-naming`,
+sobre `b5962666`) sem os itens que ele lista como concluídos fora dela: `CG-FND-07` (GREEN-CRM-01, branch
+`green/crm-01-product-foundation`) e `CG-PRD-01` (GREEN-CRM-02, branch `green/crm-02-product-catalog-context`) **não
+estão integrados à `main`**. `CONCLUÍDO` registra o checkpoint do item (seção 6.3 da fonte), não a presença na `main`. A
+0509 pertence a `CG-PRD-01` e segue reservada: o MANIFEST da `main` termina na 0508, e a próxima livre continua `0510`.
+
 **Nota sobre `CG-FND-01` a `CG-FND-07`.** Estes IDs foram reservados **retroativamente** em 2026-10-07, para dar nome canônico ao
 que já existia. `CG-FND-06` e `CG-FND-07` são **agrupamentos e equivalências históricas** (a baseline e os dois documentos de
 modelagem). Não são tarefas executadas sob este padrão, não implicam trabalho funcional novo e não alteram código,
