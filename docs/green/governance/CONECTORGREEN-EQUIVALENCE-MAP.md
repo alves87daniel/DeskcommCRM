@@ -24,7 +24,7 @@ Fonte do "próximo número" de cada área: o maior listado + 1. Áreas sem linha
 | `CG-FND-05` | Fundação — Corte de eventos canônicos         | SPIKE | CONCLUÍDO    | Contrato selado CANONICAL EVENT CUTOVER. Migration 0508                                                               |
 | `CG-FND-06` | Fundação — Baseline 1.0 do ConectorGreen      | DOC   | CONCLUÍDO    | Agrupamento histórico da adoção e selagem (`CG-FND-01` a `CG-FND-05`). Ver nota abaixo                                |
 | `CG-FND-07` | Fundação — Modelo de produto do ConectorGreen | DOC   | CONCLUÍDO    | Agrupamento histórico: GREEN-CRM-01 e sua revisão 01.1. Ver nota abaixo                                               |
-| `CG-FND-08` | Fundação — Vocabulário e nomenclatura         | DOC   | EM ANDAMENTO | Este conjunto. Ratificado (`GOV-01` a `GOV-05`); merge não aprovado. Branch provisória `docs/green-vocabulary-naming` |
+| `CG-FND-08` | Fundação — Vocabulário e nomenclatura         | DOC   | EM ANDAMENTO | Este conjunto. Ratificado (`GOV-01` a `GOV-05`); merge não aprovado. Branch do PR: `docs/cg-fnd-08-vocabulary-naming` |
 | `CG-PRD-01` | Produtos — Catálogo e produto da oportunidade | FEAT  | CONCLUÍDO    | GREEN-CRM-02. Implementação concluída no checkpoint local; migration 0509. Merge e release não aprovados              |
 
 Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`; demais áreas, `01`. Próximo número livre de
