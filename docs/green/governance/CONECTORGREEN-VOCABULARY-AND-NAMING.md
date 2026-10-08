@@ -19,10 +19,13 @@ commit `a2d202168` da branch `green/crm-01-product-foundation`), autoridade de s
 destino do link da linha "Base" acima, entra na `main` **junto com este documento**: foi incorporada por cherry-pick à
 branch `docs/cg-fnd-08-vocabulary-naming` em 2026-10-08, sem alteração. A GREEN-CRM-02 (`CG-PRD-01`, branch
 `green/crm-02-product-catalog-context`, commits `04ea1eb88` a `b36c81610`), dona da migration 0509 e de
-`public.green_products`, segue concluída só no checkpoint e **não está integrada à `main`**. Na `main`, o MANIFEST termina
-na 0508; a 0509 segue reservada a `CG-PRD-01` e é a próxima a entrar na sequência; `0510` é o próximo número livre para
-item novo e só entra no MANIFEST depois da 0509. As referências à GREEN-CRM-02 descrevem o estado factual do checkpoint;
-integrá-la à `main` é decisão separada (seção 6.3).
+`public.green_products`, estava concluída só no checkpoint e **não entrou na `main` junto com este documento**: o
+MANIFEST da `main` terminava na 0508, a 0509 seguia reservada a `CG-PRD-01` e integrá-la à `main` era decisão
+separada (seção 6.3). Essa integração veio depois: **o PR #3 integrou `CG-PRD-01` à `main`** pelo merge commit
+`98049367f` (2026-10-08), a 0509 foi incorporada ao MANIFEST da `main` depois da 0508 e a implementação foi
+validada após o merge (CI, E2E, performance e imagem Docker aprovados; detalhes na nota de fechamento de
+`CG-PRD-01` do [mapa de equivalência](CONECTORGREEN-EQUIVALENCE-MAP.md)). `0510` segue como o próximo número livre
+para item novo. As referências à GREEN-CRM-02 descrevem o estado factual do checkpoint.
 
 ## 1. Precedência e uso
 
