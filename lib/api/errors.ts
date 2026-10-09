@@ -274,6 +274,13 @@ export const ApiErrorCodes = {
   green_context_not_applicable: "green_context_not_applicable", // 404 (GET): o funil da oportunidade não é Green
   green_context_outside_binding: "green_context_outside_binding", // 422 (PATCH): idem, ao tentar gravar
   green_context_lead_closed: "green_context_lead_closed", // 409: oportunidade won/lost não troca de produto
+
+  // ConectorGreen / CG-COM-01 — expansão pós-ganho (nova oportunidade a partir de uma ganha).
+  expansion_origin_not_won: "expansion_origin_not_won", // 422: só oportunidade ganha origina expansão
+  expansion_origin_without_contact: "expansion_origin_without_contact", // 422: a origem não tem contato para reaproveitar
+  expansion_destination_not_green: "expansion_destination_not_green", // 422: o funil escolhido não é Green
+  expansion_stage_unavailable: "expansion_stage_unavailable", // 422: etapa de ganho, perda, arquivada ou de outro funil
+  expansion_already_open: "expansion_already_open", // 409: já há expansão aberta da origem com o produto, invisível a quem pede
 } as const;
 
 export type ApiErrorCode = (typeof ApiErrorCodes)[keyof typeof ApiErrorCodes];

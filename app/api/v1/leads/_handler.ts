@@ -1,4 +1,4 @@
-import { observeServiceOrigin } from "@/lib/atendimento/origem";
+import { observeServiceOrigin, type ServiceOrigin } from "@/lib/atendimento/origem";
 import { createAdminClient } from "@/lib/supabase/admin";
 /**
  * Core handlers para /api/v1/leads.
@@ -41,6 +41,20 @@ import {
 import { motivosDaCategoria } from "@/lib/leads/motivos-de-perda-do-funil";
 import type { CreateLeadInput, UpdateLeadInput } from "@/lib/schemas";
 import { ehCorrecaoDeMovimentoDaIa } from "@/lib/leads/correcao-humana";
+import {
+  ALVO_DO_VINCULO_DE_ORIGEM,
+  COLUNAS_DO_LEAD_DA_EXPANSAO,
+  VINCULO_DE_ORIGEM_COMERCIAL,
+  type CriarExpansaoInput,
+  type LeadDaExpansao,
+  type ResultadoDaExpansao,
+} from "@/lib/green/expansao/schemas";
+import {
+  elegibilidadeDaOrigem,
+  expansaoAbertaDe,
+  falhaDaExpansao,
+  type FalhaDaExpansao,
+} from "@/lib/green/expansao/servico";
 
 type SB = SupabaseClient;
 
@@ -568,22 +582,53 @@ export async function createLeadHandler(
     }
   }
 
+  await registrarNascimentoDoLead(ctx, lead as LeadNascido, {
+    serviceOrigin,
+    viaPlanilha: input.via_planilha === true,
+  });
+
+  return lead as Record<string, unknown>;
+}
+
+/** O que o rastro do nascimento precisa saber da linha recém-gravada. */
+export interface LeadNascido {
+  id: string;
+  pipeline_id: string;
+  stage_id: string;
+  title: string;
+}
+
+/**
+ * O RASTRO DE TODO NASCIMENTO DE LEAD, depois do INSERT: o fato `lead.created` no
+ * barramento e a linha `lead.created` da auditoria, com o ator do ctx.
+ *
+ * Mora fora do `createLeadHandler` porque existe um nascimento que não pode usar o
+ * INSERT dele: a expansão pós-ganho (CG-COM-01) grava oportunidade, produto e
+ * vínculo de origem numa transação só (`fn_crm_create_expansion_opportunity`,
+ * migration 0510). O INSERT muda de lugar; o rastro tem de ser o MESMO, senão a
+ * expansão vira lead de segunda classe para automação e auditoria.
+ */
+export async function registrarNascimentoDoLead(
+  ctx: HandlerCtx,
+  lead: LeadNascido,
+  opts: { serviceOrigin: ServiceOrigin | null; viaPlanilha?: boolean },
+): Promise<void> {
   const a = actorAuditPayload(ctx.actor);
   await createAdminClient()
     .rpc("emit_event", {
       p_event_type: "lead.created",
       p_entity_kind: "crm_lead",
-      p_entity_id: (lead as { id: string }).id,
+      p_entity_id: lead.id,
       p_payload: {
-        service_origin: serviceOrigin,
-        pipeline_id: (lead as { pipeline_id: string }).pipeline_id,
-        stage_id: (lead as { stage_id: string }).stage_id,
-        title: (lead as { title: string }).title,
+        service_origin: opts.serviceOrigin,
+        pipeline_id: lead.pipeline_id,
+        stage_id: lead.stage_id,
+        title: lead.title,
       },
       p_metadata: {
         request_id: ctx.requestId,
         ...a.metadataActor,
-        ...(input.via_planilha ? { via: ORIGEM_DA_PLANILHA } : {}),
+        ...(opts.viaPlanilha ? { via: ORIGEM_DA_PLANILHA } : {}),
       },
       p_organization_id: ctx.organization_id,
     })
@@ -596,17 +641,15 @@ export async function createLeadHandler(
     actorUserId: a.actorUserId,
     organizationId: ctx.organization_id,
     resourceType: "crm_lead",
-    resourceId: (lead as { id: string }).id,
+    resourceId: lead.id,
     requestId: ctx.requestId,
     metadata: {
       ...a.metadataActor,
-      pipeline_id: (lead as { pipeline_id: string }).pipeline_id,
-      stage_id: (lead as { stage_id: string }).stage_id,
-      title: (lead as { title: string }).title,
+      pipeline_id: lead.pipeline_id,
+      stage_id: lead.stage_id,
+      title: lead.title,
     },
   });
-
-  return lead as Record<string, unknown>;
 }
 
 // ---------------------------------------------------------------------------
@@ -1464,4 +1507,314 @@ export async function retomarLeadHandler(
   }
 
   return createLeadHandler(supabase, ctx, payload);
+}
+
+// ---------------------------------------------------------------------------
+// expansão pós-ganho (CG-COM-01)
+// ---------------------------------------------------------------------------
+
+/** As frases das recusas: chaves do dicionário, uma string por significado. */
+const RECUSA_DA_EXPANSAO: Record<
+  Exclude<FalhaDaExpansao, "interno">,
+  { status: number; codigo: string; mensagem: string }
+> = {
+  origem_nao_encontrada: { status: 404, codigo: "not_found", mensagem: "Lead não encontrado." },
+  origem_nao_ganha: {
+    status: 422,
+    codigo: "expansion_origin_not_won",
+    mensagem: "Só um negócio ganho pode originar uma expansão.",
+  },
+  origem_sem_contato: {
+    status: 422,
+    codigo: "expansion_origin_without_contact",
+    mensagem: "Este negócio não tem contato: a expansão reaproveita o contato do negócio ganho.",
+  },
+  destino_nao_green: {
+    status: 422,
+    codigo: "expansion_destination_not_green",
+    mensagem: "Escolha um funil Green para a expansão.",
+  },
+  etapa_indisponivel: {
+    status: 422,
+    codigo: "expansion_stage_unavailable",
+    mensagem: "A etapa escolhida não está disponível: escolha uma etapa aberta do funil.",
+  },
+  produto_nao_encontrado: {
+    status: 422,
+    codigo: "green_product_not_found",
+    mensagem: "Produto não encontrado.",
+  },
+  produto_inativo: {
+    status: 422,
+    codigo: "green_product_inactive",
+    mensagem: "Este produto está inativo e não pode ser atribuído.",
+  },
+  dados_invalidos: { status: 422, codigo: "validation_failed", mensagem: "Dados inválidos." },
+  expansao_aberta_invisivel: {
+    status: 409,
+    codigo: "expansion_already_open",
+    mensagem:
+      "Já existe uma expansão aberta deste negócio com este produto, com outro responsável.",
+  },
+  sem_permissao: {
+    status: 403,
+    codigo: "forbidden_role",
+    mensagem: "Sem permissão para criar a expansão deste negócio.",
+  },
+};
+
+function recusaDaExpansao(ctx: HandlerCtx, falha: FalhaDaExpansao, detalhe?: string): ApiError {
+  if (falha === "interno") {
+    return new ApiError(
+      500,
+      "internal_error",
+      undefined,
+      ctx.requestId,
+      detalhe ?? "Falha ao criar a expansão.",
+    );
+  }
+  const r = RECUSA_DA_EXPANSAO[falha];
+  return new ApiError(
+    r.status,
+    r.codigo,
+    undefined,
+    ctx.requestId,
+    traduzir(r.mensagem, ctx.idioma ?? "pt-BR"),
+  );
+}
+
+/** A expansão que já existia: a resposta idempotente, sem escrita, evento nem auditoria. */
+async function expansaoExistente(
+  supabase: SB,
+  ctx: HandlerCtx,
+  origemId: string,
+  leadId: string,
+  linkId: string | null,
+): Promise<ResultadoDaExpansao> {
+  const { data: lead, error } = await supabase
+    .from("crm_leads")
+    .select(COLUNAS_DO_LEAD_DA_EXPANSAO)
+    .eq("organization_id", ctx.organization_id)
+    .eq("id", leadId)
+    .maybeSingle();
+  if (error || !lead) throw recusaDaExpansao(ctx, "interno", error?.message);
+  return {
+    created: false,
+    lead: lead as unknown as LeadDaExpansao,
+    link_id: linkId,
+    origin_lead_id: origemId,
+  };
+}
+
+/**
+ * EXPANSÃO PÓS-GANHO (CG-COM-01): uma oportunidade NOVA, do MESMO contato, a partir de uma
+ * oportunidade GANHA, ligada a ela por `crm_lead_links (commercial_origin)`.
+ *
+ * Não é a retomada (nova tentativa depois de PERDA, `retomado_de_lead_id`) nem o clone (troca de
+ * funil, que encerra a origem): aqui a origem fica INTACTA — nenhum UPDATE, nenhuma atividade,
+ * nenhum evento sobre ela. O contato é o da origem (nunca duplicado), e o funil e o produto são
+ * escolhidos por quem cria.
+ *
+ * O INSERT não é o do `createLeadHandler`, de propósito: oportunidade, produto e vínculo nascem
+ * juntos ou não nascem, e a duplicidade é decidida sob lock. O supabase-js não abre transação,
+ * então a escrita é a RPC `fn_crm_create_expansion_opportunity` (migration 0510), `security
+ * invoker` — a RLS e o papel são os do operador, exatamente como no INSERT do PostgREST. O rastro
+ * do nascimento é o MESMO de todo lead (`registrarNascimentoDoLead`): uma expansão não é lead de
+ * segunda classe para automação nem para auditoria.
+ *
+ * IDEMPOTÊNCIA: uma expansão ABERTA por (origem, produto). Pedir de novo — clique repetido, tela
+ * reaberta, outra pessoa — devolve a existente com `created = false`, sem escrever nada. Encerrada
+ * a expansão, uma nova com o mesmo produto é legítima.
+ */
+export async function expandirLeadHandler(
+  supabase: SB,
+  ctx: HandlerCtx,
+  origemId: string,
+  input: CriarExpansaoInput,
+): Promise<ResultadoDaExpansao> {
+  const idioma = ctx.idioma ?? "pt-BR";
+
+  // A origem é da organização ATIVA e o operador a enxerga (RLS). Quem é membro de duas
+  // organizações não expande, pela tela de uma, o negócio da outra.
+  const { data: origemBruta, error: origemErr } = await supabase
+    .from("crm_leads")
+    .select("id, status, contact_id")
+    .eq("organization_id", ctx.organization_id)
+    .eq("id", origemId)
+    .maybeSingle();
+  if (origemErr) throw recusaDaExpansao(ctx, "interno", origemErr.message);
+  if (!origemBruta) throw recusaDaExpansao(ctx, "origem_nao_encontrada");
+  const origem = origemBruta as { id: string; status: string; contact_id: string | null };
+  const elegivel = elegibilidadeDaOrigem(origem);
+  if (elegivel.reason === "not_won") throw recusaDaExpansao(ctx, "origem_nao_ganha");
+  if (elegivel.reason === "without_contact") throw recusaDaExpansao(ctx, "origem_sem_contato");
+
+  // Atalho idempotente: a expansão aberta já existe? A RPC repete a pergunta sob lock; isto só
+  // evita revalidar etapa e campos de algo que já foi criado.
+  const existente = await expansaoAbertaDe(supabase, origemId, input.product_id);
+  if (existente.tipo === "erro") throw recusaDaExpansao(ctx, "interno");
+  if (existente.tipo === "invisivel") throw recusaDaExpansao(ctx, "expansao_aberta_invisivel");
+  if (existente.tipo === "visivel") {
+    const { data: vinculo } = await supabase
+      .from("crm_lead_links")
+      .select("id")
+      .eq("organization_id", ctx.organization_id)
+      .eq("lead_id", existente.leadId)
+      .eq("target_kind", ALVO_DO_VINCULO_DE_ORIGEM)
+      .eq("target_id", origemId)
+      .eq("link_kind", VINCULO_DE_ORIGEM_COMERCIAL)
+      .maybeSingle();
+    return expansaoExistente(
+      supabase,
+      ctx,
+      origemId,
+      existente.leadId,
+      (vinculo as { id: string } | null)?.id ?? null,
+    );
+  }
+
+  // A RÉGUA DE CAMPOS OBRIGATÓRIOS (issue #1536) vale para a expansão como vale para a retomada:
+  // ela ENTRA numa etapa e nasce sem campo personalizado. Sem etapa pedida, a primeira aberta do
+  // funil (a mesma escolha que a RPC faz). Funil ou etapa que não servem caem na RPC, que dá o
+  // nome certo à recusa.
+  const { data: funil } = await supabase
+    .from("crm_pipelines")
+    .select("settings")
+    .eq("organization_id", ctx.organization_id)
+    .eq("id", input.pipeline_id)
+    .maybeSingle();
+  let etapaId: string | null = input.stage_id ?? null;
+  if (!etapaId && funil) {
+    const { data: etapas } = await supabase
+      .from("crm_stages")
+      .select("id, is_won, is_lost, is_archived")
+      .eq("organization_id", ctx.organization_id)
+      .eq("pipeline_id", input.pipeline_id)
+      .order("position", { ascending: true })
+      .order("id", { ascending: true });
+    const lidas = (etapas ?? []) as {
+      id: string;
+      is_won: boolean | null;
+      is_lost: boolean | null;
+      is_archived: boolean | null;
+    }[];
+    etapaId = lidas.find((e) => !e.is_won && !e.is_lost && !e.is_archived)?.id ?? null;
+  }
+  if (funil && etapaId) {
+    const vereditoDeCampos = validaCamposExigidos({
+      lead: { custom_fields: {} },
+      settingsDoFunil: (funil as { settings?: unknown }).settings,
+      destino: { stageId: etapaId, desfecho: null },
+      motivoDeGanho: null,
+    });
+    if (vereditoDeCampos.faltando.length > 0) {
+      const recusa = recusaDeCamposObrigatorios(vereditoDeCampos.faltando, idioma);
+      throw new ApiError(
+        422,
+        recusa.codigo,
+        { faltando: vereditoDeCampos.faltando },
+        ctx.requestId,
+        recusa.mensagem,
+      );
+    }
+  }
+
+  const currency = await moedaDaOrganizacao(supabase, ctx.organization_id);
+  const { data: criada, error: rpcErr } = await supabase.rpc(
+    "fn_crm_create_expansion_opportunity",
+    {
+      p_organization_id: ctx.organization_id,
+      p_origin_lead_id: origemId,
+      p_pipeline_id: input.pipeline_id,
+      p_stage_id: etapaId,
+      p_product_id: input.product_id,
+      p_title: input.title,
+      p_value_cents: input.value_cents ?? null,
+      p_currency: currency,
+    },
+  );
+  if (rpcErr) throw recusaDaExpansao(ctx, falhaDaExpansao(rpcErr), rpcErr.message);
+  const r = criada as { created: boolean; lead_id: string; link_id: string | null };
+
+  // Corrida perdida para outra requisição entre o atalho e o lock: a RPC devolveu a dela.
+  if (!r.created) return expansaoExistente(supabase, ctx, origemId, r.lead_id, r.link_id);
+
+  const { data: leadBruto, error: leadErr } = await supabase
+    .from("crm_leads")
+    .select(LEAD_COLS)
+    .eq("organization_id", ctx.organization_id)
+    .eq("id", r.lead_id)
+    .maybeSingle();
+  if (leadErr || !leadBruto) {
+    // A expansão JÁ existe no banco: o erro aqui é de leitura. Repetir o pedido devolve a mesma
+    // (idempotente), então o 500 não induz duplicata.
+    throw recusaDaExpansao(
+      ctx,
+      "interno",
+      leadErr?.message ?? "Expansão criada, mas não foi possível relê-la.",
+    );
+  }
+  const lead = leadBruto as LeadNascido & { contact_id: string | null; status: string };
+
+  const serviceOrigin =
+    ctx.serviceOrigin ??
+    (await observeServiceOrigin(createAdminClient(), ctx.organization_id, lead.contact_id ?? null));
+  await registrarNascimentoDoLead(ctx, lead, { serviceOrigin });
+
+  // O VÍNCULO na auditoria: `lead.created` diz que a oportunidade nasceu; esta linha diz de qual
+  // oportunidade ganha ela nasceu e com que produto — o que a linha do lead sozinha não diz.
+  const a = actorAuditPayload(ctx.actor);
+  await audit({
+    action: "lead.expansion_created",
+    actorUserId: a.actorUserId,
+    organizationId: ctx.organization_id,
+    resourceType: "crm_lead",
+    resourceId: lead.id,
+    requestId: ctx.requestId,
+    metadata: {
+      ...a.metadataActor,
+      origin_lead_id: origemId,
+      link_id: r.link_id,
+      product_id: input.product_id,
+      pipeline_id: lead.pipeline_id,
+      stage_id: lead.stage_id,
+      reason: "expansion",
+    },
+  });
+
+  // A linha do tempo da NOVA explica de onde ela veio. A origem não recebe linha (ver o tipo).
+  const atividade = await emitLeadActivity(supabase, {
+    organizationId: ctx.organization_id,
+    leadId: lead.id,
+    contactId: lead.contact_id ?? null,
+    type: "opened_as_expansion",
+    sourceModule: "crm",
+    sourceId: origemId,
+    actor: ctx.actor,
+    reason: "Expansão aberta a partir de um negócio ganho",
+    payload: { origin_lead_id: origemId, product_id: input.product_id },
+  });
+  if (!atividade.ok) {
+    await registraFalhaDeAtividade(supabase, {
+      organizationId: ctx.organization_id,
+      leadId: lead.id,
+      tipo: "opened_as_expansion",
+      origem: "leads/_handler.expandirLeadHandler",
+      erro: atividade.error,
+      requestId: ctx.requestId,
+    });
+  }
+
+  return {
+    created: true,
+    lead: {
+      id: lead.id,
+      pipeline_id: lead.pipeline_id,
+      stage_id: lead.stage_id,
+      status: lead.status,
+      contact_id: lead.contact_id ?? null,
+    },
+    link_id: r.link_id,
+    origin_lead_id: origemId,
+  };
 }

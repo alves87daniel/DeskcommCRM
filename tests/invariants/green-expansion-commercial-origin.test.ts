@@ -304,7 +304,7 @@ async function expandir(t: Tenant, quem: string, p: Pedido): Promise<Resposta> {
       p.moeda === undefined ? "BRL" : p.moeda,
     ],
   );
-  return rows[0].r as Resposta;
+  return rows[0]!.r as Resposta;
 }
 
 const leadsDoContato = (contato: string) =>

@@ -167,6 +167,17 @@ export type ActivityType =
    * `demand_closed` da origem, com a razão "Levado para o funil X".
    */
   | "moved_from_pipeline"
+  /**
+   * O negócio nasceu como EXPANSÃO de um negócio ganho (CG-COM-01,
+   * `POST /api/v1/leads/[id]/expansion`): mesmo contato, oportunidade nova, ligada à
+   * de origem por `crm_lead_links (commercial_origin)`.
+   *
+   * ⚠️ Só a NOVA recebe linha. A de origem continua ganha e INTACTA: uma atividade
+   * nela mexeria em `last_activity_at` (trigger da timeline), e o desfecho histórico
+   * não pode mudar por causa de uma venda nova. O dossiê da origem mostra as
+   * expansões pelo vínculo, não pela timeline.
+   */
+  | "opened_as_expansion"
   | "proposal_drafted"
   | "proposal_sent"
   | "proposal_accepted"
@@ -281,6 +292,7 @@ export const ACTIVITY_LABELS: Record<ActivityType, string> = {
   // ter mudado de contato sem ninguém tê-lo movido.
   contacts_merged: "Contatos duplicados juntados",
   moved_from_pipeline: "Veio de outro funil",
+  opened_as_expansion: "Nasceu como expansão de um negócio ganho",
   proposal_drafted: "Rascunho de proposta criado",
   proposal_sent: "Proposta enviada",
   proposal_accepted: "Proposta aceita",

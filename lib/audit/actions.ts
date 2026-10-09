@@ -1006,6 +1006,11 @@ export const AUDIT_ACTIONS = [
   "green.product.created",
   "green.product.updated",
   "green.lead_context.updated",
+
+  // ConectorGreen / CG-COM-01 — expansão pós-ganho. A criação da oportunidade nova já audita
+  // `lead.created`; esta linha registra o VÍNCULO de origem comercial (de qual oportunidade ganha
+  // ela nasceu, com que produto), que a linha do lead sozinha não diz.
+  "lead.expansion_created",
 ] as const;
 
 /** Um código de auditoria. Derivado de `AUDIT_ACTIONS` — não redigite a lista. */
