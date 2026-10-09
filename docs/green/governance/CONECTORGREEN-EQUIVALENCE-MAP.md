@@ -26,9 +26,10 @@ Fonte do "próximo número" de cada área: o maior listado + 1. Áreas sem linha
 | `CG-FND-07` | Fundação — Modelo de produto do ConectorGreen | DOC   | CONCLUÍDO | Agrupamento histórico: GREEN-CRM-01 e sua revisão 01.1. Ver nota abaixo                                        |
 | `CG-FND-08` | Fundação — Vocabulário e nomenclatura         | DOC   | CONCLUÍDO | Este conjunto. Ratificado (`GOV-01` a `GOV-05`). Integrado à `main` pelo PR #2 (merge `6cbe207f7`, 2026-10-08) |
 | `CG-PRD-01` | Produtos — Catálogo e produto da oportunidade | FEAT  | CONCLUÍDO | GREEN-CRM-02. Migration 0509. Integrado e validado na `main` pelo PR #3 (merge `98049367f`, 2026-10-08)        |
+| `CG-COM-01` | Comercial — Expansão pós-ganho                | FEAT  | RESERVADO | Nova oportunidade aberta a partir de uma ganha, ligada por `commercial_origin`. Migration 0510                 |
 
-Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`; demais áreas, `01`. Próximo número livre de
-migration: `0510` (a 0509 é de `CG-PRD-01`; ver nota abaixo).
+Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`, `CG-COM-02`; demais áreas, `01`. Próximo número
+livre de migration: `0511` (a 0509 é de `CG-PRD-01` e a 0510 está reservada a `CG-COM-01`; ver nota abaixo).
 
 **Integração à `main`.** Este registro foi preparado para integração à `main` (branch `docs/cg-fnd-08-vocabulary-naming`,
 sobre `b5962666`). `CG-FND-07` (GREEN-CRM-01 e 01.1, commit `a2d202168` da branch `green/crm-01-product-foundation`)
