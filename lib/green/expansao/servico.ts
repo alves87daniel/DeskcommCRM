@@ -150,15 +150,19 @@ async function porId<T extends { id: string }>(
   return new Map(((data ?? []) as unknown as T[]).map((l) => [l.id, l]));
 }
 
-/** Os funis Green da organização com as etapas abertas (destinos possíveis da expansão). */
+/**
+ * Os funis Green da organização com as etapas abertas (destinos possíveis da expansão).
+ * `funisGreen` conta os funis com binding, tenham ou não etapa aberta: zero quer dizer
+ * "instalação sem Green", que a tela trata diferente de "funil Green sem etapa aberta".
+ */
 export async function destinosDaExpansao(
   db: Db,
   orgId: string,
-): Promise<DestinoDaExpansao[] | null> {
+): Promise<{ funisGreen: number; destinos: DestinoDaExpansao[] } | null> {
   const { data: ids, error } = await db.rpc("fn_green_pipeline_ids", { p_org: orgId });
   if (error) return null;
   const funisGreen = ((ids ?? []) as unknown[]).map(String);
-  if (funisGreen.length === 0) return [];
+  if (funisGreen.length === 0) return { funisGreen: 0, destinos: [] };
 
   const funis = await db
     .from("crm_pipelines")
@@ -186,7 +190,7 @@ export async function destinosDaExpansao(
     }[]
   ).filter((e) => !e.is_won && !e.is_lost && !e.is_archived);
 
-  return ((funis.data ?? []) as unknown as { id: string; name: string }[])
+  const destinos = ((funis.data ?? []) as unknown as { id: string; name: string }[])
     .map((f) => ({
       pipeline_id: f.id,
       name: f.name,
@@ -195,6 +199,7 @@ export async function destinosDaExpansao(
         .map((e) => ({ id: e.id, name: e.name })),
     }))
     .filter((d) => d.stages.length > 0);
+  return { funisGreen: funisGreen.length, destinos };
 }
 
 /**
@@ -321,10 +326,12 @@ export async function lerExpansaoDaOportunidade(
 
   const eligibility = elegibilidadeDaOrigem(lead);
   let destinations: DestinoDaExpansao[] = [];
+  let green_available = false;
   if (eligibility.eligible && opts.podeCriar) {
     const lidos = await destinosDaExpansao(db, orgId);
     if (!lidos) return { tipo: "erro" };
-    destinations = lidos;
+    destinations = lidos.destinos;
+    green_available = lidos.funisGreen > 0;
   }
 
   // o produto desta oportunidade já entrou na leitura (`contextos` inclui o próprio lead)
@@ -338,6 +345,7 @@ export async function lerExpansaoDaOportunidade(
       lead_id: leadId,
       lead_status: lead.status,
       eligibility,
+      green_available,
       can_create: eligibility.eligible && opts.podeCriar && destinations.length > 0,
       origin: origemVinculo ? relacao(origemVinculo.target_id, origemVinculo.created_at) : null,
       expansions: expansoesVinculo.map((v) => relacao(v.lead_id, v.created_at)),

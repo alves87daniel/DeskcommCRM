@@ -133,6 +133,8 @@ interface Opcoes {
   links?: Linha[];
   contextos?: Linha[];
   funilSettings?: Record<string, unknown>;
+  /** O que `fn_green_pipeline_ids` devolve (padrão: ConexãoGreen e Expansão). */
+  funisGreen?: string[];
   aberta?: () => RespostaRpc;
   criar?: (args: Record<string, unknown>) => RespostaRpc;
 }
@@ -170,7 +172,10 @@ function cenario(o: Opcoes = {}): DubleExpansao {
     },
     rpcs: {
       fn_crm_open_expansion_of: () => (o.aberta ?? (() => ({ data: [], error: null })))(),
-      fn_green_pipeline_ids: () => ({ data: [FUNIL_CONEXAO, FUNIL_EXPANSAO], error: null }),
+      fn_green_pipeline_ids: () => ({
+        data: o.funisGreen ?? [FUNIL_CONEXAO, FUNIL_EXPANSAO],
+        error: null,
+      }),
       fn_crm_create_expansion_opportunity: (args) => {
         if (o.criar) return o.criar(args);
         // o banco cria B, o contexto e o vínculo (provado nos invariantes); aqui só o resultado
@@ -608,11 +613,32 @@ describe("GET /leads/[id]/expansion", () => {
     expect(corpo.data.eligibility).toEqual({ eligible: false, reason: "without_contact" });
   });
 
-  it("sem funil Green com etapa aberta não há como criar", async () => {
+  it("funil Green sem etapa aberta: Green disponível, mas não há como criar", async () => {
     const d = cenario();
     d.tabelas.crm_stages = d.tabelas.crm_stages!.filter((e) => e.pipeline_id !== FUNIL_EXPANSAO);
     const corpo = await corpoDe(await GET(req(), ctx()));
-    expect(corpo.data).toMatchObject({ can_create: false, destinations: [] });
+    expect(corpo.data).toMatchObject({
+      green_available: true,
+      can_create: false,
+      destinations: [],
+    });
+  });
+
+  it("organização sem funil Green (Deskcomm puro): green_available falso, nada a oferecer", async () => {
+    cenario({ funisGreen: [] });
+    const corpo = await corpoDe(await GET(req(), ctx()));
+    expect(corpo.data).toMatchObject({
+      eligibility: { eligible: true, reason: null },
+      green_available: false,
+      can_create: false,
+      destinations: [],
+    });
+  });
+
+  it("com funil Green e etapa aberta, green_available e can_create verdadeiros", async () => {
+    cenario();
+    const corpo = await corpoDe(await GET(req(), ctx()));
+    expect(corpo.data).toMatchObject({ green_available: true, can_create: true });
   });
 
   it("produto da origem inativo não é sugerido", async () => {

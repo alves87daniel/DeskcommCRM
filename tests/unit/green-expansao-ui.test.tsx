@@ -94,6 +94,7 @@ function expansao(extra: Partial<ExpansaoDaOportunidade> = {}): ExpansaoDaOportu
       },
     ],
     suggested_product_id: ALFA.id,
+    green_available: true,
     ...extra,
   };
 }
@@ -247,6 +248,12 @@ describe("dossiê · relação entre oportunidades", () => {
     servidor(new Error("falhou"));
     const falha = renderizar();
     await falha.leituraTerminou();
+    expect(screen.queryByTestId("expansao-comercial")).toBeNull();
+
+    // instalação sem funil Green: negócio ganho não ganha seção nenhuma, nem a explicação
+    servidor(expansao({ can_create: false, destinations: [], green_available: false }));
+    const semGreen = renderizar();
+    await semGreen.leituraTerminou();
     expect(screen.queryByTestId("expansao-comercial")).toBeNull();
   });
 

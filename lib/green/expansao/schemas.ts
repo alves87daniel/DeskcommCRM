@@ -75,6 +75,12 @@ export interface ExpansaoDaOportunidade {
   lead_status: string;
   /** Só oportunidade ganha e com contato origina expansão. */
   eligibility: { eligible: boolean; reason: MotivoDeInelegibilidade | null };
+  /**
+   * A organização tem ao menos um funil Green (com binding). Falso numa instalação sem Green: a
+   * tela não oferece nem explica a expansão. Só é medido para quem pode criar e em negócio
+   * elegível; nos outros casos é `false`.
+   */
+  green_available: boolean;
   /** Elegível, operador `agent`+ e ao menos um funil Green com etapa aberta. */
   can_create: boolean;
   /** De qual oportunidade esta nasceu (se for uma expansão). */

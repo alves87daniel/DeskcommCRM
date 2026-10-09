@@ -54,9 +54,18 @@ function Relacao({ r }: { r: OportunidadeRelacionada }): React.ReactElement {
   );
 }
 
+/**
+ * A criação se aplica a este negócio? Ganho, com contato, operador agent+ e uma organização que
+ * USA Green. Numa instalação sem funil Green, todo negócio ganho ficaria com uma explicação
+ * sobre funil Green que ninguém pediu.
+ */
+function criacaoSeAplica(d: ExpansaoDaOportunidade, podeCriar: boolean): boolean {
+  return d.eligibility.eligible && podeCriar && d.green_available;
+}
+
 /** Há o que mostrar? Sem relação e sem como criar, a seção não existe para este negócio. */
 function temConteudo(d: ExpansaoDaOportunidade, podeCriar: boolean): boolean {
-  return Boolean(d.origin) || d.expansions.length > 0 || (d.eligibility.eligible && podeCriar);
+  return Boolean(d.origin) || d.expansions.length > 0 || criacaoSeAplica(d, podeCriar);
 }
 
 /**
@@ -111,7 +120,7 @@ export function ExpansaoDoNegocio({
         </div>
       )}
 
-      {d.eligibility.eligible && podeCriar && (
+      {criacaoSeAplica(d, podeCriar) && (
         <>
           <p className="mb-2 text-xs text-text-muted">
             {t(
