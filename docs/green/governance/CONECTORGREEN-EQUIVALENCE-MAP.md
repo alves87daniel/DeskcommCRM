@@ -26,7 +26,7 @@ Fonte do "próximo número" de cada área: o maior listado + 1. Áreas sem linha
 | `CG-FND-07` | Fundação — Modelo de produto do ConectorGreen        | DOC   | CONCLUÍDO | Agrupamento histórico: GREEN-CRM-01 e sua revisão 01.1. Ver nota abaixo                                        |
 | `CG-FND-08` | Fundação — Vocabulário e nomenclatura                | DOC   | CONCLUÍDO | Este conjunto. Ratificado (`GOV-01` a `GOV-05`). Integrado à `main` pelo PR #2 (merge `6cbe207f7`, 2026-10-08) |
 | `CG-PRD-01` | Produtos — Catálogo e produto da oportunidade        | FEAT  | CONCLUÍDO | GREEN-CRM-02. Migration 0509. Integrado e validado na `main` pelo PR #3 (merge `98049367f`, 2026-10-08)        |
-| `CG-SEC-01` | Segurança — Proteção das credenciais nos logs locais | FIX   | CONCLUÍDO | `next dev` deixa de registrar os argumentos de server functions. Sem migration. Checkpoint local, sem PR       |
+| `CG-SEC-01` | Segurança — Proteção das credenciais nos logs locais | FIX   | CONCLUÍDO | `next dev` não registra argumentos de server functions. Sem migration. PR #5 aguarda CI e aprovação de merge   |
 
 Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`, `CG-SEC-02`; demais áreas, `01`. Próximo número
 livre de migration: `0510` (a 0509 é de `CG-PRD-01`; ver nota abaixo).
