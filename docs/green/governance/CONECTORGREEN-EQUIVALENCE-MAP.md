@@ -26,7 +26,7 @@ Fonte do "próximo número" de cada área: o maior listado + 1. Áreas sem linha
 | `CG-FND-07` | Fundação — Modelo de produto do ConectorGreen        | DOC   | CONCLUÍDO | Agrupamento histórico: GREEN-CRM-01 e sua revisão 01.1. Ver nota abaixo                                        |
 | `CG-FND-08` | Fundação — Vocabulário e nomenclatura                | DOC   | CONCLUÍDO | Este conjunto. Ratificado (`GOV-01` a `GOV-05`). Integrado à `main` pelo PR #2 (merge `6cbe207f7`, 2026-10-08) |
 | `CG-PRD-01` | Produtos — Catálogo e produto da oportunidade        | FEAT  | CONCLUÍDO | GREEN-CRM-02. Migration 0509. Integrado e validado na `main` pelo PR #3 (merge `98049367f`, 2026-10-08)        |
-| `CG-SEC-01` | Segurança — Proteção das credenciais nos logs locais | FIX   | CONCLUÍDO | `next dev` não registra argumentos de server functions. Sem migration. PR #5 aguarda CI e aprovação de merge   |
+| `CG-SEC-01` | Segurança — Proteção das credenciais nos logs locais | FIX   | CONCLUÍDO | Sem migration. Integrado e validado na `main` pelo PR #5 (merge `8cfb6016f`, 2026-10-12)                       |
 
 Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`, `CG-SEC-02`; demais áreas, `01`. Próximo número
 livre de migration: `0510` (a 0509 é de `CG-PRD-01`; ver nota abaixo).
@@ -50,6 +50,14 @@ cherry-pick `-x` (`928ee2499`, `9cc925317`, `b898e68e7` e `6dd8920c8`), mais o a
 0509 no `baseline.sql` para antes da varredura de anon. A 0509 entrou no MANIFEST da `main` depois da 0508, e `0510`
 segue como o próximo número livre. Validação após o merge: CI, E2E, performance e imagem Docker aprovados; o workflow de
 release falhou por motivo preexistente e não bloqueante, e nenhuma release foi emitida.
+
+**Fechamento de `CG-SEC-01` (2026-10-12).** O PR #5 (branch `fix/cg-sec-01-dev-server-function-logging`, head
+`ee349c76d`) integrou `CG-SEC-01` à `main` pelo merge commit `8cfb6016f`, de pais `c5b3b5eef` e `ee349c76d`, com a
+árvore igual à do head. A entrega desliga `logging.serverFunctions` no `next.config.ts`, para que o `next dev` deixe de
+registrar os argumentos de server functions (a action de login recebe a senha), e traz o teste que confere a
+configuração efetiva da fase de desenvolvimento. Não há migration: `0510` segue como o próximo número livre. Validação
+após o merge: CI, E2E, performance e imagem Docker aprovados; o workflow de release falhou pelo mesmo motivo
+preexistente e não bloqueante, e nenhuma release foi emitida.
 
 **Nota sobre `CG-FND-01` a `CG-FND-07`.** Estes IDs foram reservados **retroativamente** em 2026-10-07, para dar nome canônico ao
 que já existia. `CG-FND-06` e `CG-FND-07` são **agrupamentos e equivalências históricas** (a baseline e os dois documentos de
