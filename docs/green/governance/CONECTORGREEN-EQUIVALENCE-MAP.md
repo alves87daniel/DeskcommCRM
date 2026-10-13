@@ -26,7 +26,7 @@ Fonte do "próximo número" de cada área: o maior listado + 1. Áreas sem linha
 | `CG-FND-07` | Fundação — Modelo de produto do ConectorGreen        | DOC   | CONCLUÍDO    | Agrupamento histórico: GREEN-CRM-01 e sua revisão 01.1. Ver nota abaixo                                        |
 | `CG-FND-08` | Fundação — Vocabulário e nomenclatura                | DOC   | CONCLUÍDO    | Este conjunto. Ratificado (`GOV-01` a `GOV-05`). Integrado à `main` pelo PR #2 (merge `6cbe207f7`, 2026-10-08) |
 | `CG-PRD-01` | Produtos — Catálogo e produto da oportunidade        | FEAT  | CONCLUÍDO    | GREEN-CRM-02. Migration 0509. Integrado e validado na `main` pelo PR #3 (merge `98049367f`, 2026-10-08)        |
-| `CG-COM-01` | Comercial — Expansão pós-ganho                       | FEAT  | EM ANDAMENTO | Nova oportunidade aberta a partir de uma ganha, ligada por `commercial_origin`. Migration 0510                 |
+| `CG-COM-01` | Comercial — Expansão pós-ganho                       | FEAT  | EM ANDAMENTO | Oportunidade nova ligada à ganha por `commercial_origin`. Migration 0510. PR #7 aguarda aprovação de merge     |
 | `CG-SEC-01` | Segurança — Proteção das credenciais nos logs locais | FIX   | CONCLUÍDO    | Sem migration. Integrado e validado na `main` pelo PR #5 (merge `8cfb6016f`, 2026-10-12)                       |
 
 Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`, `CG-COM-02`, `CG-SEC-02`; demais áreas, `01`.

@@ -857,6 +857,11 @@ regra, com origem `automation` provada como hoje) e `create_expansion_opportunit
 
 Nenhuma dessas pendências bloqueia a GREEN-CRM-02.
 
+> Estado da DP-12: resolvida pela `CG-COM-01` (verificação pelo vínculo `commercial_origin` + produto + status aberto,
+> sob lock por origem; `external_id` recusado). Decisão, motivo e limites, inclusive o do caminho automático, em
+> [`CG-COM-01-POST-WIN-EXPANSION.md`](../commercial/CG-COM-01-POST-WIN-EXPANSION.md), seções 3 e 10. A linha acima
+> fica como registro histórico.
+
 ---
 
 ## 13. Riscos

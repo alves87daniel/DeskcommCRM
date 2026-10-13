@@ -5,7 +5,7 @@
 | ID                     | `CG-COM-01`                                                                                                                                                                                    |
 | Tipo                   | `FEAT`                                                                                                                                                                                         |
 | Área                   | `CG-COM` (Comercial). ID oficial `CG-COM-01` confirmado pelo dono do produto em 2026-10-12 (pendência 1 da seção 11 resolvida)                                                                 |
-| Estado                 | EM ANDAMENTO: correções de 2026-10-12 aplicadas (seção 12) e `main` integrada na branch; preparada para PR. Sem push, PR ou merge na `main`                                                    |
+| Estado                 | EM ANDAMENTO: PR #7 (Draft) com CI verde no código `f065581fd` (seção 13) e destino aprovado pelo dono do produto (seção 14). Sem merge na `main`                                              |
 | Equivalência histórica | `PARCIAL` com a "GREEN-CRM-04" candidata da GREEN-CRM-01 (seções 16.7 e 16.8): este item entrega só a expansão manual a partir do dossiê. Importação por período e regra automática ficam fora |
 | Branch                 | `feat/cg-com-01-post-win-expansion`, criada de `origin/main` = `c5b3b5eef`; `main` `f25c8276c` integrada por merge (`93af21a22`)                                                               |
 | Migration              | `20261008120000_0510_green_commercial_origin_expansion.sql`                                                                                                                                    |
@@ -61,7 +61,7 @@ a expansão grava `retomado_de_lead_id = null`, `external_id = null` e `source_m
 | D-01 | A oportunidade de origem fica intacta: nenhum UPDATE, nenhuma atividade, nenhum evento. Continua `won`, no mesmo funil, com `closed_at` e histórico                                                                | D-15 (GREEN-CRM-01)                                                               |
 | D-02 | Origem elegível: `won` e com contato, visível ao operador. O funil da origem não é restrito                                                                                                                        | D-15; "contato já convertido" (glossário)                                         |
 | D-03 | A expansão reaproveita o contato da origem. Nunca cria contato e o corpo do pedido não aceita contato                                                                                                              | escopo item 4                                                                     |
-| D-04 | Destino: funil Green (com binding) e etapa aberta (não ganho, não perda, não arquivada). Sem etapa, a primeira aberta. O funil de destino pode ser o mesmo da origem                                               | glossário (expansão em funil Green com produto); regras Green da 0509             |
+| D-04 | Destino: qualquer funil Green elegível (com binding) e etapa aberta (não ganho, não perda, não arquivada), inclusive o mesmo funil da origem. Sem etapa, a primeira aberta. Sem funil próprio de expansão          | decisão do dono do produto (2026-10-13, seção 14); regras Green da 0509           |
 | D-05 | Produto obrigatório, ativo e da organização. A tela sugere o produto da origem (se ativo); pode ser outro                                                                                                          | D-17 (produto principal obrigatório na oportunidade Green); 16.7 ("pode diferir") |
 | D-06 | Idempotência: uma expansão ABERTA por (origem, produto). Repetir devolve a existente. Encerrada a expansão, outra com o mesmo produto é legítima. Produto diferente abre outra                                     | 16.8 (requisito de idempotência); resolve a DP-12                                 |
 | D-07 | A expansão nasce com quem a cria como responsável (`owner_kind = user`, `assigned_at`), decidido no banco e nunca pelo corpo; título e valor vêm do formulário; etiquetas e campos personalizados não são copiados | decisão do dono do produto (2026-10-12); posse da 0070 e régua da 0403            |
@@ -73,7 +73,8 @@ a expansão grava `retomado_de_lead_id = null`, `external_id = null` e `source_m
 lock transacional por origem, na mesma transação da criação. A candidata `external_id = <A.id>:<product.code>` com
 `source = expansao` foi recusada: o índice único a tornaria permanente (bloquearia uma nova expansão depois de a
 primeira ser perdida ou ganha) e usaria `external_id`, que é identidade de sistema externo, como chave de domínio. A
-GREEN-CRM-01 não foi editada; a linha da DP-12 lá continua como registro histórico (pendência 3).
+decisão mora só aqui; a linha da DP-12 na GREEN-CRM-01 (seção 12) continua como registro histórico, com uma nota que
+aponta para esta seção (pendência 3).
 
 ## 4. Idempotência e concorrência
 
@@ -159,21 +160,23 @@ reforçados e passaram a reprovar.
 
 Rodar a suíte de banco: `CONFERENCIA_KIT_RELEASE=v1.69.0 pnpm test:db tests/invariants/green-expansion-commercial-origin.test.ts`.
 
-Execução: os 28 casos originais passaram em 2026-10-09 (`3f2fdd30d`). Os casos de 2026-10-12 (DL1 a DL7, OW1 a OW6 e o
-EX1 atualizado) estão escritos, mas **não foram executados**: o Docker estava parado e ligá-lo poderia religar os
-containers do ambiente de demonstração (CG-OPS-01). A suíte de banco é o primeiro passo antes do PR (seção 10).
+Execução: os 28 casos originais passaram em 2026-10-09 (`3f2fdd30d`). Os 41 (com DL1 a DL7, OW1 a OW6 e o EX1
+atualizado) passaram no CI do PR #7, em PostgreSQL 15 e 17 (`invariants-majors`), sem Docker local (seção 13).
 
 ## 10. Limitações reais
 
 - **Sem prova pela tela (DoD 12):** a UI foi provada por testes de componente, não por Playwright num ambiente fresco
-  estilo VPS. Fica para a validação seguinte, como na CG-PRD-01.
-- **Suíte de banco das correções não executada:** DL1 a DL7, OW1 a OW6 e o EX1 atualizado foram escritos e
-  revisados, mas não rodaram (Docker parado; ver seção 9). Rodar antes do PR.
+  estilo VPS. Nenhuma spec de `tests/e2e` abre o dossiê de um negócio Green nem chama `/expansion`: o `e2e` verde do
+  PR não prova a jornada. Sem prova pela tela: o botão aparecer só para agent+ em negócio ganho, o diálogo criar de
+  ponta a ponta com o banco real, a navegação até a nova e a recarga mostrando a relação. Fica para a validação
+  seguinte, como na CG-PRD-01.
 - **Expansão invisível:** o agente em modo de visibilidade restrito que tenta abrir uma expansão já aberta por outro
   atendente recebe 409 sem ver qual é. A lista de expansões do dossiê também mostra só as que ele enxerga. Com a
   expansão nascendo do criador, isso passa a valer também no modo padrão (`own_and_unassigned`) entre dois agentes.
 - **Destino só Green:** funil comum não recebe expansão nesta versão (o produto só existe em funil Green). Ampliar
   não exige migration de dados, mas exige decidir a chave de idempotência sem produto.
+- **Sem funil próprio de expansão:** o destino é qualquer funil Green elegível, e nada lê a chave de processo do
+  binding. O "funil Expansão" do glossário (seção 14) fica para uma entrega futura.
 - **Origem apagada:** se a oportunidade de origem for apagada, o vínculo fica com alvo pendente (como todo vínculo
   polimórfico, `target_id` sem FK); a leitura mostra a origem como `visible = false`. Apagar a expansão leva o vínculo
   junto, e uma nova expansão volta a ser possível (DL4).
@@ -188,12 +191,12 @@ containers do ambiente de demonstração (CG-OPS-01). A suíte de banco é o pri
 
 ## 11. Pendências e decisões para o dono do produto
 
-| #   | Pendência                                                                                                                                                           |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | **RESOLVIDA (2026-10-12).** Área do ID: o dono do produto confirmou `CG-COM-01` como identificador oficial (a árvore da seção 4.3 da nomenclatura sugeria `CG-EXP`) |
-| 2   | Confirmar D-04/D-05: destino restrito a funil Green e produto obrigatório. Ampliar para funil comum exige decidir a chave de idempotência sem produto               |
-| 3   | Registrar a resolução da DP-12 na GREEN-CRM-01 (seção 12) ou só neste documento                                                                                     |
-| 4   | **RESOLVIDA (2026-10-12).** Responsável da expansão: quem cria (D-07), respeitando as permissões existentes                                                         |
+| #   | Pendência                                                                                                                                                                                                                                                                                                                    |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **RESOLVIDA (2026-10-12).** Área do ID: o dono do produto confirmou `CG-COM-01` como identificador oficial (a árvore da seção 4.3 da nomenclatura sugeria `CG-EXP`)                                                                                                                                                          |
+| 2   | **RESOLVIDA (2026-10-13).** D-04/D-05: o dono do produto aprovou o contrato desta versão (seção 14). Destino em qualquer funil Green elegível, inclusive o da origem, e produto obrigatório. O funil próprio de expansão (chave de processo `expansao`) não integra esta entrega; ampliar para funil comum também segue fora |
+| 3   | **RESOLVIDA (2026-10-13).** Registro da DP-12: a decisão fica na seção 3 deste documento; a GREEN-CRM-01 (seção 12) ganhou só uma nota que aponta para cá, no padrão da nota da GREEN-CRM-02 na seção 14.1 de lá                                                                                                             |
+| 4   | **RESOLVIDA (2026-10-12).** Responsável da expansão: quem cria (D-07), respeitando as permissões existentes                                                                                                                                                                                                                  |
 
 ## 12. Correções de 2026-10-12
 
@@ -215,3 +218,36 @@ apagados indevidamente; a expansão nasce atribuída a quem a cria.
 4. **Integração da `main`** (merge `93af21a22`, sem rebase): trouxe a CG-SEC-01 (`f25c8276c`). O único conflito foi o
    previsto, na tabela do registro canônico, resolvido com as duas linhas; próximos livres `CG-COM-02` e `CG-SEC-02`,
    migration `0511`.
+
+## 13. Validação no PR #7 e revisão final (2026-10-13)
+
+1. **Banco:** no `ci` do PR #7, `invariants-majors (15)` e `(17)` rodaram os 41 casos da suíte da expansão em
+   PostgreSQL 15 e 17, com o `baseline.sql` em instalação e atualização. A 0510 está validada.
+2. **FIX de CI** (commit `f065581fd`, só `tests/shell/colisao-de-migration.test.sh`): a suíte de colisão herdava o
+   `GITHUB_REF` do job, e o PR real #7 virava o PR fictício #7 do fixture (9 de 106 vermelhos). `unset GITHUB_REF` no
+   isolamento da suíte e caso 34 de regressão (106 -> 111 casos). O detector `scripts/checar-colisao-de-migration.sh`
+   não mudou. No run `38395788980` o `verify-parte (3)` passou com as 32 suítes de shell, e a colisão com 111 casos.
+3. **Checks do HEAD `f065581fd`:** 26, com 23 success e 3 skipped por desenho (`build-and-push`, `juntar-manifestos`,
+   `promover-stable`, que só publicam fora de PR).
+4. **Revisão funcional:** ID, responsável, proteção do `commercial_origin`, vínculos `scheduled` (DL7, PM4) e
+   isolamento entre organizações (TN1 a TN4, DL6) conferidos contra a 0510 e a suíte. Nenhuma migration mudou.
+5. **Pendências que seguiam** (seção 10 e 11): prova pela tela e a aprovação da amplitude do destino (pendência 2).
+   A amplitude foi aprovada depois desta revisão (seção 14); a prova pela tela segue pendente.
+
+## 14. Decisão de produto sobre o destino (2026-10-13)
+
+Aprovada pelo dono do produto depois da revisão final (seção 13), para a versão atual da `CG-COM-01`:
+
+1. **Destino:** qualquer funil Green elegível, inclusive o mesmo funil da origem. Elegível é o funil com binding Green
+   da organização (`fn_green_pipeline_ids`) e com etapa aberta (D-04).
+2. **Produto:** continua obrigatório, ativo e da organização (D-05).
+3. **Origem:** permanece ganha e inalterada (D-01; casos OR da suíte de banco).
+4. **Vínculo e responsável:** a expansão nasce ligada à origem por `commercial_origin` e atribuída a quem a cria,
+   quando é atendente ativo e autorizado da organização (D-07, D-10).
+5. **Fora desta entrega:** um funil específico de expansão. O "funil Expansão" do glossário
+   ([CONECTORGREEN-VOCABULARY-AND-NAMING](../governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md), linha Expansão) e das
+   seções 16.7 e 16.8 da GREEN-CRM-01 descreve o modelo-alvo, que pertence à área `CG-EXP`. Restringir o destino a ele
+   seria funcionalidade nova, com o próprio ID.
+
+A decisão confirma o comportamento que a 0510 já tem: nenhum código, migration ou teste mudou por causa dela. O
+glossário e as seções 16.7 e 16.8 da GREEN-CRM-01 não foram editados.
