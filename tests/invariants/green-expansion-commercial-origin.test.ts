@@ -18,6 +18,12 @@
  *        recusa alvo/lead de outra organização para QUALQUER papel;
  *   PM   permissões: viewer não cria; vínculo `commercial_origin` exige agent+, alvo ganho, alvo
  *        `lead`, origem diferente do destino, e é imutável; os outros vínculos não mudam;
+ *   DL   o vínculo `commercial_origin` não é apagado por nenhum papel (nem `service_role`, nem o
+ *        dono do banco): só sai junto com a expansão ou com a organização (cascata). Apagar não
+ *        abre brecha na idempotência; a agenda (`scheduled`) continua apagável como antes;
+ *   OW   a expansão nasce com quem a cria como responsável (atendente ativo da organização), visível
+ *        a ele mesmo em visibilidade `own`; a origem não muda de responsável; suporte da plataforma
+ *        cria sem virar responsável;
  *   EV   eventos: o banco emite só o `lead.green_context_changed` da B (nenhum fato novo sobre A);
  *   SG   as funções novas não são alcançáveis por anon e a de escrita roda com a RLS do chamador.
  */
@@ -36,6 +42,8 @@ afterAll(() => pool.end());
 interface Request {
   papel: "authenticated" | "service_role";
   sub?: string;
+  /** Claims a mais do JWT (ex.: `session_id` da sessão de suporte). */
+  claims?: Record<string, unknown>;
 }
 
 async function request<T extends pg.QueryResultRow = pg.QueryResultRow>(
@@ -50,7 +58,7 @@ async function request<T extends pg.QueryResultRow = pg.QueryResultRow>(
     await c.query("select set_config('request.jwt.claims', $1, true)", [
       JSON.stringify(
         r.papel === "authenticated"
-          ? { sub: r.sub, role: "authenticated" }
+          ? { ...r.claims, sub: r.sub, role: "authenticated" }
           : { role: "service_role" },
       ),
     ]);
@@ -240,8 +248,10 @@ async function lead(
   opts: { contato?: string | null; owner?: string | null } = {},
 ): Promise<string> {
   const { rows } = await comoDono(
-    `insert into crm_leads (organization_id, pipeline_id, stage_id, title, contact_id, owner_user_id)
-     values ($1,$2,$3,'Maria - Conta de luz',$4,$5) returning id`,
+    `insert into crm_leads
+       (organization_id, pipeline_id, stage_id, title, contact_id, owner_user_id, owner_kind)
+     values ($1,$2,$3,'Maria - Conta de luz',$4,$5, case when $5::uuid is not null then 'user' end)
+     returning id`,
     [
       t.org,
       funil.id,
@@ -251,6 +261,39 @@ async function lead(
     ],
   );
   return rows[0].id as string;
+}
+
+/** `organizations.settings.visibility_mode` (0036): 'all' | 'own_and_unassigned' (padrão) | 'own'. */
+const visibilidade = (t: Tenant, modo: "all" | "own_and_unassigned" | "own") =>
+  pool.query(
+    `update organizations
+        set settings = coalesce(settings, '{}'::jsonb) || jsonb_build_object('visibility_mode', $2::text)
+      where id = $1`,
+    [t.org, modo],
+  );
+
+/**
+ * Sessão de suporte FULL da plataforma na organização (0220): o ator vira `admin` nela sem ser
+ * membro (`user_organizations`). Molde: `tests/invariants/suporte-temporario.test.ts`.
+ */
+async function suporteFull(t: Tenant): Promise<{ ator: string; sessao: string }> {
+  const ator = await usuario("sup");
+  const sessao = randomUUID();
+  await pool.query("insert into auth.sessions (id, user_id, aal) values ($1,$2,'aal1')", [
+    sessao,
+    ator,
+  ]);
+  await pool.query(
+    `insert into platform_admins (user_id, granted_by, scope, mfa_required, reason)
+     values ($1,$1,'full',false,'CG-COM-01 invariante')`,
+    [ator],
+  );
+  await pool.query("select public.fn_start_support($1,$2,$3,null,'full',3600)", [
+    ator,
+    sessao,
+    t.org,
+  ]);
+  return { ator, sessao };
 }
 const moverPara = (id: string, etapa: string) =>
   comoDono(
@@ -262,7 +305,10 @@ const moverPara = (id: string, etapa: string) =>
   );
 
 /** A oportunidade de origem: Green, com produto Alfa, GANHA. */
-async function origemGanha(t: Tenant, opts: { contato?: string | null } = {}): Promise<string> {
+async function origemGanha(
+  t: Tenant,
+  opts: { contato?: string | null; owner?: string | null } = {},
+): Promise<string> {
   const a = await lead(t, t.conexao, opts);
   await pool.query(
     "insert into green_lead_context (lead_id, organization_id, product_id) values ($1,$2,$3)",
@@ -332,8 +378,8 @@ describe("EX · a expansão é uma oportunidade nova do mesmo contato", () => {
     const b = (
       await pool.query(
         `select organization_id, pipeline_id, stage_id, contact_id, status, closed_at, source, title,
-                value_cents, currency, owner_user_id, owner_agent_id, owner_kind, created_by_user_id,
-                retomado_de_lead_id, external_id, tags
+                value_cents, currency, owner_user_id, owner_agent_id, owner_kind, assigned_at,
+                created_by_user_id, retomado_de_lead_id, external_id, tags
            from crm_leads where id = $1`,
         [r.lead_id],
       )
@@ -348,9 +394,10 @@ describe("EX · a expansão é uma oportunidade nova do mesmo contato", () => {
       source: "expansao",
       title: "Maria - Expansão",
       currency: "BRL",
-      owner_user_id: null,
+      // o responsável é quem cria (contrato de posse da 0070: o trio coerente)
+      owner_user_id: t.agente,
       owner_agent_id: null,
-      owner_kind: null,
+      owner_kind: "user",
       created_by_user_id: t.agente,
       // os campos históricos recusados como relação NÃO são usados
       retomado_de_lead_id: null,
@@ -358,6 +405,7 @@ describe("EX · a expansão é uma oportunidade nova do mesmo contato", () => {
       tags: [],
     });
     expect(Number(b.value_cents)).toBe(15000);
+    expect(b.assigned_at).not.toBeNull();
 
     const ctx = await pool.query("select product_id from green_lead_context where lead_id = $1", [
       r.lead_id,
@@ -773,6 +821,255 @@ describe("PM · permissões e integridade do vínculo", () => {
       [t.org, aberto, randomUUID()],
     );
     expect(out.rows).toHaveLength(1);
+  });
+});
+
+/* ═══════════════════════════ exclusão do vínculo ════════════════════════════ */
+describe("DL · o vínculo commercial_origin só sai junto com a expansão", () => {
+  const apagar = (r: Request, id: string) =>
+    request(r, "delete from crm_lead_links where id = $1 returning id", [id]);
+  const existe = (id: string) =>
+    contar("select count(*)::int as n from crm_lead_links where id = $1", [id]);
+
+  it("DL1 nenhum papel da organização apaga o vínculo, nem pelo id nem em lote pela expansão", async () => {
+    const t = await tenant();
+    const a = await origemGanha(t);
+    const r = await expandir(t, t.agente, { origem: a });
+    for (const quem of [t.viewer, t.agente, t.manager, t.admin]) {
+      const peloId = await erroDe(apagar({ papel: "authenticated", sub: quem }, r.link_id));
+      expect(peloId?.message, quem).toContain("commercial_origin_immutable");
+      const emLote = await erroDe(
+        request(
+          { papel: "authenticated", sub: quem },
+          "delete from crm_lead_links where lead_id = $1",
+          [r.lead_id],
+        ),
+      );
+      expect(emLote?.message, quem).toContain("commercial_origin_immutable");
+    }
+    // o agente que não enxerga a expansão não a alcança: nada a apagar, nada revelado
+    const semAlcance = await apagar({ papel: "authenticated", sub: t.outroAgente }, r.link_id);
+    expect(semAlcance.rows).toHaveLength(0);
+    expect(await existe(r.link_id)).toBe(1);
+  });
+
+  it("DL2 service_role e o dono do banco também não apagam fora da cascata", async () => {
+    const t = await tenant();
+    const a = await origemGanha(t);
+    const r = await expandir(t, t.agente, { origem: a });
+    const svc = await erroDe(apagar({ papel: "service_role" }, r.link_id));
+    expect(svc?.message).toContain("commercial_origin_immutable");
+    const dono = await erroDe(pool.query("delete from crm_lead_links where id = $1", [r.link_id]));
+    expect(dono?.message).toContain("commercial_origin_immutable");
+    expect(await existe(r.link_id)).toBe(1);
+  });
+
+  it("DL3 a tentativa de apagar não abre brecha na idempotência: repetir devolve a mesma", async () => {
+    const t = await tenant();
+    const a = await origemGanha(t);
+    const r = await expandir(t, t.agente, { origem: a });
+    await erroDe(apagar({ papel: "authenticated", sub: t.viewer }, r.link_id));
+    await erroDe(apagar({ papel: "service_role" }, r.link_id));
+    const repetida = await expandir(t, t.manager, { origem: a });
+    expect(repetida).toEqual({ created: false, lead_id: r.lead_id, link_id: r.link_id });
+    expect(await leadsDoContato(t.contato)).toBe(2);
+    expect(await vinculosDe(a)).toBe(1);
+  });
+
+  it("DL4 apagar a expansão leva o vínculo junto, e uma nova expansão volta a ser possível", async () => {
+    const t = await tenant();
+    const a = await origemGanha(t);
+    const r = await expandir(t, t.agente, { origem: a });
+    const apagadas = await request(
+      { papel: "authenticated", sub: t.manager },
+      "delete from crm_leads where id = $1 returning id",
+      [r.lead_id],
+    );
+    expect(apagadas.rows).toHaveLength(1);
+    expect(await existe(r.link_id)).toBe(0);
+    const nova = await expandir(t, t.agente, { origem: a });
+    expect(nova.created).toBe(true);
+    expect(await vinculosDe(a)).toBe(1);
+  });
+
+  it("DL5 apagar a organização leva o vínculo junto (cascata)", async () => {
+    const t = await tenant();
+    const a = await origemGanha(t);
+    const r = await expandir(t, t.agente, { origem: a });
+    await pool.query("delete from organizations where id = $1", [t.org]);
+    expect(await existe(r.link_id)).toBe(0);
+  });
+
+  it("DL6 outra organização não alcança o vínculo (nada é apagado, nada é revelado)", async () => {
+    const t = await tenant();
+    const outra = await tenant();
+    const a = await origemGanha(t);
+    const r = await expandir(t, t.agente, { origem: a });
+    for (const quem of [outra.admin, outra.manager, outra.agente, outra.viewer]) {
+      const out = await apagar({ papel: "authenticated", sub: quem }, r.link_id);
+      expect(out.rows, quem).toHaveLength(0);
+    }
+    expect(await existe(r.link_id)).toBe(1);
+  });
+
+  it("DL7 vínculo de agenda (scheduled) continua apagável por membro, inclusive na expansão", async () => {
+    const t = await tenant();
+    const aberto = await lead(t, t.comum);
+    const a = await origemGanha(t);
+    const r = await expandir(t, t.agente, { origem: a });
+    for (const [quem, leadId] of [
+      [t.viewer, aberto],
+      [t.agente, aberto],
+      [t.agente, r.lead_id],
+    ] as const) {
+      const criado = await request(
+        { papel: "authenticated", sub: quem },
+        `insert into crm_lead_links (organization_id, lead_id, target_kind, target_id, link_kind)
+         values ($1,$2,'appointment',$3,'scheduled') returning id`,
+        [t.org, leadId, randomUUID()],
+      );
+      const apagado = await apagar({ papel: "authenticated", sub: quem }, criado.rows[0]!.id);
+      expect(apagado.rows, `${quem} ${leadId}`).toHaveLength(1);
+    }
+    expect(await existe(r.link_id)).toBe(1);
+  });
+});
+
+/* ═══════════════════════════ responsável ════════════════════════════════════ */
+describe("OW · a expansão nasce com quem a cria como responsável", () => {
+  const donoDe = async (id: string) =>
+    (
+      await pool.query(
+        "select owner_user_id, owner_agent_id, owner_kind, assigned_at from crm_leads where id = $1",
+        [id],
+      )
+    ).rows[0] as {
+      owner_user_id: string | null;
+      owner_agent_id: string | null;
+      owner_kind: string | null;
+      assigned_at: Date | null;
+    };
+
+  it("OW1 agent, manager e admin: o responsável é quem cria (owner_kind user, assigned_at)", async () => {
+    const t = await tenant();
+    const a = await origemGanha(t);
+    const gama = await produto(t.org, "gama");
+    for (const [quem, prod] of [
+      [t.agente, t.beta],
+      [t.manager, t.alfa],
+      [t.admin, gama],
+    ] as const) {
+      const r = await expandir(t, quem, { origem: a, produto: prod });
+      expect(r.created, quem).toBe(true);
+      const dono = await donoDe(r.lead_id);
+      expect(dono, quem).toMatchObject({
+        owner_user_id: quem,
+        owner_agent_id: null,
+        owner_kind: "user",
+      });
+      expect(dono.assigned_at, quem).not.toBeNull();
+    }
+  });
+
+  it("OW2 o responsável da oportunidade ganha não muda", async () => {
+    const t = await tenant();
+    const a = await origemGanha(t, { owner: t.outroAgente });
+    const antes = await linhaDe(a);
+    const r = await expandir(t, t.manager, { origem: a });
+    expect((await donoDe(r.lead_id)).owner_user_id).toBe(t.manager);
+    expect(antes?.owner_user_id).toBe(t.outroAgente);
+    expect(await linhaDe(a)).toEqual(antes);
+  });
+
+  it("OW3 visibilidade own: o agente dono da origem cria, enxerga a nova e repete sem duplicar", async () => {
+    const t = await tenant();
+    await visibilidade(t, "own");
+    const a = await origemGanha(t, { owner: t.agente });
+    const r = await expandir(t, t.agente, { origem: a });
+    expect(r.created).toBe(true);
+
+    const comoAgente = (sql: string, args: unknown[]) =>
+      request({ papel: "authenticated", sub: t.agente }, sql, args);
+    expect(
+      (await comoAgente("select id, owner_user_id from crm_leads where id = $1", [r.lead_id])).rows,
+    ).toEqual([{ id: r.lead_id, owner_user_id: t.agente }]);
+    expect(
+      (await comoAgente("select id from crm_lead_links where id = $1", [r.link_id])).rows,
+    ).toHaveLength(1);
+
+    const repetida = await expandir(t, t.agente, { origem: a });
+    expect(repetida).toEqual({ created: false, lead_id: r.lead_id, link_id: r.link_id });
+    // quem não enxerga a origem recebe a mesma recusa de inexistente
+    const outro = await erroDe(expandir(t, t.outroAgente, { origem: a }));
+    expect(outro?.message).toContain("expansion_origin_not_found");
+    expect(await vinculosDe(a)).toBe(1);
+  });
+
+  it("OW4 chamadas simultâneas de dois agentes criam UMA expansão, do vencedor", async () => {
+    const t = await tenant();
+    // origem sem dono: no modo padrão os dois agentes a enxergam
+    const a = await origemGanha(t);
+    const quem = [t.agente, t.outroAgente, t.agente, t.outroAgente, t.agente, t.outroAgente];
+    const res = await Promise.allSettled(quem.map((q) => expandir(t, q, { origem: a })));
+
+    const criadas = res.flatMap((x, i) =>
+      x.status === "fulfilled" && x.value.created ? [{ quem: quem[i]!, r: x.value }] : [],
+    );
+    expect(criadas).toHaveLength(1);
+    const { quem: vencedor, r: b } = criadas[0]!;
+    for (const [i, x] of res.entries()) {
+      if (quem[i] === vencedor) {
+        // o próprio vencedor enxerga a dele: recebe a mesma
+        expect(x.status).toBe("fulfilled");
+        if (x.status === "fulfilled") expect(x.value.lead_id).toBe(b.lead_id);
+      } else {
+        // o outro agente não enxerga a expansão do vencedor: recusa sem a linha
+        expect(x.status).toBe("rejected");
+        if (x.status === "rejected") {
+          const msg = String((x.reason as Error).message);
+          expect(msg).toContain("expansion_already_open");
+          expect(msg).not.toContain(b.lead_id);
+        }
+      }
+    }
+    expect((await donoDe(b.lead_id)).owner_user_id).toBe(vencedor);
+    expect(await vinculosDe(a)).toBe(1);
+    expect(await leadsDoContato(t.contato)).toBe(2);
+  });
+
+  it("OW5 suporte da plataforma (sessão full) cria sem virar responsável: não é atendente da organização", async () => {
+    const t = await tenant();
+    const a = await origemGanha(t);
+    const s = await suporteFull(t);
+    const { rows } = await request(
+      { papel: "authenticated", sub: s.ator, claims: { session_id: s.sessao } },
+      "select public.fn_crm_create_expansion_opportunity($1,$2,$3,$4,$5,$6,$7,$8) as r",
+      [t.org, a, t.expansao.id, t.expansao.aberta, t.beta, "Maria - Expansão", null, "BRL"],
+    );
+    const r = rows[0]!.r as Resposta;
+    expect(r.created).toBe(true);
+    expect(await donoDe(r.lead_id)).toMatchObject({
+      owner_user_id: null,
+      owner_agent_id: null,
+      owner_kind: null,
+      assigned_at: null,
+    });
+    expect((await linhaDe(r.lead_id))?.created_by_user_id).toBe(s.ator);
+  });
+
+  it("OW6 service_role não cria (sem sessão humana, sem organização): recusa, sem escrita", async () => {
+    const t = await tenant();
+    const a = await origemGanha(t);
+    const e = await erroDe(
+      request(
+        { papel: "service_role" },
+        "select public.fn_crm_create_expansion_opportunity($1,$2,$3,$4,$5,$6,$7,$8) as r",
+        [t.org, a, t.expansao.id, t.expansao.aberta, t.beta, "Maria - Expansão", null, "BRL"],
+      ),
+    );
+    expect(e).not.toBeNull();
+    expect(await leadsDoContato(t.contato)).toBe(1);
+    expect(await vinculosDe(a)).toBe(0);
   });
 });
 

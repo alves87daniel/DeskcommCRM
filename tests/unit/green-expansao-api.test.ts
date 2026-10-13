@@ -395,12 +395,15 @@ describe("POST /leads/[id]/expansion — permissões, validação e recusas", ()
     expect(criou(d)).toHaveLength(0);
   });
 
-  it("corpo `.strict()`: organização, contato ou status no corpo; produto ausente; título e valor inválidos", async () => {
+  it("corpo `.strict()`: organização, contato, status ou responsável no corpo; produto ausente; título e valor inválidos", async () => {
     const d = cenario();
     for (const corpo of [
       { ...PEDIDO, organization_id: OUTRA_ORG },
       { ...PEDIDO, contact_id: CONTATO },
       { ...PEDIDO, status: "won" },
+      // o responsável é decidido no banco (quem cria), nunca pelo corpo
+      { ...PEDIDO, owner_user_id: USER },
+      { ...PEDIDO, owner_agent_id: USER },
       { pipeline_id: FUNIL_EXPANSAO, title: "Maria" },
       { ...PEDIDO, title: "x" },
       { ...PEDIDO, value_cents: -1 },

@@ -13,6 +13,11 @@
 --   para TODO papel (inclusive service_role). Alvo e lead da mesma organização do vínculo (a mesma
 --   recusa para alvo inexistente e de outra organização: sem oracle), alvo `lead`, alvo `won`,
 --   origem diferente do destino, usuário de sessão com papel >= agent, e o vínculo é imutável.
+--   Imutável inclui não ser apagado: a policy de DELETE da 0042 deixa qualquer membro (até viewer)
+--   apagar vínculo, e apagar este quebraria a relação e a idempotência (a expansão aberta deixaria
+--   de ser achada e uma segunda nasceria). O vínculo só sai junto com a expansão (cascata de
+--   `crm_leads`) ou com a organização (cascata de `organizations`): quando a guarda roda, a linha
+--   que se foi já não existe. A 0042 fica como está; o DELETE dos outros vínculos não muda.
 --   Os outros `link_kind` (agenda: `scheduled`) não passam por nenhuma regra nova.
 --
 -- ── 2. fn_green_pipeline_ids(org): os funis Green (com binding) da organização, só para membro.
@@ -33,8 +38,13 @@
 --        informada, a primeira aberta do funil;
 --     d. idempotência: já existe expansão aberta da origem com o mesmo produto -> devolve ela
 --        (`created = false`) sem escrever; se o chamador não a enxerga -> `expansion_already_open`;
---     e. cria B (`source = expansao`, contato de A, sem responsável, aberta), o contexto Green com o
---        produto (as regras da 0509 valem: produto ativo e da organização) e o vínculo B -> A.
+--     e. cria B (`source = expansao`, contato de A, aberta), o contexto Green com o produto (as
+--        regras da 0509 valem: produto ativo e da organização) e o vínculo B -> A. O responsável de
+--        B é QUEM CRIA (`auth.uid()`, nunca um parâmetro), pelo contrato de posse da 0070
+--        (`owner_kind = 'user'`, `assigned_at`) e pela régua da 0403 (atendente ativo, não viewer,
+--        desta organização). Sem isso, em visibilidade `own` o agente não passaria na RLS de
+--        INSERT de uma oportunidade sem dono. Quem cria sem ser atendente (suporte da plataforma)
+--        não vira responsável: B nasce sem dono, como antes. A origem não muda de responsável.
 --   Qualquer recusa desfaz tudo: não sobra oportunidade sem vínculo nem vínculo sem produto.
 --   O `lead.created` e a auditoria continuam do servidor (o mesmo emissor do `createLeadHandler`);
 --   o banco emite só o `lead.green_context_changed` da B (trigger da 0509). Nenhum tipo de evento
@@ -53,6 +63,16 @@ declare
   v_alvo_org    uuid;
   v_alvo_status text;
 begin
+  if tg_op = 'DELETE' then
+    -- só a cascata apaga: a expansão (lead_id) ou a organização já saíram nesta mesma instrução
+    if old.link_kind = 'commercial_origin'
+       and exists (select 1 from public.crm_leads l where l.id = old.lead_id)
+       and exists (select 1 from public.organizations o where o.id = old.organization_id) then
+      raise exception 'commercial_origin_immutable' using errcode = '23514';
+    end if;
+    return old;
+  end if;
+
   if tg_op = 'UPDATE' then
     if old.link_kind = 'commercial_origin' or new.link_kind = 'commercial_origin' then
       raise exception 'commercial_origin_immutable' using errcode = '23514';
@@ -96,7 +116,7 @@ grant execute on function green.fn_commercial_origin_link_guard() to service_rol
 
 drop trigger if exists trg_commercial_origin_link_guard on public.crm_lead_links;
 create trigger trg_commercial_origin_link_guard
-  before insert or update on public.crm_lead_links
+  before insert or update or delete on public.crm_lead_links
   for each row execute function green.fn_commercial_origin_link_guard();
 
 -- ── 2 · funis Green da organização (destinos da expansão) ───────────────────
@@ -171,6 +191,7 @@ declare
   v_existente  uuid;
   v_visivel    boolean;
   v_posicao    numeric;
+  v_dono       uuid;
   v_lead       uuid;
   v_link       uuid;
 begin
@@ -247,11 +268,23 @@ begin
     from public.crm_leads l
    where l.stage_id = v_etapa;
 
+  -- o responsável é quem cria, se for atendente ativo desta organização (a régua da 0403; a RLS
+  -- de user_organizations mostra a própria linha a todo membro)
+  select u.user_id into v_dono
+    from public.user_organizations u
+   where u.user_id = auth.uid()
+     and u.organization_id = p_organization_id
+     and u.revoked_at is null
+     and u.role <> 'viewer';
+
   insert into public.crm_leads
     (organization_id, pipeline_id, stage_id, title, contact_id, value_cents, currency,
+     owner_user_id, owner_agent_id, owner_kind, assigned_at,
      source, status, position_in_stage, created_by_user_id)
   values
     (p_organization_id, p_pipeline_id, v_etapa, v_titulo, v_contato, p_value_cents, p_currency,
+     v_dono, null, case when v_dono is not null then 'user' end,
+     case when v_dono is not null then now() end,
      'expansao', 'open', v_posicao, auth.uid())
   returning id into v_lead;
 
