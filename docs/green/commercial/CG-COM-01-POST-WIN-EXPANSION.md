@@ -5,7 +5,7 @@
 | ID                     | `CG-COM-01`                                                                                                                                                                                    |
 | Tipo                   | `FEAT`                                                                                                                                                                                         |
 | Área                   | `CG-COM` (Comercial). ID oficial `CG-COM-01` confirmado pelo dono do produto em 2026-10-12 (pendência 1 da seção 11 resolvida)                                                                 |
-| Estado                 | EM ANDAMENTO: PR #7 (Draft) com CI verde no código `f065581fd` (seção 13) e destino aprovado pelo dono do produto (seção 14). Sem merge na `main`                                              |
+| Estado                 | CONCLUÍDO: integrado e validado na `main` pelo PR #7 (merge `da92cb175`, 2026-10-13), com CI verde no código `f065581fd` (seção 13) e destino aprovado pelo dono do produto (seção 14)         |
 | Equivalência histórica | `PARCIAL` com a "GREEN-CRM-04" candidata da GREEN-CRM-01 (seções 16.7 e 16.8): este item entrega só a expansão manual a partir do dossiê. Importação por período e regra automática ficam fora |
 | Branch                 | `feat/cg-com-01-post-win-expansion`, criada de `origin/main` = `c5b3b5eef`; `main` `f25c8276c` integrada por merge (`93af21a22`)                                                               |
 | Migration              | `20261008120000_0510_green_commercial_origin_expansion.sql`                                                                                                                                    |
