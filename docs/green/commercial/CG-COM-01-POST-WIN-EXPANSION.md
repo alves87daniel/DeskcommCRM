@@ -4,10 +4,10 @@
 | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | ID                     | `CG-COM-01`                                                                                                                                                                                    |
 | Tipo                   | `FEAT`                                                                                                                                                                                         |
-| Área                   | `CG-COM` (Comercial), como pedido pelo dono do produto. Ver a pendência 1 (seção 11) sobre a árvore da seção 4.3 da nomenclatura                                                               |
-| Estado                 | EM ANDAMENTO: checkpoint de implementação, aguardando análise. Sem push, PR ou merge                                                                                                           |
+| Área                   | `CG-COM` (Comercial). ID oficial `CG-COM-01` confirmado pelo dono do produto em 2026-10-12 (pendência 1 da seção 11 resolvida)                                                                 |
+| Estado                 | EM ANDAMENTO: correções de 2026-10-12 aplicadas (seção 12) e `main` integrada na branch; preparada para PR. Sem push, PR ou merge na `main`                                                    |
 | Equivalência histórica | `PARCIAL` com a "GREEN-CRM-04" candidata da GREEN-CRM-01 (seções 16.7 e 16.8): este item entrega só a expansão manual a partir do dossiê. Importação por período e regra automática ficam fora |
-| Branch                 | `feat/cg-com-01-post-win-expansion`, criada de `origin/main` = `c5b3b5eef`                                                                                                                     |
+| Branch                 | `feat/cg-com-01-post-win-expansion`, criada de `origin/main` = `c5b3b5eef`; `main` `f25c8276c` integrada por merge (`93af21a22`)                                                               |
 | Migration              | `20261008120000_0510_green_commercial_origin_expansion.sql`                                                                                                                                    |
 
 Este documento registra o que foi implementado e o que ficou de fora. O modelo de produto (contato, oportunidade,
@@ -36,37 +36,38 @@ status = won (INTACTA)                 status = open, source = expansao
 Nenhuma tabela nova e nenhuma coluna nova. As migrations 0501 a 0509 não foram tocadas. Espelho no `baseline.sql`
 (antes da varredura de anon) e linha no `MANIFEST.md`.
 
-| Objeto                                                                                                   | O que faz                                                                                                                                                                                                                                                                                                                                                         |
-| -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| trigger `trg_commercial_origin_link_guard` em `crm_lead_links` (`green.fn_commercial_origin_link_guard`) | Só para `link_kind = commercial_origin`: alvo `lead`; lead e alvo da organização do vínculo (inexistente e de outra organização dão a mesma recusa); alvo `won`; origem diferente do destino; sessão humana com papel `agent`+; vínculo imutável (sem UPDATE). Vale para todo papel, inclusive `service_role`. Os outros vínculos (agenda: `scheduled`) não mudam |
-| `public.fn_green_pipeline_ids(org)` (definer)                                                            | Funis Green (com binding) da organização, só para membro dela. É a lista de destinos possíveis. Não expõe a chave de processo do binding                                                                                                                                                                                                                          |
-| `public.fn_crm_open_expansion_of(origem, produto)` (definer)                                             | A expansão ABERTA da origem com o produto, se houver: `(lead_id, visible)`. Enxerga a organização inteira (a duplicidade não pode depender da RLS do chamador), mas só devolve o id quando o chamador enxerga a expansão, e não responde nada por origem que ele não enxerga                                                                                      |
-| `public.fn_crm_create_expansion_opportunity(...)` (invoker)                                              | A escrita, numa transação. Roda com a RLS e o papel do chamador, exatamente como o INSERT do PostgREST que o `createLeadHandler` faz (travas de suporte e fronteira Green incluídas)                                                                                                                                                                              |
+| Objeto                                                                                                   | O que faz                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| trigger `trg_commercial_origin_link_guard` em `crm_lead_links` (`green.fn_commercial_origin_link_guard`) | Só para `link_kind = commercial_origin`: alvo `lead`; lead e alvo da organização do vínculo (inexistente e de outra organização dão a mesma recusa); alvo `won`; origem diferente do destino; sessão humana com papel `agent`+; vínculo imutável (sem UPDATE, e sem DELETE fora da cascata da expansão ou da organização). Vale para todo papel, inclusive `service_role` e o dono do banco. Os outros vínculos (agenda: `scheduled`) não mudam |
+| `public.fn_green_pipeline_ids(org)` (definer)                                                            | Funis Green (com binding) da organização, só para membro dela. É a lista de destinos possíveis. Não expõe a chave de processo do binding                                                                                                                                                                                                                                                                                                        |
+| `public.fn_crm_open_expansion_of(origem, produto)` (definer)                                             | A expansão ABERTA da origem com o produto, se houver: `(lead_id, visible)`. Enxerga a organização inteira (a duplicidade não pode depender da RLS do chamador), mas só devolve o id quando o chamador enxerga a expansão, e não responde nada por origem que ele não enxerga                                                                                                                                                                    |
+| `public.fn_crm_create_expansion_opportunity(...)` (invoker)                                              | A escrita, numa transação. Roda com a RLS e o papel do chamador, exatamente como o INSERT do PostgREST que o `createLeadHandler` faz (travas de suporte e fronteira Green incluídas). O responsável da nova é quem cria (`auth.uid()`), nunca um parâmetro                                                                                                                                                                                      |
 
 Passos da escrita, nesta ordem: valida forma (produto obrigatório, título de 2 a 200, moeda ISO, valor não negativo);
 toma `pg_advisory_xact_lock` por origem; lê a origem pela RLS, da organização pedida, `won` e com contato; confere que
 o destino é funil Green e que a etapa é aberta (sem etapa, a primeira aberta); procura a expansão aberta da mesma origem
 e produto (se existir, devolve ela com `created = false`; se o chamador não a enxerga, recusa `expansion_already_open`);
-cria a oportunidade (`source = expansao`, contato da origem, sem responsável, aberta), o contexto Green com o produto
-(regras da 0509: produto ativo e da organização) e o vínculo. Qualquer recusa desfaz tudo: não sobra oportunidade sem
-vínculo nem vínculo sem produto.
+cria a oportunidade (`source = expansao`, contato da origem, aberta, com quem cria como responsável quando é atendente
+ativo da organização), o contexto Green com o produto (regras da 0509: produto ativo e da organização) e o vínculo.
+Qualquer recusa desfaz tudo: não sobra oportunidade sem vínculo nem vínculo sem produto.
 
 `retomado_de_lead_id` (nova tentativa depois de perda) e `source_metadata.clonado_de` (troca de funil) não são usados:
 a expansão grava `retomado_de_lead_id = null`, `external_id = null` e `source_metadata = {}` (provado em EX1).
 
 ## 3. Regras de negócio aplicadas
 
-| #    | Regra                                                                                                                                                                          | Fonte                                                                             |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
-| D-01 | A oportunidade de origem fica intacta: nenhum UPDATE, nenhuma atividade, nenhum evento. Continua `won`, no mesmo funil, com `closed_at` e histórico                            | D-15 (GREEN-CRM-01)                                                               |
-| D-02 | Origem elegível: `won` e com contato, visível ao operador. O funil da origem não é restrito                                                                                    | D-15; "contato já convertido" (glossário)                                         |
-| D-03 | A expansão reaproveita o contato da origem. Nunca cria contato e o corpo do pedido não aceita contato                                                                          | escopo item 4                                                                     |
-| D-04 | Destino: funil Green (com binding) e etapa aberta (não ganho, não perda, não arquivada). Sem etapa, a primeira aberta. O funil de destino pode ser o mesmo da origem           | glossário (expansão em funil Green com produto); regras Green da 0509             |
-| D-05 | Produto obrigatório, ativo e da organização. A tela sugere o produto da origem (se ativo); pode ser outro                                                                      | D-17 (produto principal obrigatório na oportunidade Green); 16.7 ("pode diferir") |
-| D-06 | Idempotência: uma expansão ABERTA por (origem, produto). Repetir devolve a existente. Encerrada a expansão, outra com o mesmo produto é legítima. Produto diferente abre outra | 16.8 (requisito de idempotência); resolve a DP-12                                 |
-| D-07 | A expansão nasce sem responsável, como a criação manual de negócio (`NewLeadDialog`); título e valor vêm do formulário; etiquetas e campos personalizados não são copiados     | comportamento existente da criação manual                                         |
-| D-08 | `metadata` do vínculo: `reason = expansion`, `created_via = manual`, `product_id`                                                                                              | 16.8 (vocabulário de `reason` e `created_via`)                                    |
-| D-09 | A régua de campos obrigatórios por etapa (issue #1536) vale para a expansão, como vale para a retomada                                                                         | comportamento existente                                                           |
+| #    | Regra                                                                                                                                                                                                              | Fonte                                                                             |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| D-01 | A oportunidade de origem fica intacta: nenhum UPDATE, nenhuma atividade, nenhum evento. Continua `won`, no mesmo funil, com `closed_at` e histórico                                                                | D-15 (GREEN-CRM-01)                                                               |
+| D-02 | Origem elegível: `won` e com contato, visível ao operador. O funil da origem não é restrito                                                                                                                        | D-15; "contato já convertido" (glossário)                                         |
+| D-03 | A expansão reaproveita o contato da origem. Nunca cria contato e o corpo do pedido não aceita contato                                                                                                              | escopo item 4                                                                     |
+| D-04 | Destino: funil Green (com binding) e etapa aberta (não ganho, não perda, não arquivada). Sem etapa, a primeira aberta. O funil de destino pode ser o mesmo da origem                                               | glossário (expansão em funil Green com produto); regras Green da 0509             |
+| D-05 | Produto obrigatório, ativo e da organização. A tela sugere o produto da origem (se ativo); pode ser outro                                                                                                          | D-17 (produto principal obrigatório na oportunidade Green); 16.7 ("pode diferir") |
+| D-06 | Idempotência: uma expansão ABERTA por (origem, produto). Repetir devolve a existente. Encerrada a expansão, outra com o mesmo produto é legítima. Produto diferente abre outra                                     | 16.8 (requisito de idempotência); resolve a DP-12                                 |
+| D-07 | A expansão nasce com quem a cria como responsável (`owner_kind = user`, `assigned_at`), decidido no banco e nunca pelo corpo; título e valor vêm do formulário; etiquetas e campos personalizados não são copiados | decisão do dono do produto (2026-10-12); posse da 0070 e régua da 0403            |
+| D-08 | `metadata` do vínculo: `reason = expansion`, `created_via = manual`, `product_id`                                                                                                                                  | 16.8 (vocabulário de `reason` e `created_via`)                                    |
+| D-09 | A régua de campos obrigatórios por etapa (issue #1536) vale para a expansão, como vale para a retomada                                                                                                             | comportamento existente                                                           |
+| D-10 | O vínculo `commercial_origin` não é apagado por nenhum papel: só sai junto com a expansão ou com a organização (cascata). Os outros vínculos não mudam                                                             | decisão do dono do produto (2026-10-12)                                           |
 
 **DP-12 (chave de idempotência da expansão) resolvida aqui:** verificação pelo vínculo + produto + status aberto, sob
 lock transacional por origem, na mesma transação da criação. A candidata `external_id = <A.id>:<product.code>` com
@@ -79,7 +80,9 @@ GREEN-CRM-01 não foi editada; a linha da DP-12 lá continua como registro hist�
 Três camadas, cada uma com a sua prova:
 
 1. **Banco (a garantia):** lock por origem + checagem dentro da transação. Cinco chamadas simultâneas criam uma
-   expansão (ID2); repetir devolve a mesma, sem escrita nem evento (ID1).
+   expansão (ID2); repetir devolve a mesma, sem escrita nem evento (ID1). Com responsável, chamadas simultâneas de
+   dois agentes criam uma só, do vencedor; o outro agente, que não a enxerga, recebe `expansion_already_open` (OW4).
+   O vínculo não pode ser apagado para burlar a checagem (DL3).
 2. **Servidor:** atalho idempotente antes de validar etapa e campos (`fn_crm_open_expansion_of`) e, se uma corrida
    for perdida entre o atalho e o lock, a RPC devolve a existente (`created = false`), sem `lead.created` nem
    auditoria.
@@ -95,12 +98,17 @@ A resposta do POST traz só ids e estado da oportunidade (`LeadDaExpansao`), por
 | ----------------------------------- | ------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
 | ver a relação (`GET`)               | `viewer`+ da organização, só o que a RLS mostra                     | sessão do operador; oportunidade relacionada invisível aparece como `visible = false`, sem título                 |
 | criar expansão (`POST`)             | `agent`+ (`requireRole`), fora de sessão de suporte somente leitura | rota + RPC invoker: a RLS de `crm_leads`/`green_lead_context`/`crm_lead_links` decide; viewer leva `42501` -> 403 |
+| ser responsável da expansão         | quem cria, se atendente ativo (não viewer) da organização           | RPC (`auth.uid()` + régua da 0403); suporte da plataforma cria sem virar responsável; `service_role` não cria     |
 | origem de outra organização         | ninguém                                                             | organização da sessão no filtro da rota e no parâmetro da RPC; mesma recusa de inexistente (404)                  |
 | vínculo `commercial_origin` à mão   | `agent`+, alvo `won`, mesma organização                             | guarda da 0510 para todo papel, inclusive `service_role`                                                          |
 | alterar vínculo `commercial_origin` | ninguém                                                             | guarda da 0510 (imutável)                                                                                         |
+| apagar vínculo `commercial_origin`  | ninguém (só a cascata da expansão ou da organização)                | guarda da 0510 para todo papel, inclusive `service_role` e o dono do banco; outra organização nem alcança (RLS)   |
 
-A organização vem sempre da sessão; o schema é `.strict()` e recusa `organization_id`, `contact_id` e `status` no
-corpo.
+A organização vem sempre da sessão; o schema é `.strict()` e recusa `organization_id`, `contact_id`, `status`,
+`owner_user_id` e `owner_agent_id` no corpo.
+
+Visibilidade `own` (`organizations.settings.visibility_mode`): o agente só enxerga a origem de que é responsável e, com
+a expansão nascendo dele, cria e enxerga a nova (OW3). Antes da correção ele via o botão e levava 403.
 
 ## 6. Eventos, auditoria e linha do tempo
 
@@ -138,11 +146,11 @@ Nenhuma tela nova, nenhuma porta de navegação nova: é uma ação contextual d
 
 ## 9. Testes
 
-| Camada | Arquivo                                                           | O que prova                                                                                                                                                                                                                          |
-| ------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Banco  | `tests/invariants/green-expansion-commercial-origin.test.ts` (28) | EX (nova, mesmo contato, produto, vínculo, campos recusados não usados), OR (origem byte a byte intacta), ID (repetição, 5 simultâneas, produto diferente, expansão encerrada, invisível), EL, TN (incl. `service_role`), PM, EV, SG |
-| API    | `tests/unit/green-expansao-api.test.ts` (33)                      | papel, suporte, `.strict()`, organização da sessão, elegibilidade, idempotência (existente, invisível, corrida, `Idempotency-Key` pelo helper real, recibo sem título), cada recusa nomeada, rastro e auditoria, GET                 |
-| UI     | `tests/unit/green-expansao-ui.test.tsx` (12)                      | relação (origem, expansões, sem acesso, seção ausente), formulário (padrões, funil troca etapa enviada), envio só para `/expansion`, mesma chave no reenvio e outra ao reabrir, "já existia"                                         |
+| Camada | Arquivo                                                           | O que prova                                                                                                                                                                                                                                                                                   |
+| ------ | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Banco  | `tests/invariants/green-expansion-commercial-origin.test.ts` (41) | EX (nova, mesmo contato, produto, vínculo, responsável, campos recusados não usados), OR (origem byte a byte intacta), ID (repetição, 5 simultâneas, produto diferente, expansão encerrada, invisível), EL, TN (incl. `service_role`), PM, DL (exclusão do vínculo), OW (responsável), EV, SG |
+| API    | `tests/unit/green-expansao-api.test.ts` (33)                      | papel, suporte, `.strict()` (inclusive responsável no corpo), organização da sessão, elegibilidade, idempotência (existente, invisível, corrida, `Idempotency-Key` pelo helper real, recibo sem título), cada recusa nomeada, rastro e auditoria, GET                                         |
+| UI     | `tests/unit/green-expansao-ui.test.tsx` (12)                      | relação (origem, expansões, sem acesso, seção ausente), formulário (padrões, funil troca etapa enviada), envio só para `/expansion`, mesma chave no reenvio e outra ao reabrir, "já existia"                                                                                                  |
 
 Mutações dirigidas (script fora do repositório, cada arquivo restaurado depois): 9 de 9 no servidor e 6 de 6 na UI
 reprovaram as suítes. Duas mutações da UI sobreviveram na primeira rodada e mostraram testes fracos (checagem antes
@@ -151,20 +159,28 @@ reforçados e passaram a reprovar.
 
 Rodar a suíte de banco: `CONFERENCIA_KIT_RELEASE=v1.69.0 pnpm test:db tests/invariants/green-expansion-commercial-origin.test.ts`.
 
+Execução: os 28 casos originais passaram em 2026-10-09 (`3f2fdd30d`). Os casos de 2026-10-12 (DL1 a DL7, OW1 a OW6 e o
+EX1 atualizado) estão escritos, mas **não foram executados**: o Docker estava parado e ligá-lo poderia religar os
+containers do ambiente de demonstração (CG-OPS-01). A suíte de banco é o primeiro passo antes do PR (seção 10).
+
 ## 10. Limitações reais
 
 - **Sem prova pela tela (DoD 12):** a UI foi provada por testes de componente, não por Playwright num ambiente fresco
   estilo VPS. Fica para a validação seguinte, como na CG-PRD-01.
+- **Suíte de banco das correções não executada:** DL1 a DL7, OW1 a OW6 e o EX1 atualizado foram escritos e
+  revisados, mas não rodaram (Docker parado; ver seção 9). Rodar antes do PR.
 - **Expansão invisível:** o agente em modo de visibilidade restrito que tenta abrir uma expansão já aberta por outro
-  atendente recebe 409 sem ver qual é. A lista de expansões do dossiê também mostra só as que ele enxerga.
+  atendente recebe 409 sem ver qual é. A lista de expansões do dossiê também mostra só as que ele enxerga. Com a
+  expansão nascendo do criador, isso passa a valer também no modo padrão (`own_and_unassigned`) entre dois agentes.
 - **Destino só Green:** funil comum não recebe expansão nesta versão (o produto só existe em funil Green). Ampliar
   não exige migration de dados, mas exige decidir a chave de idempotência sem produto.
-- **Sem responsável na expansão:** num funil de organização em modo de visibilidade `own`, o agente não consegue
-  criar oportunidade sem dono (regra existente da RLS, igual à criação manual); manager+ consegue.
-- **Vínculo apagável por membro:** a policy de DELETE de `crm_lead_links` (0042) continua permitindo a membro da
-  organização apagar vínculo; o guarda novo só impede UPDATE. A auditoria `lead.expansion_created` preserva o fato.
-  Se a origem for apagada, o vínculo fica com alvo pendente (como todo vínculo polimórfico); a leitura mostra a origem
-  como `visible = false`.
+- **Origem apagada:** se a oportunidade de origem for apagada, o vínculo fica com alvo pendente (como todo vínculo
+  polimórfico, `target_id` sem FK); a leitura mostra a origem como `visible = false`. Apagar a expansão leva o vínculo
+  junto, e uma nova expansão volta a ser possível (DL4).
+- **`service_role` não cria expansão:** sem sessão humana, `fn_green_pipeline_ids` não reconhece a organização e a
+  RPC recusa (falha fechada, OW6). Expansão automática ou por importação (CG-EXP) vai precisar de um caminho próprio.
+- **Corrida com reabertura da origem:** se a origem deixar de ser `won` entre a checagem e o vínculo, a guarda recusa
+  com `commercial_origin_origin_not_won`, que a API ainda não traduz (vira 500, sem meia escrita).
 - **Sem MCP, sem automação, sem importação por período:** fora do escopo (16.7 e 16.8 continuam como próximos itens).
 - **`.changes/`:** nenhum fragmento de release, como nas entregas Green anteriores (o fork não corta release do
   upstream).
@@ -172,9 +188,30 @@ Rodar a suíte de banco: `CONFERENCIA_KIT_RELEASE=v1.69.0 pnpm test:db tests/inv
 
 ## 11. Pendências e decisões para o dono do produto
 
-| #   | Pendência                                                                                                                                                                                                                                                                                                          |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 1   | **Área do ID.** A árvore da seção 4.3 da nomenclatura manda pós-ganho para `CG-EXP` (regra 8). O ID foi o ditado (`CG-COM-01`): a entrega é criação de oportunidade a partir do dossiê em qualquer funil Green, que a tabela de áreas põe em `CG-COM`. Confirmar ou trocar antes do PR (o número é livre nas duas) |
-| 2   | Confirmar D-04/D-05: destino restrito a funil Green e produto obrigatório. Ampliar para funil comum exige decidir a chave de idempotência sem produto                                                                                                                                                              |
-| 3   | Registrar a resolução da DP-12 na GREEN-CRM-01 (seção 12) ou só neste documento                                                                                                                                                                                                                                    |
-| 4   | Responsável da expansão: hoje nasce sem dono (D-07). Alternativas: quem cria, ou o dono da origem                                                                                                                                                                                                                  |
+| #   | Pendência                                                                                                                                                           |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1   | **RESOLVIDA (2026-10-12).** Área do ID: o dono do produto confirmou `CG-COM-01` como identificador oficial (a árvore da seção 4.3 da nomenclatura sugeria `CG-EXP`) |
+| 2   | Confirmar D-04/D-05: destino restrito a funil Green e produto obrigatório. Ampliar para funil comum exige decidir a chave de idempotência sem produto               |
+| 3   | Registrar a resolução da DP-12 na GREEN-CRM-01 (seção 12) ou só neste documento                                                                                     |
+| 4   | **RESOLVIDA (2026-10-12).** Responsável da expansão: quem cria (D-07), respeitando as permissões existentes                                                         |
+
+## 12. Correções de 2026-10-12
+
+Decisões aprovadas pelo dono do produto: o ID oficial segue `CG-COM-01`; os vínculos `commercial_origin` não podem ser
+apagados indevidamente; a expansão nasce atribuída a quem a cria.
+
+1. **Integridade do vínculo** (commit `6870aa52f`): a policy de DELETE de `crm_lead_links` (0042) deixa qualquer membro,
+   até viewer, apagar vínculo, e apagar o `commercial_origin` quebrava a relação e a idempotência. A guarda
+   `green.fn_commercial_origin_link_guard` passou a valer também no DELETE, para todo papel: o vínculo só sai na cascata
+   da expansão ou da organização (a guarda vê que a linha-pai já saiu, o mesmo recurso que a fronteira Green usa para a
+   organização apagada). A 0042 ficou intacta, para não mudar a agenda nem ampliar permissão de outro vínculo.
+2. **Responsável** (mesmo commit): a RPC grava `owner_user_id = auth.uid()`, `owner_kind = 'user'` e `assigned_at`
+   quando quem cria é atendente ativo da organização (a régua do gatilho da 0403), sem parâmetro novo. Suporte da
+   plataforma cria sem virar responsável, porque não é membro e a 0403 o recusaria como dono.
+3. **Na 0510, e não numa 0511:** a 0510 nunca saiu desta branch (sem push, e o ambiente de demonstração roda a `main`
+   sem ela), então nenhum banco a aplicou. Uma 0511 só para remendar uma migration que ninguém aplicou deixaria duas
+   definições da mesma guarda na cadeia e consumiria o próximo número livre. O espelho do `baseline.sql` e a linha do
+   `MANIFEST.md` foram atualizados junto, e as cercas de baseline e cadeia passaram.
+4. **Integração da `main`** (merge `93af21a22`, sem rebase): trouxe a CG-SEC-01 (`f25c8276c`). O único conflito foi o
+   previsto, na tabela do registro canônico, resolvido com as duas linhas; próximos livres `CG-COM-02` e `CG-SEC-02`,
+   migration `0511`.
