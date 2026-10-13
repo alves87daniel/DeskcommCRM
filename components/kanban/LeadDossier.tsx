@@ -10,6 +10,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
 import { useLeadTimeline } from "@/hooks/leads/useLeadTimeline";
 import type { Lead } from "@/lib/types/leads";
 import { ContextoGreenDoNegocio } from "@/components/green/ContextoGreenDoNegocio";
+import { ExpansaoDoNegocio } from "@/components/green/ExpansaoDoNegocio";
 import { ContatoDoNegocio } from "./ContatoDoNegocio";
 import { ConversaNoDossie } from "./ConversaNoDossie";
 import { LeadFieldsForm } from "./LeadFieldsForm";
@@ -74,6 +75,8 @@ export function LeadDossier({
     user.is_platform_admin || (activeOrg && ROLE_RANK[activeOrg.role] >= ROLE_RANK.manager) || false;
   // GREEN-CRM-02 - o produto principal é gravado por agent+ (a RLS do banco é quem decide).
   const podeEditarProduto = (activeOrg && ROLE_RANK[activeOrg.role] >= ROLE_RANK.agent) || false;
+  // CG-COM-01 - abrir uma expansão é criar oportunidade: a mesma régua (agent+), revalidada no servidor.
+  const podeCriarExpansao = podeEditarProduto;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -155,6 +158,15 @@ export function LeadDossier({
           leadId={lead.id}
           podeEditar={podeEditarProduto}
           podeCadastrar={podeCriarProposta}
+        />
+
+        {/* CG-COM-01 - expansão pós-ganho: de onde este negócio nasceu, o que nasceu dele e, se
+            ele está ganho, a nova oportunidade para o mesmo contato (sem mexer neste negócio).
+            Some sozinha (null) quando não há relação nem como criar. */}
+        <ExpansaoDoNegocio
+          leadId={lead.id}
+          tituloDoNegocio={lead.title}
+          podeCriar={podeCriarExpansao}
         />
 
         {/* ② timeline */}

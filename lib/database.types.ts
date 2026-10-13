@@ -10775,6 +10775,25 @@ export type Database = {
         Returns: string
       }
       fn_green_lead_eligible: { Args: { p_lead: string }; Returns: boolean }
+      // CG-COM-01 (0510): expansão pós-ganho
+      fn_crm_create_expansion_opportunity: {
+        Args: {
+          p_organization_id: string
+          p_origin_lead_id: string
+          p_pipeline_id: string
+          p_stage_id: string | null
+          p_product_id: string
+          p_title: string
+          p_value_cents: number | null
+          p_currency: string
+        }
+        Returns: Json
+      }
+      fn_crm_open_expansion_of: {
+        Args: { p_origin_lead_id: string; p_product_id: string }
+        Returns: { lead_id: string | null; visible: boolean }[]
+      }
+      fn_green_pipeline_ids: { Args: { p_org: string }; Returns: string[] }
       fn_user_org_ids: { Args: never; Returns: string[] }
       fn_user_role_in: { Args: { p_org: string }; Returns: number }
       fn_user_role_in_org: { Args: { p_org: string }; Returns: string }

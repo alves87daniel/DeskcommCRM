@@ -76,6 +76,14 @@ export GIT_CEILING_DIRECTORIES="$TMP"
 export GIT_AUTHOR_NAME="Teste" GIT_AUTHOR_EMAIL="teste@exemplo.invalid"
 export GIT_COMMITTER_NAME="Teste" GIT_COMMITTER_EMAIL="teste@exemplo.invalid"
 
+# ── isolamento do CI: o GITHUB_REF do job não é o de nenhum fixture ───────────────────
+# O gate tira o PRÓPRIO PR da conta pelo número do GITHUB_REF (refs/pull/N/merge), e os
+# casos abaixo usam PRs fictícios (#5, #7, #8, #9, #11, #101-#131). Herdado do job, o ref do
+# PR real que roda a suíte vira o "seu" do fixture com o mesmo número (o caso 34 conta o
+# estrago medido). É a ÚNICA variável do GitHub que o gate lê; o caso que precisar dela
+# exporta a própria, no subshell dele, e o caso 34 confere esta trava.
+unset GITHUB_REF
+
 # ── gh FALSO, para TODOS os casos: sem rede e sem depender do gh de quem roda ──────────
 # Ele HONRA o contrato da chamada real — se ignorasse os argumentos, trocar `--state open`
 # por `--state all` ou esquecer o `--limit` passaria verde (achado da revisão de 19/09):
@@ -626,6 +634,27 @@ assert_exit "$code" 0 "a falha transiente de checkout é absorvida"
 assert_exit "$(wc -l < "$n33" | tr -d ' ')" 2 "e absorvida REPETINDO o clone, não aceitando o da 1ª tentativa"
 if [ -n "$(ls "$d/supabase/migrations/" 2>/dev/null)" ]; then ok "a árvore chega inteira"
 else falha "a árvore chega inteira" "supabase/migrations vazio: seguiu com o clone pela metade"; fi
+
+echo "34. o GITHUB_REF do job não escolhe o 'próprio PR' dos fixtures: só o caso que o define"
+# O gate tira o PRÓPRIO PR da conta pelo número do GITHUB_REF (refs/pull/N/merge). Herdado do
+# job, o ref do PR REAL que roda a suíte vira o "seu" do fixture com o mesmo número: medido no
+# PR #7 (run 38333917360), 9 de 106 casos vermelhos; o ref do #8 derruba 1, o do #11 outro, e o
+# do #5 passa verde sem provar a regra do nome idêntico (o 28a). A trava é o unset do
+# cabeçalho; aqui se confere o EFEITO para toda GITHUB_* que o gate lê. A lista sai do próprio
+# gate: variável nova lida lá sem trava aqui reprova no CI, que sempre exporta GITHUB_REF.
+lidas="$(grep -vE '^[[:space:]]*#' "$GATE_ORIGEM" | grep -oE 'GITHUB_[A-Z_]+' | sort -u)"
+assert_contains "$lidas" "GITHUB_REF" "a sonda enxerga o GITHUB_REF que o gate lê (lista vazia provaria vacuidade)"
+herdadas=""
+for v in $lidas; do [ -n "${!v+x}" ] && herdadas="$herdadas $v"; done
+if [ -z "$herdadas" ]; then ok "nenhuma GITHUB_* lida pelo gate chega herdada aos casos"
+else falha "nenhuma GITHUB_* lida pelo gate chega herdada aos casos" "herdadas do ambiente:$herdadas"; fi
+# A trava não apaga o cenário que DEFINE o ref: o caso que precisar dele exporta o próprio.
+c="$TMP/c34"; clonar "$c"; git -C "$c" switch -q -c fix/pr
+migrar "$c" "20260918100000_0276_meu.sql"; commit "$c" "PR com o 0276 que o #7 também tem"
+saida="$(export GITHUB_REF="refs/pull/7/merge"; gate_prs "7" "$c")"; code=$?
+assert_exit "$code" 0 "com o ref do próprio PR definido pelo caso, o gate mede"
+assert_contains "$saida" "O seu fica fora: #7" "o ref DEFINIDO pelo caso tira o próprio PR da conta"
+assert_not_contains "$saida" "PR aberto #7" "e o próprio PR não vira 'quem tem' o número"
 
 echo
 if [ "$falhas" = 0 ]; then echo "colisao-de-migration: $casos casos, todos verdes"; exit 0
