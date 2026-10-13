@@ -74,6 +74,13 @@ const nextConfig: NextConfig = {
   },
   reactStrictMode: true,
   poweredByHeader: false,
+  // CG-SEC-01: no `next dev`, o Next 16.3 escreve no terminal cada chamada de
+  // server function COM OS ARGUMENTOS — e a action de login recebe a senha como
+  // argumento. Onde a saída do `next dev` vai para arquivo, a credencial vira
+  // texto puro em disco. Só development registra (o logger exige
+  // NODE_ENV=development): `next build`, `next start` e a imagem não mudam.
+  // Vigiado por tests/unit/next-dev-nao-registra-argumentos-de-server-functions.test.ts.
+  logging: { serverFunctions: false },
   // typedRoutes moved out of experimental in Next 15.5+
   typedRoutes: true,
   experimental: {
