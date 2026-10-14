@@ -12,6 +12,7 @@ import { ICONE_DESENHADO, iconeDaAba } from "@/lib/branding/icone";
 import { marcaDaSaida } from "@/lib/branding/saida";
 import { baseDoStorage } from "@/lib/branding/logo";
 import { passosVisiveis } from "@/lib/onboarding/passos";
+import { configuraPeloAssistente } from "@/lib/onboarding/quem-configura";
 import { env } from "@/lib/env";
 import { IdiomaProvider } from "@/lib/i18n/IdiomaProvider";
 
@@ -24,6 +25,9 @@ export default async function OnboardingLayout({ children }: { children: React.R
   // `/login` fechava o círculo: quem entrasse de novo voltaria para cá. A saída
   // é a tela que CRIA a organização que falta.
   if (!activeOrg) redirect("/get-started");
+  // O assistente é do administrador (CG-IAM-01): as ações dele recusam os
+  // demais papéis, então quem não configura a organização volta ao CRM.
+  if (!configuraPeloAssistente(activeOrg.role)) redirect("/app");
 
   const { state, onboardedAt } = await loadOnboardingState(activeOrg.orgId);
   if (onboardedAt) redirect("/app/inbox");

@@ -13,7 +13,11 @@ import { requireOnboardingCtx, OnboardingError } from "./_shared";
 
 export type FinishOnboardingResult =
   | { ok: true; alreadyOnboarded: boolean }
-  | { ok: false; error: "auth_required" | "no_active_org" | "db_error"; details?: unknown };
+  | {
+      ok: false;
+      error: "auth_required" | "no_active_org" | "forbidden" | "mfa_required" | "db_error";
+      details?: unknown;
+    };
 
 export async function finishOnboarding(): Promise<FinishOnboardingResult> {
   let ctx;

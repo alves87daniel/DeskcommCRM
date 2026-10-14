@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { dadosDoPasso } from "@/app/actions/onboarding/montarQuadro";
+import { configuraPeloAssistente } from "@/lib/onboarding/quem-configura";
 import { QuadroClient } from "./_client";
 import { traduzir } from "@/lib/i18n/dicionario";
 
@@ -23,9 +24,13 @@ export default async function FunilPage() {
   const user = await requireAuth();
   const activeOrg = await resolveActiveOrg(user);
   if (!activeOrg) redirect("/login");
+  // O layout já devolve ao CRM quem não configura a organização, mas layout e
+  // página renderizam em paralelo: sem esta linha, `dadosDoPasso` recusaria
+  // primeiro e a pessoa veria um erro no lugar do redirect.
+  if (!configuraPeloAssistente(activeOrg.role)) redirect("/app");
   const idioma = user.idioma;
 
-  const { atual, sugestao } = await dadosDoPasso(activeOrg.orgId, activeOrg.name);
+  const { atual, sugestao } = await dadosDoPasso();
 
   return (
     <div className="space-y-6">

@@ -32,6 +32,13 @@ import { test, expect, type Page } from "./helpers/test";
  * com uma organização legitimamente **não configurada** — e é exatamente o
  * fixture de que este caso precisa. Está escrito lá, no `insert`, para ninguém
  * "consertar" a ausência do `onboarded_at` achando que é descuido.
+ *
+ * ─── Desde a CG-IAM-01 ───────────────────────────────────────────────────
+ *
+ * O assistente passou a ser só do administrador da organização, e o gate de
+ * `/app` só manda o administrador para lá. O usuário do caso é `manager` na
+ * organização não configurada, então o seletor nem sai da tela: a volta é pelo
+ * próprio seletor. A propriedade — trocar de organização tem volta — é a mesma.
  */
 const RAIZ = path.resolve(__dirname, "../..");
 
@@ -71,7 +78,7 @@ async function entrar(page: Page, creds: Creds) {
 
 test.describe.configure({ timeout: 150_000 });
 
-test("trocar para uma organização não configurada leva ao wizard — e dá para voltar", async ({ page }) => {
+test("trocar para uma organização não configurada mantém o colaborador no CRM — e dá para voltar", async ({ page }) => {
   const creds = lerCreds();
   const semOnboarding = creds.funis!.segunda_org_id;
   const orgA = creds.duas_orgs!.org_a_id;
@@ -92,52 +99,29 @@ test("trocar para uma organização não configurada leva ao wizard — e dá pa
   await seletor.click();
   await page.getByTestId(`tenant-switcher-item-${semOnboarding}`).click();
 
-  // O wizard é o destino CORRETO — a organização não está configurada mesmo. O
-  // defeito nunca foi vir para cá; foi não ter como sair.
-  //
-  // ⚠️ A FALHA AQUI TEM DE DIZER A CAUSA. Sem o `catch`, um fixture com
-  // `onboarded_at` carimbado por outro seed reprovava com `page.waitForURL:
-  // Timeout 60000ms exceeded` — verdadeiro e inútil, porque a causa (a
-  // organização do fixture deixou de estar não-configurada) não aparece em
-  // lugar nenhum da mensagem. Medido: aconteceu no ambiente de outro terminal
-  // antes de `seed-e2e-funis` passar a garantir o próprio fixture.
-  try {
-    await page.waitForURL(/\/onboarding/, { timeout: 60_000 });
-  } catch (erro) {
-    throw new Error(
-      `troquei para a organização ${semOnboarding} e o produto NÃO mandou para o wizard ` +
-        `(fiquei em ${page.url()}). O caso precisa de uma organização SEM \`onboarded_at\`, e ` +
-        "quem garante isso é `scripts/seed-e2e-funis.ts` — se aquele seed parou de zerar o " +
-        `campo na org que reencontra, é aqui que aparece.\n\n${(erro as Error).message}`,
-    );
-  }
+  // CG-IAM-01: o assistente é do ADMINISTRADOR. Quem está aqui é `manager`
+  // na organização sem `onboarded_at` (o vínculo do `seed-e2e-funis`), então o
+  // destino correto é o próprio CRM — e o seletor continua na tela. Antes desta
+  // entrega o gate mandava qualquer membro para o wizard, onde as ações agora
+  // recusam quem não administra: ele ficaria preso numa tela sem botão que
+  // funcione. A saída do wizard (`sair-do-onboarding`) segue valendo para o
+  // administrador e tem cerca própria em `tests/unit/onboarding-tem-saida.test.tsx`.
+  await expect(seletor).toBeEnabled({ timeout: 60_000 });
   await expect(
-    page.getByTestId("tenant-switcher"),
-    "o seletor de organização sobreviveu ao redirect — se ele está aqui, este caso perdeu o objeto",
-  ).toHaveCount(0);
+    seletor,
+    `troquei para a organização ${semOnboarding} e o seletor seguiu em "${nomeDaOrgA}" — a troca não aconteceu`,
+  ).not.toHaveText(nomeDaOrgA, { timeout: 20_000 });
+  expect(
+    page.url(),
+    "o colaborador foi mandado para o assistente de uma organização que só o administrador configura",
+  ).not.toMatch(/\/onboarding/);
 
-  // ── A SAÍDA ────────────────────────────────────────────────────────────
-  const saida = page.getByTestId("sair-do-onboarding");
+  // ── e a volta CHEGA: a organização de antes, pelo mesmo seletor ────────
+  await seletor.click();
+  await page.getByTestId(`tenant-switcher-item-${orgA}`).click();
+  await expect(seletor).toBeEnabled({ timeout: 60_000 });
   await expect(
-    saida,
-    "o wizard não oferece caminho de volta — quem trocou de organização por engano fica preso aqui",
-  ).toBeVisible({ timeout: 15_000 });
-
-  await saida.click();
-  // Com mais de uma organização de destino a saída abre um menu; com uma só, o
-  // clique já basta. Cobrimos o caminho que este ambiente produz.
-  const item = page.getByTestId(`sair-do-onboarding-item-${orgA}`);
-  if ((await item.count()) > 0) await item.click();
-
-  // ── e a volta CHEGA: o produto de novo, na organização de antes ────────
-  await page.waitForURL(/\/app(\/|$)/, { timeout: 60_000 });
-  const seletorDeVolta = page.getByTestId("tenant-switcher");
-  await expect(seletorDeVolta, "voltei para o produto e o seletor não reapareceu").toBeVisible({
-    timeout: 20_000,
-  });
-  await expect(seletorDeVolta).toBeEnabled({ timeout: 60_000 });
-  await expect(
-    seletorDeVolta,
+    seletor,
     `a volta não trouxe para "${nomeDaOrgA}" — trocou de lugar, não desfez a troca`,
   ).toContainText(nomeDaOrgA, { timeout: 20_000 });
 

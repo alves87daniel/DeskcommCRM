@@ -30,7 +30,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { guardarCredencial } from "@/lib/ai/credenciais/guardar";
 import { definirPadraoDeIaDaOrganizacao } from "@/lib/ai/pontos/padrao-da-organizacao";
 import { IDS_DE_PROVEDOR } from "@/lib/ai/pontos/provedores";
-import { requireOnboardingCtx, OnboardingError } from "./_shared";
+import { requireOnboardingCtx, mensagemDaRecusa, OnboardingError } from "./_shared";
 
 export type ResultadoDaChave =
   | {
@@ -59,14 +59,11 @@ export async function salvarChaveDaIa(formData: FormData): Promise<ResultadoDaCh
   try {
     ctx = await requireOnboardingCtx();
   } catch (err) {
-    if (err instanceof OnboardingError) return { ok: false, erro: "Sua sessão expirou. Entre de novo." };
+    // Guardar chave de provedor é ação de administrador, igual à rota REST. A
+    // checagem do papel mora na guarda comum do assistente (CG-IAM-01); aqui só
+    // se escolhe a frase.
+    if (err instanceof OnboardingError) return { ok: false, erro: mensagemDaRecusa(err) };
     throw err;
-  }
-
-  // Guardar chave de provedor é ação de administrador, igual à rota REST. Quem
-  // faz o onboarding é o dono, mas o papel é verificado e não presumido.
-  if (ctx.role !== "admin") {
-    return { ok: false, erro: "Só um administrador pode cadastrar a chave da inteligência artificial." };
   }
 
   const provider = String(formData.get("provider") ?? "");
