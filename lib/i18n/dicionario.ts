@@ -7280,6 +7280,9 @@ export const DICIONARIO: Traducoes = {
     es: "Esta instalación no envía correo. Las invitaciones están listas: copia el enlace de cada persona y mándalo por el medio que ya usas para hablar con ella:",
   },
   "Link copiado.": { es: "Enlace copiado." },
+  "Já faz(em) parte da equipe e não recebeu(ram) convite:": {
+    es: "Ya forma(n) parte del equipo y no recibió(eron) invitación:",
+  },
   "Não consegui copiar — selecione e copie o link manualmente.": {
     es: "No pude copiar. Selecciona y copia el enlace manualmente.",
   },

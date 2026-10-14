@@ -1,7 +1,7 @@
 import type { EmailDeliveryError } from "@/lib/email/roteador";
 import { requireSupportWrite } from "@/lib/impersonate/support";
 import { issueInvite } from "@/lib/auth/issue-invite";
-import { emitirConvite } from "@/lib/team/convites";
+import { emailsDeMembrosAtivos, emitirConvite } from "@/lib/team/convites";
 import { isServiceRoleConfigured } from "@/lib/audit";
 /**
  * POST /api/v1/team/invite — bulk-invite up to 20 emails.
@@ -71,22 +71,10 @@ export async function POST(req: NextRequest): Promise<Response> {
   const admin = isServiceRoleConfigured() ? createAdminClient() : null;
   const inviterName = authUser.full_name ?? authUser.email ?? "Um colega";
   // Emails com membership ATIVA na org — para pular o reconvite de quem já é membro.
-  // O schema `auth` NÃO é acessível via PostgREST (erro "Invalid schema: auth"), então
-  // resolvemos email↔usuário pela GoTrue admin API (getUserById) — mesmo padrão de
-  // app/api/v1/team/route.ts. N pequeno (poucos membros por org no perfil BPO).
-  const memberEmails = new Set<string>();
-  if (admin) {
-    const { data: members } = await admin
-      .from("user_organizations")
-      .select("user_id")
-      .eq("organization_id", activeOrg.orgId)
-      .is("revoked_at", null);
-    for (const m of members ?? []) {
-      const { data: u } = await admin.auth.admin.getUserById(m.user_id as string);
-      const memberEmail = u?.user?.email?.trim().toLowerCase();
-      if (memberEmail) memberEmails.add(memberEmail);
-    }
-  }
+  // A mesma régua do assistente (`emailsDeMembrosAtivos`, que explica o porquê).
+  const memberEmails = admin
+    ? await emailsDeMembrosAtivos(admin, activeOrg.orgId)
+    : new Set<string>();
 
   for (const inv of input.invitations) {
     const email = inv.email.trim().toLowerCase();

@@ -83,6 +83,12 @@ interface EmitirParams {
   inviterId: string;
   inviterName: string;
   requestId: string;
+  /**
+   * Por onde o convite saiu, quando não foi a tela de Equipe (`onboarding`,
+   * `plataforma`). Vai para o rastro `member.invited` como `source` — o que o
+   * assistente sempre gravou e não pode perder ao passar pela trilha canônica.
+   */
+  origem?: string;
 }
 
 export interface ResultadoEmissao {
@@ -138,6 +144,7 @@ export async function emitirConvite(
     requestId: params.requestId,
     inviteId,
     issuedAt,
+    origem: params.origem,
   });
 
   const nowIso = new Date().toISOString();
@@ -175,6 +182,85 @@ export async function emitirConvite(
     email_error: emitido.email_error,
     renovado: !!pendente,
   };
+}
+
+/**
+ * Emite um convite cujo `id` e instante de emissão JÁ FORAM DECIDIDOS por um
+ * recibo idempotente — o caso do titular em `POST /api/v1/admin/tenants`, cujo
+ * `invite_id`/`issued_at` vêm de `fn_create_tenant_with_owner` (CG-IAM-01).
+ *
+ * É a mesma trilha de `emitirConvite` (token assinado, e-mail, `member.invited`
+ * e LINHA em `team_invites`), com a idempotência do recibo: a linha nasce com
+ * o `id` dele, e o replay da mesma chave encontra a linha, re-assina o MESMO
+ * token (mesmos campos, mesmo link) e não envia de novo. Sem a linha, o convite
+ * de maior poder da instalação era o único irrevogável.
+ */
+export async function emitirConviteComIdFixo(
+  admin: SupabaseClient,
+  params: EmitirParams & { inviteId: string; issuedAt: number; dispatch: boolean },
+): Promise<ResultadoEmissao> {
+  const email = params.email.trim().toLowerCase();
+  const interfaceSettings = interfaceSettingsSchema.parse(
+    params.interfaceSettings ?? INTERFACE_COMPLETA,
+  );
+  const lerLinha = async () =>
+    (
+      await admin
+        .from("team_invites")
+        .select("*")
+        .eq("organization_id", params.organizationId)
+        .eq("id", params.inviteId)
+        .maybeSingle()
+    ).data as ConviteDeTime | null;
+
+  const existente = await lerLinha();
+  const emitido = await issueInvite({
+    email,
+    role: params.role,
+    interfaceSettings,
+    organizationId: params.organizationId,
+    orgName: params.orgName,
+    inviterId: params.inviterId,
+    inviterName: params.inviterName,
+    requestId: params.requestId,
+    inviteId: params.inviteId,
+    issuedAt: params.issuedAt,
+    // Replay não reenvia: quem já recebeu não recebe de novo pela mesma chave.
+    dispatch: params.dispatch && !existente,
+    origem: params.origem,
+  });
+  const resultado = (convite: ConviteDeTime): ResultadoEmissao => ({
+    convite,
+    accept_url: emitido.accept_url,
+    email_dispatched: emitido.email_dispatched,
+    email_error: emitido.email_error,
+    renovado: false,
+  });
+  if (existente) return resultado(existente);
+
+  const { data: row, error } = await admin
+    .from("team_invites")
+    .insert({
+      id: params.inviteId,
+      organization_id: params.organizationId,
+      email,
+      role: params.role,
+      interface_settings: interfaceSettings,
+      invited_by: params.inviterId,
+      inviter_name: params.inviterName,
+      email_dispatched: emitido.email_dispatched,
+      last_sent_at: new Date().toISOString(),
+      expires_at: emitido.expires_at,
+    })
+    .select("*")
+    .single();
+  if (error?.code === "23505") {
+    // Dois replays da mesma chave ao mesmo tempo: o outro gravou a linha.
+    const corrida = await lerLinha();
+    if (corrida) return resultado(corrida);
+  }
+  if (error) throw error;
+  return resultado(row as ConviteDeTime);
 }
 
 /**
@@ -235,4 +321,35 @@ export async function reenviarConvite(
     email_error: emitido.email_error,
     renovado: true,
   };
+}
+
+/**
+ * Os e-mails de quem já tem vínculo ATIVO na organização — a quem não se
+ * reconvida.
+ *
+ * Reconvidar membro ativo não muda o papel dele (`fn_accept_team_invite`
+ * devolve o vínculo existente sem tocar no `role`), mas mandaria um e-mail
+ * dizendo "você foi convidado como admin" a quem continua `viewer`. Os dois
+ * emissores (tela de Equipe e assistente) pulam com `already_member`.
+ *
+ * O schema `auth` não é alcançável pelo PostgREST ("Invalid schema: auth"),
+ * então o e-mail de cada vínculo vem da GoTrue admin API (`getUserById`) — N
+ * pequeno, poucos membros por organização.
+ */
+export async function emailsDeMembrosAtivos(
+  admin: SupabaseClient,
+  organizationId: string,
+): Promise<Set<string>> {
+  const emails = new Set<string>();
+  const { data: membros } = await admin
+    .from("user_organizations")
+    .select("user_id")
+    .eq("organization_id", organizationId)
+    .is("revoked_at", null);
+  for (const m of membros ?? []) {
+    const { data: u } = await admin.auth.admin.getUserById(m.user_id as string);
+    const email = u?.user?.email?.trim().toLowerCase();
+    if (email) emails.add(email);
+  }
+  return emails;
 }

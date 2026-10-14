@@ -1,6 +1,6 @@
 import { requireSupportWrite } from "@/lib/impersonate/support";
 import { createTenantSchema } from "@/lib/schemas/tenant-creation";
-import { issueInvite } from "@/lib/auth/issue-invite";
+import { emitirConviteComIdFixo } from "@/lib/team/convites";
 import { mfaEmDivida } from "@/lib/auth/server";
 import { type NextRequest } from "next/server";
 import { z } from "zod";
@@ -224,10 +224,14 @@ export async function POST(req: NextRequest) {
       },
     });
   }
-  const ownerInvitation =
+  // O convite do titular é LINHA em `team_invites`, com o `id` do recibo
+  // (CG-IAM-01): aparece na tela de Equipe, pode ser revogado, e o replay da
+  // mesma chave devolve o mesmo link sem reenviar. A estrutura da organização
+  // continua a que `fn_create_tenant_with_owner` cria; nada aqui a completa.
+  const emissao =
     request.owner_email === adminCtx.user.email?.trim().toLowerCase()
       ? null
-      : await issueInvite({
+      : await emitirConviteComIdFixo(admin, {
           email: request.owner_email,
           role: "admin",
           interfaceSettings: request.owner_interface_settings,
@@ -240,7 +244,16 @@ export async function POST(req: NextRequest) {
           inviteId: org.invite_id,
           issuedAt: org.issued_at,
           dispatch: org.created,
+          origem: "plataforma",
         });
+  const ownerInvitation = emissao && {
+    email: emissao.convite.email,
+    invite_id: emissao.convite.id,
+    expires_at: emissao.convite.expires_at,
+    email_dispatched: emissao.email_dispatched,
+    email_error: emissao.email_error,
+    accept_url: emissao.accept_url,
+  };
   return ok(
     {
       id: org.id,

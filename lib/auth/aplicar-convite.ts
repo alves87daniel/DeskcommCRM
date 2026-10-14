@@ -53,15 +53,53 @@ export async function aplicarConvite(params: {
   const { userId, payload, requestId } = params;
 
   const admin = createAdminClient();
+  const recusa = { ok: false, motivo: "invalid_or_expired" } as const;
+
+  const lerLinha = async () =>
+    (
+      await admin
+        .from("team_invites")
+        .select("revoked_at, accepted_at, accepted_by")
+        .eq("id", payload.invite_id)
+        .eq("organization_id", payload.organization_id)
+        .maybeSingle()
+    ).data as {
+      revoked_at: string | null;
+      accepted_at: string | null;
+      accepted_by: string | null;
+    } | null;
+  /** Revogado, ou aceito por outra pessoa: o convite não serve a quem chegou agora. */
+  const naoServe = (l: NonNullable<Awaited<ReturnType<typeof lerLinha>>>) =>
+    Boolean(l.revoked_at) || (Boolean(l.accepted_at) && l.accepted_by !== userId);
 
   // Convite REVOGADO na tela de Equipe. Sem linha, segue — ver o cabeçalho.
-  const { data: linhaDoConvite } = await admin
-    .from("team_invites")
-    .select("revoked_at")
-    .eq("id", payload.invite_id)
-    .eq("organization_id", payload.organization_id)
-    .maybeSingle();
-  if (linhaDoConvite?.revoked_at) return { ok: false, motivo: "invalid_or_expired" };
+  const linhaDoConvite = await lerLinha();
+  if (linhaDoConvite && naoServe(linhaDoConvite)) return recusa;
+
+  // POSSE ANTES DO VÍNCULO (CG-IAM-01). Ler, vincular e só depois fechar a linha
+  // deixava uma revogação gravada no meio virar acesso — com a tela de Equipe
+  // dizendo "revogado". Agora o aceite marca a linha primeiro, e só onde ela
+  // ainda está em aberto; a revogação, do lado dela, só escreve onde
+  // `accepted_at` é nulo. Uma das duas ganha, nunca as duas.
+  let reivindicou = false;
+  if (linhaDoConvite && !linhaDoConvite.accepted_at) {
+    const { data: ganhou } = await admin
+      .from("team_invites")
+      .update({ accepted_at: new Date().toISOString(), accepted_by: userId })
+      .eq("id", payload.invite_id)
+      .eq("organization_id", payload.organization_id)
+      .is("accepted_at", null)
+      .is("revoked_at", null)
+      .select("id")
+      .maybeSingle();
+    if (ganhou) reivindicou = true;
+    else {
+      // Perdeu a linha: revogada no meio, ou o mesmo aceite chegou duas vezes
+      // (clique duplo). Só o segundo caso segue — e segue como replay.
+      const agora = await lerLinha();
+      if (!agora || naoServe(agora)) return recusa;
+    }
+  }
 
   // Org, papel e convidador vêm EXCLUSIVAMENTE do token assinado; o usuário,
   // de quem chamou. Nada aqui vem de body de requisição.
@@ -76,6 +114,17 @@ export async function aplicarConvite(params: {
   });
 
   if (error) {
+    // O vínculo não nasceu: a posse volta, senão a linha diria "aceito" para
+    // quem não entrou — e o administrador não teria mais como revogar nem
+    // reenviar. Só desfaz o que este aceite marcou.
+    if (reivindicou) {
+      await admin
+        .from("team_invites")
+        .update({ accepted_at: null, accepted_by: null })
+        .eq("id", payload.invite_id)
+        .eq("organization_id", payload.organization_id)
+        .eq("accepted_by", userId);
+    }
     return {
       ok: false,
       // 42501 é a recusa da própria função (convite revogado ou posterior à
@@ -96,16 +145,8 @@ export async function aplicarConvite(params: {
     });
   }
 
-  // Fecha o convite na aba Membros. Idempotente: `is("accepted_at", null)` faz
-  // o replay do mesmo token não mexer em nada, e `is("revoked_at", null)` impede
-  // que uma corrida marque como aceito um convite cancelado no mesmo instante.
-  await admin
-    .from("team_invites")
-    .update({ accepted_at: new Date().toISOString(), accepted_by: userId })
-    .eq("id", payload.invite_id)
-    .eq("organization_id", payload.organization_id)
-    .is("accepted_at", null)
-    .is("revoked_at", null);
+  // O convite já foi fechado na aba Membros ANTES do vínculo (a posse, acima);
+  // o replay do mesmo token não mexe na linha.
 
   // Sem isto a pessoa entra sem organização escolhida e o app não sabe qual
   // mostrar — o mesmo motivo pelo qual o botão de aceite sempre gravou aqui.

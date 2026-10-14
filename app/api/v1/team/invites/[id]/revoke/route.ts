@@ -56,13 +56,22 @@ export async function POST(
   }
 
   const nowIso = new Date().toISOString();
-  const { error: updErr } = await supabase
+  const { data: revogada, error: updErr } = await supabase
     .from("team_invites")
     .update({ revoked_at: nowIso, revoked_by: authUser.id })
+    .eq("organization_id", activeOrg.orgId)
     .eq("id", id)
     .is("accepted_at", null)
-    .is("revoked_at", null);
+    .is("revoked_at", null)
+    .select("id")
+    .maybeSingle();
   if (updErr) return fail("internal_error", updErr.message, 500, { requestId });
+  // Nenhuma linha mudou: o aceite tomou posse do convite entre a leitura acima
+  // e esta escrita (CG-IAM-01, `lib/auth/aplicar-convite.ts`). A pessoa entrou;
+  // dizer "revogado" — e auditar a revogação — seria afirmar o contrário.
+  if (!revogada) {
+    return fail("state_conflict", t("Este convite já foi aceito."), 409, { requestId });
+  }
 
   await audit({
     action: "member.invite_revoked",
