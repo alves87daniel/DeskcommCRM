@@ -3,6 +3,7 @@ import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { loadOnboardingState } from "@/app/actions/onboarding/_shared";
 import { proximoPasso } from "@/lib/onboarding/passos";
 import { configuraPeloAssistente } from "@/lib/onboarding/quem-configura";
+import { modoDoOnboarding } from "@/lib/onboarding/modo";
 import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
@@ -26,6 +27,9 @@ export default async function OnboardingIndex() {
   const { state, onboardedAt } = await loadOnboardingState(activeOrg.orgId);
   if (onboardedAt) redirect("/app/inbox");
 
-  const passo = proximoPasso(state, { lojaLigada: env.NUVEMSHOP_ENABLED });
+  const passo = proximoPasso(state, {
+    lojaLigada: env.NUVEMSHOP_ENABLED,
+    modo: modoDoOnboarding(),
+  });
   redirect(passo ? `/onboarding/${passo.segmento}` : "/onboarding/done");
 }

@@ -7297,6 +7297,10 @@ export const DICIONARIO: Traducoes = {
     es: "Tu empleado ya está en marcha. Lo que dejaste para después te sigue esperando.",
   },
   "Quase lá!": { es: "¡Ya casi!" },
+  "O CRM já está pronto para usar. WhatsApp, inteligência artificial e funis ficam para quando você quiser, em Configurações.":
+    {
+      es: "El CRM ya está listo para usar. WhatsApp, inteligencia artificial y embudos quedan para cuando quieras, en Configuración.",
+    },
   "O passo da IA ficou para depois: ele ainda não foi treinado nem colocado no ar.": {
     es: "El paso de la IA quedó para después: todavía no fue entrenado ni puesto en marcha.",
   },

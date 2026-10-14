@@ -8,6 +8,7 @@
 import { redirect } from "next/navigation";
 
 import { audit } from "@/lib/audit";
+import { modoDoOnboarding } from "@/lib/onboarding/modo";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { requireOnboardingCtx, OnboardingError } from "./_shared";
 
@@ -29,6 +30,10 @@ export async function finishOnboarding(): Promise<FinishOnboardingResult> {
   }
 
   const admin = createAdminClient();
+  // `onboarded_at` significa o mesmo nos dois modos — o administrador concluiu
+  // a configuração inicial (CG-IAM-01). Não afirma canal, IA nem estrutura
+  // Green; quem lê o rastro sabe pelo `modo` qual percurso foi feito.
+  const modo = modoDoOnboarding();
 
   const { data: existing } = await admin
     .from("organizations")
@@ -58,6 +63,7 @@ export async function finishOnboarding(): Promise<FinishOnboardingResult> {
       action: "onboarding.completed",
       actorUserId: ctx.userId,
       organizationId: ctx.orgId,
+      metadata: { modo },
     });
     await audit({
       action: "tenant.onboarded",
@@ -66,5 +72,7 @@ export async function finishOnboarding(): Promise<FinishOnboardingResult> {
     });
   }
 
-  redirect("/app/inbox");
+  // No simplificado não há WhatsApp configurado: a caixa de conversas estaria
+  // vazia. `/app` entrega a home da interface de quem chegou.
+  redirect(modo === "simplificado" ? "/app" : "/app/inbox");
 }

@@ -13,6 +13,7 @@ import { marcaDaSaida } from "@/lib/branding/saida";
 import { baseDoStorage } from "@/lib/branding/logo";
 import { passosVisiveis } from "@/lib/onboarding/passos";
 import { configuraPeloAssistente } from "@/lib/onboarding/quem-configura";
+import { modoDoOnboarding } from "@/lib/onboarding/modo";
 import { env } from "@/lib/env";
 import { IdiomaProvider } from "@/lib/i18n/IdiomaProvider";
 
@@ -34,7 +35,7 @@ export default async function OnboardingLayout({ children }: { children: React.R
 
   // Os passos que ESTA instalação oferece, com o que já foi resolvido. O
   // indicador não decide mais nada sozinho — ele desenha o que recebe.
-  const passos = passosVisiveis({ lojaLigada: env.NUVEMSHOP_ENABLED }).map((p) => ({
+  const passos = passosVisiveis({ lojaLigada: env.NUVEMSHOP_ENABLED, modo: modoDoOnboarding() }).map((p) => ({
     segmento: p.segmento,
     rotulo: p.rotulo,
     cumprido: p.cumprido(state),

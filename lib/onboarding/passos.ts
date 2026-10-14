@@ -17,6 +17,7 @@
  * aparece em lugar nenhum — nem como pendência, nem como culpa.
  */
 import type { OnboardingState } from "@/lib/schemas/onboarding";
+import type { ModoDoOnboarding } from "@/lib/onboarding/modo";
 
 export interface PassoDoOnboarding {
   /** Segmento da rota em `app/onboarding/<segmento>`. */
@@ -37,6 +38,20 @@ export interface PassoDoOnboarding {
 export interface ContextoDoPasso {
   /** A integração de loja está ligada nesta instalação? */
   lojaLigada: boolean;
+  /**
+   * Qual assistente a instalação oferece (`lib/onboarding/modo.ts`, CG-IAM-01).
+   * Ausente = `herdado`, para nenhum chamador antigo mudar de percurso.
+   */
+  modo?: ModoDoOnboarding;
+}
+
+/**
+ * Os passos que dependem de serviço ou chave (WhatsApp, loja, IA, o funil que a
+ * IA sugere, o ensaio do agente) só existem no assistente herdado. No
+ * simplificado eles não somem do produto: ficam nas Configurações, para depois.
+ */
+function noHerdado(ctx: ContextoDoPasso): boolean {
+  return ctx.modo !== "simplificado";
 }
 
 /** Um passo marcado no estado — com ou sem `skipped`. */
@@ -61,21 +76,21 @@ export const PASSOS: readonly PassoDoOnboarding[] = [
     // O telefone é a primeira peça concreta do funcionário, e é o passo que
     // pede o celular na mão — o instalador já avisa para deixá-lo aberto.
     rotulo: "O telefone dele",
-    existe: () => true,
+    existe: noHerdado,
     cumprido: (s) => marcado(s.whatsapp),
     pulado: (s) => foiPulado(s.whatsapp),
   },
   {
     segmento: "connect-nuvemshop",
     rotulo: "Sua loja",
-    existe: (ctx) => ctx.lojaLigada,
+    existe: (ctx) => noHerdado(ctx) && ctx.lojaLigada,
     cumprido: (s) => marcado(s.nuvemshop),
     pulado: (s) => foiPulado(s.nuvemshop),
   },
   {
     segmento: "setup-ai",
     rotulo: "Treinar",
-    existe: () => true,
+    existe: noHerdado,
     cumprido: (s) => marcado(s.ai),
     pulado: (s) => foiPulado(s.ai),
   },
@@ -85,7 +100,7 @@ export const PASSOS: readonly PassoDoOnboarding[] = [
     // pessoa acabou de confirmar funcionando, e é o mesmo cérebro que vai
     // atender. Pedir o quadro antes obrigaria a montá-lo no escuro.
     rotulo: "Onde ele organiza",
-    existe: () => true,
+    existe: noHerdado,
     cumprido: (s) => marcado(s.funil),
     pulado: (s) => foiPulado(s.funil),
   },
@@ -96,7 +111,7 @@ export const PASSOS: readonly PassoDoOnboarding[] = [
     // sistema" em "contratei alguém" — e é onde o erro aparece antes do
     // primeiro cliente real, não depois.
     rotulo: "Ver ele atender",
-    existe: () => true,
+    existe: noHerdado,
     cumprido: (s) => marcado(s.teste),
     pulado: (s) => foiPulado(s.teste),
   },
