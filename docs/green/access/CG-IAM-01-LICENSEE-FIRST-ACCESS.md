@@ -80,6 +80,13 @@ gravados só onde `revoked_at` e `accepted_at` são nulos. Revogação gravada n
 não serve a ninguém; replay da mesma pessoa é idempotente; se o banco recusar o vínculo, a posse é devolvida.
 Organização, papel e convidador continuam vindo só do token, e o cookie `active_org` aponta a organização do convite.
 
+**Erro de banco no aceite** (FIX pós-revisão): o vínculo só nasce com a posse confirmada pela linha devolvida pelo
+UPDATE, ou com a posse já da própria pessoa (replay). Erro ao ler a linha ou ao reivindicá-la responde
+`internal_error` sem chamar `fn_accept_team_invite` (erro de leitura nunca cai no fluxo legado "sem linha"). A
+devolução da posse após falha do vínculo é conferida: se der erro ou não casar linha, a resposta é `internal_error`
+mesmo quando a RPC recusou com `42501`, e o log de erro carrega `invite_id`, `organization_id`, `user_id` e os
+códigos, sem token. Posse e devolução seguem sendo duas escritas sem transação (seção 9).
+
 **Revogação** (`POST /api/v1/team/invites/[id]/revoke`): só escreve onde `accepted_at` é nulo e agora confere se alguma
 linha mudou. Se o aceite ganhou a linha, responde `409 state_conflict` e não audita revogação.
 
@@ -125,7 +132,9 @@ somente leitura e encerrado, MFA pendente, `orgId` forjado, convite de admin por
 escrita), `colaborador-nao-cai-no-assistente`, `qr-do-assistente-so-para-admin`,
 `acoes-do-assistente-passam-pela-guarda` (cerca estrutural), `convite-do-assistente-e-rastreavel`,
 `convite-do-titular-e-rastreavel`, `aceite-reivindica-o-convite-antes-do-vinculo`,
-`revogacao-que-perde-para-o-aceite`, `convite-sobrevive-ao-google-do-login`,
+`revogacao-que-perde-para-o-aceite`, `aceite-trata-erros-de-posse` (FIX: UPDATE de posse com erro e sem linha,
+leitura com erro, falha do vínculo, devolução com erro ou sem linha, revogação concorrente, replay, aceito por
+outra pessoa; tudo com o dublê em memória, sem banco real), `convite-sobrevive-ao-google-do-login`,
 `onboarding-simplificado-por-configuracao`, `fim-do-assistente-registra-o-modo`. Ajustados sem mudar o que medem:
 `onboarding-chave-da-ia-vale-para-a-empresa`, `aplicar-convite`, `organizacoes-criacao-e-troca`. E2E ajustado:
 `troca-de-organizacao-tem-volta` (o `manager` da organização não configurada fica no CRM).
@@ -138,8 +147,10 @@ um ambiente com Supabase (seção 9).
 - **Validação pendente:** E2E Playwright (inclusive `troca-de-organizacao-tem-volta`), `test:db` e prova pela tela do
   percurso simplificado e do Google real não rodaram localmente (dependem de Docker/Supabase e de OAuth configurado).
 - Links emitidos pelo assistente ou pela plataforma **antes** desta entrega continuam irrevogáveis até expirar (24 h).
-- Posse e vínculo não são uma transação só (sem migration): se a RPC falhar por infraestrutura e a devolução da posse
-  também falhar, a linha fica "aceita" sem vínculo; o replay da mesma pessoa refaz o vínculo.
+- Posse e vínculo não são uma transação só (sem migration): se a RPC falhar e a devolução da posse também falhar ou
+  não casar linha, a linha fica "aceita" sem vínculo. O aceite responde `internal_error` e registra o estado no log
+  (não finge ter desfeito); o replay da mesma pessoa refaz o vínculo, e o administrador não consegue revogar nem
+  reenviar até a correção manual. Os erros de banco estão provados só com dublê; a corrida real em Postgres não.
 - A tela de aceite não mostra "revogado" antes do clique; a recusa aparece ao confirmar.
 - Replay da criação de organização depois de revogado o convite do titular devolve o mesmo link, que o aceite recusa.
 - No simplificado, as páginas dos passos herdados seguem alcançáveis por URL para o administrador (sem efeito no gate).
