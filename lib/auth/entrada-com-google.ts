@@ -40,6 +40,27 @@ export interface DestinoDoRetornoDoGoogle {
   convite?: string | null;
 }
 
+/** A tela de aceite, com o token como único segmento: `<corpo>.<assinatura>` em base64url. */
+const DESTINO_DE_ACEITE = /^\/team\/accept-invite\/([A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)$/;
+
+/**
+ * O convite que só existe no `next` — o caminho de quem chega pela tela de
+ * aceite sem sessão (`/login?next=/team/accept-invite/<token>`) e escolhe o
+ * Google ali (CG-IAM-01).
+ *
+ * Sem isto, a volta do OAuth não sabia que havia convite e quem ainda não tinha
+ * conta ganhava organização própria, em vez do vínculo na que o convidou.
+ *
+ * Reconhece SÓ a forma exata da tela de aceite: um segmento, sem barra, ponto
+ * extra, query ou esquema. Extrair não autoriza nada — o token segue pelas
+ * provas de sempre (`decidirConviteDoSignup`: assinatura e e-mail confirmado;
+ * `aplicarConvite`: a linha e a revogação) —, mas um `next` forjado nunca vira
+ * outra coisa além de um candidato a convite.
+ */
+export function conviteDoDestino(next: string | null | undefined): string | null {
+  return (next && DESTINO_DE_ACEITE.exec(next)?.[1]) || null;
+}
+
 /**
  * O `redirectTo` que vai no `signInWithOAuth`, absoluto e no domínio público da
  * instalação.
@@ -63,7 +84,9 @@ export function urlDeRetornoDoGoogle(
   const next = safeNext(destino.next, "/app");
   if (next !== "/app") url.searchParams.set("next", next);
 
-  const convite = destino.convite?.trim();
+  // O convite do `next` viaja também como `convite`: é o parâmetro que a volta
+  // leva às provas, e o `/login` só tem o `next` para passar.
+  const convite = destino.convite?.trim() || conviteDoDestino(next);
   if (convite) url.searchParams.set("convite", convite);
 
   return url.toString();
