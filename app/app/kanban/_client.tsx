@@ -7,6 +7,7 @@ import { useT } from "@/hooks/i18n/useT";
 
 import { ImportarLeads } from "./_components/ImportarLeads";
 import { EmptyPipeline } from "@/components/empty";
+import { EditarEtapasLink } from "@/components/kanban/EditarEtapasLink";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -573,6 +574,13 @@ export function FunisClient({
 
                 {podeGerenciar && !renomeandoAqui && (
                   <div className="flex shrink-0 flex-wrap gap-1">
+                    {/* As colunas do funil se editam em "Etapas do funil", que
+                        não tem entrada de menu — sem este atalho ninguém
+                        descobre que as quatro etapas de um funil novo mudam. */}
+                    <EditarEtapasLink
+                      pipelineId={funil.id}
+                      className={buttonVariants({ variant: "ghost", size: "sm" })}
+                    />
                     <Button
                       variant="ghost"
                       size="sm"
