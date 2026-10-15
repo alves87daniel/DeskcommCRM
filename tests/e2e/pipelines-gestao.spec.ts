@@ -103,7 +103,10 @@ test.describe("gestão de funis", () => {
     await page.screenshot({ path: path.join(EVIDENCIA, "funis-01-criado.png"), fullPage: true });
 
     // ---- o funil nasce com as quatro colunas (senão o quadro é morto) ----
-    await linhaDoFunil(page, NOME).getByRole("link").click();
+    // Pelo NOME: a linha tem dois links para quem gerencia — o que abre o
+    // quadro (nome do funil) e "Editar etapas" (editor de colunas). Sem o
+    // nome, o strict mode do Playwright recusa a ambiguidade.
+    await linhaDoFunil(page, NOME).getByRole("link", { name: NOME }).click();
     await page.waitForURL(/\/app\/pipelines\//);
     // Quem cria funil é manager+: para ele o nome da etapa é o campo editável
     // do cabeçalho (#1738), e `getByText` não lê o valor de um <input>.
