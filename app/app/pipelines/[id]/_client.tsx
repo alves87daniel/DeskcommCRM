@@ -24,7 +24,8 @@ import { KanbanBoard } from "@/components/kanban/KanbanBoard";
 import { FilterBar } from "@/components/kanban/FilterBar";
 import { BulkActionBar } from "@/components/kanban/BulkActionBar";
 import { NewLeadDialog } from "@/components/kanban/NewLeadDialog";
-import { Button } from "@/components/ui/button";
+import { EditarEtapasLink } from "@/components/kanban/EditarEtapasLink";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Plus } from "@/lib/ui/icons";
 import type { LeadFilters } from "@/lib/kanban/filters";
 import { applyFilters, filtersFromParams, filtersToParams } from "@/lib/kanban/filters";
@@ -117,9 +118,18 @@ export function PipelinePageClient({
         <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight">
           {data?.pipeline.name ?? initialName}
         </h1>
-        <Button onClick={() => setNewOpen(true)} disabled={!data} className="shrink-0">
-          <Plus size={16} className="mr-2" /> {t("Novo Lead")}
-        </Button>
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
+          {/* O cabeçalho da coluna só renomeia; criar, reordenar e arquivar
+              etapas é no editor, que até aqui não tinha caminho a partir do
+              quadro. `manager`+ apenas — o componente aplica o mesmo corte. */}
+          <EditarEtapasLink
+            pipelineId={pipelineId}
+            className={buttonVariants({ variant: "outline" })}
+          />
+          <Button onClick={() => setNewOpen(true)} disabled={!data}>
+            <Plus size={16} className="mr-2" /> {t("Novo Lead")}
+          </Button>
+        </div>
       </header>
       {data && (
         <NewLeadDialog
