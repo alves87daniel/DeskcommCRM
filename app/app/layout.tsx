@@ -25,6 +25,7 @@ import { listarConexoesCaidas, type ConexaoCaida } from "@/lib/channels/health";
 import { VoiceCallProvider } from "@/components/voice/VoiceCallContext";
 import { ProvedorDaOcupacaoDoRodape } from "@/lib/ui/rodape-ocupado";
 import { acessoFoiRevogado } from "@/lib/auth/vinculo-revogado";
+import { configuraPeloAssistente } from "@/lib/onboarding/quem-configura";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
   const user = await loadAuthUser();
@@ -112,7 +113,17 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     enrolled = isEnrolled;
     needsMfaGate = mfaRequired;
 
-    if (orgRow && !orgRow.onboarded_at && !user.support) redirect("/onboarding");
+    // Só quem CONFIGURA a organização é mandado para o assistente (CG-IAM-01):
+    // as ações dele são de administrador, e o colaborador de uma organização
+    // ainda por configurar usa o CRM conforme o papel dele — mandá-lo para lá
+    // seria prendê-lo numa tela em que nenhum botão funciona.
+    if (
+      orgRow &&
+      !orgRow.onboarded_at &&
+      !user.support &&
+      configuraPeloAssistente(activeOrg.role)
+    )
+      redirect("/onboarding");
     if (orgRow?.status === "suspended") redirect("/account-suspended");
     // G4-02: expõe visibility_mode ao client (inbox decide visões visíveis).
     // Fonte confiável (admin client, org do cookie validado) — nunca do body.

@@ -2,6 +2,8 @@ import { redirect } from "next/navigation";
 import { requireAuth, resolveActiveOrg } from "@/lib/auth/server";
 import { loadOnboardingState } from "@/app/actions/onboarding/_shared";
 import { proximoPasso } from "@/lib/onboarding/passos";
+import { configuraPeloAssistente } from "@/lib/onboarding/quem-configura";
+import { modoDoOnboarding } from "@/lib/onboarding/modo";
 import { env } from "@/lib/env";
 
 export const dynamic = "force-dynamic";
@@ -19,10 +21,15 @@ export default async function OnboardingIndex() {
   // `/login` fechava o círculo: quem entrasse de novo voltaria para cá. A saída
   // é a tela que CRIA a organização que falta.
   if (!activeOrg) redirect("/get-started");
+  // Mesma regra do layout (CG-IAM-01): layout e página renderizam em paralelo.
+  if (!configuraPeloAssistente(activeOrg.role)) redirect("/app");
 
   const { state, onboardedAt } = await loadOnboardingState(activeOrg.orgId);
   if (onboardedAt) redirect("/app/inbox");
 
-  const passo = proximoPasso(state, { lojaLigada: env.NUVEMSHOP_ENABLED });
+  const passo = proximoPasso(state, {
+    lojaLigada: env.NUVEMSHOP_ENABLED,
+    modo: modoDoOnboarding(),
+  });
   redirect(passo ? `/onboarding/${passo.segmento}` : "/onboarding/done");
 }

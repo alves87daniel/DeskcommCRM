@@ -113,7 +113,8 @@ async function main(): Promise<void> {
         // Com os slugs separados, ela passa a ser o único lugar do harness com
         // uma organização legitimamente NÃO configurada — que é exatamente o
         // estado de que `troca-de-organizacao-tem-volta.spec.ts` precisa para
-        // provar que dá para sair do wizard.
+        // provar que trocar de organização tem volta (desde a CG-IAM-01, o
+        // `manager` daqui fica no CRM: o assistente é só do administrador).
       })
       .select("id")
       .single();

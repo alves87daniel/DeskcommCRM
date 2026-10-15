@@ -5,6 +5,7 @@ import { resumoDoOnboarding } from "@/lib/onboarding/passos";
 import { createClient } from "@/lib/supabase/server";
 import { env } from "@/lib/env";
 import { oQueMaisExiste } from "@/lib/onboarding/o-que-mais-existe";
+import { modoDoOnboarding } from "@/lib/onboarding/modo";
 import { DoneClient } from "./_client";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +21,8 @@ export default async function DonePage() {
   // Antes era uma terceira lista, fixa, e por isso ela listava "Loja Nuvemshop
   // (pulado)" em instalações que nunca ofereceram esse passo — o wizard
   // acusando a pessoa de não fazer o que ninguém lhe pediu.
-  const itens = resumoDoOnboarding(state, { lojaLigada: env.NUVEMSHOP_ENABLED });
+  const modo = modoDoOnboarding();
+  const itens = resumoDoOnboarding(state, { lojaLigada: env.NUVEMSHOP_ENABLED, modo });
 
   const supabase = await createClient();
   // SE O ATENDENTE ESTÁ NO AR vem do banco, não das pendências: publicar é o
@@ -36,5 +38,5 @@ export default async function DonePage() {
     .limit(1);
   const noAr = (publicados ?? []).length > 0;
 
-  return <DoneClient itens={itens} pecas={oQueMaisExiste()} noAr={noAr} />;
+  return <DoneClient itens={itens} pecas={oQueMaisExiste()} noAr={noAr} modo={modo} />;
 }

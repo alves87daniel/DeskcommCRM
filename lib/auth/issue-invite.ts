@@ -25,6 +25,8 @@ export async function issueInvite(input: {
   inviteId?: string;
   issuedAt?: number;
   dispatch?: boolean;
+  /** Por onde saiu, quando não foi a tela de Equipe — `source` no rastro e `src` no e-mail. */
+  origem?: string;
 }) {
   const interfaceSettings = interfaceSettingsSchema.parse(
     input.interfaceSettings ?? INTERFACE_COMPLETA,
@@ -78,6 +80,7 @@ export async function issueInvite(input: {
         tags: [
           { name: "kind", value: "team_invite" },
           { name: "org", value: input.organizationId },
+          ...(input.origem ? [{ name: "src", value: input.origem }] : []),
         ],
       });
       dispatched = result.ok;
@@ -100,6 +103,7 @@ export async function issueInvite(input: {
         email_dispatched: dispatched,
         email_error: deliveryError ?? null,
         email_via: via ?? null,
+        ...(input.origem ? { source: input.origem } : {}),
       },
     });
   }

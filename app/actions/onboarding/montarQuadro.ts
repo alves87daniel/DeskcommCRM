@@ -23,7 +23,13 @@ import {
   type PropostaDeFunil,
 } from "@/lib/onboarding/proposta-de-funil";
 import { escolherPacotePorTexto, sugerirFunil, type Sugestao } from "@/lib/onboarding/sugerir-funil";
-import { requireOnboardingCtx, patchOnboardingState, loadOnboardingState, OnboardingError } from "./_shared";
+import {
+  requireOnboardingCtx,
+  patchOnboardingState,
+  loadOnboardingState,
+  mensagemDaRecusa,
+  OnboardingError,
+} from "./_shared";
 
 /** O funil que o gatilho semeou — o que a pessoa tem antes deste passo. */
 export interface QuadroAtual {
@@ -124,8 +130,16 @@ export interface DadosDoPasso {
  * Roda no SERVIDOR, no render da página — não num clique. A pessoa chega no
  * passo com a proposta pronta na tela; pedir que ela clique em "gerar sugestão"
  * primeiro seria cobrar um passo a mais para chegar ao mesmo lugar.
+ *
+ * ⚠️ SEM PARÂMETRO, de propósito (CG-IAM-01). Este arquivo é `"use server"`, e
+ * todo export dele é uma action que qualquer navegador alcança com o id certo.
+ * A assinatura antiga recebia o `orgId`: quem a chamasse com o de outra empresa
+ * lia o funil dela e gastava a chave de IA dela. Organização e nome do negócio
+ * vêm da sessão, pela mesma guarda das outras ações do assistente.
  */
-export async function dadosDoPasso(orgId: string, negocio: string): Promise<DadosDoPasso> {
+export async function dadosDoPasso(): Promise<DadosDoPasso> {
+  const sessao = await requireOnboardingCtx();
+  const orgId = sessao.orgId;
   const admin = createAdminClient();
   const atual = await carregarQuadroAtual(admin, orgId);
 
@@ -137,6 +151,7 @@ export async function dadosDoPasso(orgId: string, negocio: string): Promise<Dado
     oQueFaz = "";
   }
 
+  const negocio = sessao.orgName;
   const ctx = { nome: negocio, oQueFaz };
   const cerebro = await cerebroDoFuncionario(admin, orgId);
 
@@ -192,7 +207,7 @@ export async function aplicarQuadro(formData: FormData): Promise<ResultadoDoQuad
   try {
     ctx = await requireOnboardingCtx();
   } catch (err) {
-    if (err instanceof OnboardingError) return { ok: false, erro: "Sua sessão expirou. Entre de novo." };
+    if (err instanceof OnboardingError) return { ok: false, erro: mensagemDaRecusa(err) };
     throw err;
   }
 

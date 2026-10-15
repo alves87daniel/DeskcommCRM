@@ -4,6 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import { ensureTenantForUser, vinculoAtivo } from "@/lib/auth/provision";
 import { acessoFoiRevogado } from "@/lib/auth/vinculo-revogado";
 import { decidirConviteDoSignup } from "@/lib/auth/convite-no-signup";
+import { conviteDoDestino } from "@/lib/auth/entrada-com-google";
+import { verifyInviteToken } from "@/lib/auth/invite-token";
 import { modoDeCadastro } from "@/lib/auth/politica-de-cadastro";
 import { aplicarConvite } from "@/lib/auth/aplicar-convite";
 import { respostaDePonte } from "@/lib/auth/ponte-de-volta";
@@ -74,7 +76,10 @@ export async function GET(request: NextRequest) {
   const url = request.nextUrl;
   const code = url.searchParams.get("code");
   const next = url.searchParams.get("next");
-  const convite = url.searchParams.get("convite");
+  // O convite chega como `convite` (Google do cadastro) ou só dentro do `next`
+  // (Google do `/login`, vindo da tela de aceite) — CG-IAM-01. Nos dois casos
+  // ele é só candidato: quem decide são as provas mais abaixo.
+  const convite = url.searchParams.get("convite") || conviteDoDestino(next);
   const requestId = request.headers.get("x-request-id");
 
   // NUNCA usar url.origin aqui: é derivado do header Host, que o proxy/container
@@ -139,6 +144,15 @@ export async function GET(request: NextRequest) {
 
   const usuario = data.user;
 
+  // Quem JÁ é de casa e chega com convite válido vai à tela de aceite — a mesma
+  // que o login por senha mostra —, em vez de o convite ser esquecido no `/app`
+  // (CG-IAM-01). Só token com assinatura e validade boas vira caminho: o resto
+  // é ignorado e a pessoa entra normalmente. Revogação e e-mail, a tela de
+  // aceite confere.
+  const conviteDeQuemEntra =
+    convite && verifyInviteToken(convite) ? encodeURIComponent(convite) : null;
+  const telaDeAceite = conviteDeQuemEntra ? `/team/accept-invite/${conviteDeQuemEntra}` : null;
+
   // O Google autentica com dois fatores (e a conta pode tê-los). O login por
   // senha NÃO deixa passar quem tem TOTP verificado sem o segundo fator
   // (`signInWithPassword.ts:88`), e a entrada com Google tem de ter a mesma
@@ -147,7 +161,10 @@ export async function GET(request: NextRequest) {
   const { data: fatores } = await supabase.auth.mfa.listFactors();
   const totpVerificado = fatores?.totp?.find((f) => f.status === "verified");
   if (totpVerificado) {
-    const params = new URLSearchParams({ factor: totpVerificado.id, next: safeNext(next, "/app") });
+    const params = new URLSearchParams({
+      factor: totpVerificado.id,
+      next: telaDeAceite ?? safeNext(next, "/app"),
+    });
     return redirectTo(`/login/mfa?${params}`);
   }
 
@@ -183,6 +200,9 @@ export async function GET(request: NextRequest) {
       metadata: { provider: "google" },
       requestId,
     });
+    // Com convite: a tela de aceite é PÚBLICA, então o 302 funciona — e é lá
+    // que a pessoa confirma entrar na outra organização.
+    if (conviteDeQuemEntra) return redirectTo(`/team/accept-invite/${conviteDeQuemEntra}`);
     // ENTRADA: o destino é `/app` (ou o `next` pedido) — tela COM sessão, logo
     // ponte e não 302 (issue #1646).
     return await paraTelaAutenticada(safeNext(next, "/app"));

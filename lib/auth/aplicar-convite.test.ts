@@ -52,12 +52,15 @@ const rpcDoAceite = vi.fn(async () => ({ data: { id: "m1", changed: true }, erro
 
 /**
  * Dublê do admin client. `select` devolve a linha de `team_invites` pedida;
- * `update` (o fechamento do convite) aceita e não diz nada.
+ * `update` (a posse do convite, CG-IAM-01) é ganho pelo aceite. A corrida e a
+ * posse em si têm cerca própria em
+ * `tests/unit/aceite-reivindica-o-convite-antes-do-vinculo.test.ts`.
  */
 function adminComConvite(linha: { revoked_at: string | null } | null) {
   const cadeiaDeUpdate = () => {
     const c: Record<string, unknown> = {};
-    for (const m of ["eq", "is"]) c[m] = () => c;
+    for (const m of ["eq", "is", "select"]) c[m] = () => c;
+    c.maybeSingle = async () => ({ data: { id: CONVITE }, error: null });
     c.then = (r: (v: unknown) => unknown) => r({ data: null, error: null });
     return c;
   };
