@@ -254,6 +254,30 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
       "(`vars.RELOGIO_LIGADO`), não uma adaptação de fork — mas ela fica no mapa para " +
       "que trocar a variável por outra coisa continue passando por revisão.",
   },
+
+  // --- o assistente Claude (anthropics/claude-code-action) ---------------------
+  // Nenhum dos dois é check obrigatório nem entrega nada ao parque instalado; estão
+  // no mapa porque o mapa cobre a pasta inteira. O `| ` no começo da condição do
+  // `claude` é o indicador de escalar de bloco do YAML, que `lerJobs()` recolhe
+  // junto com a expressão — é o valor lido, não um erro de digitação.
+  "claude.yml::claude": {
+    condicao:
+      "| (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude')) || " +
+      "(github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude')) || " +
+      "(github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude')) || " +
+      "(github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')))",
+    efeito:
+      "Este job responde quando alguém menciona `@claude` num comentário, revisão ou issue. " +
+      "A condição é o interruptor dele: sem a menção o job não roda, e é isso que se quer — " +
+      "sem ela o assistente acordaria (e gastaria cota) a cada comentário do repositório.",
+  },
+  "claude-code-review.yml::claude-review": {
+    condicao: null,
+    efeito:
+      "Este job pede ao Claude a revisão de código de todo PR aberto, sincronizado, reaberto ou " +
+      "marcado como pronto. Desligá-lo faz os PRs entrarem sem a revisão automática, sem erro " +
+      "em lugar nenhum.",
+  },
 };
 
 interface JobLido {

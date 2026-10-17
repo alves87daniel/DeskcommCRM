@@ -1221,6 +1221,8 @@ export const DICIONARIO: Traducoes = {
   // da tela de configuração, que antes disputava "Funis" com ela.
   Funis: { es: "Embudos" },
   "Etapas do funil": { es: "Etapas del embudo" },
+  // Atalho da lista de funis e do quadro para a seção de etapas daquele funil.
+  "Editar etapas": { es: "Editar etapas" },
   "Tipos de agendamento": { es: "Tipos de cita" },
   Automação: { es: "Automatización" },
   Agentes: { es: "Agentes" },

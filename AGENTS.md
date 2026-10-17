@@ -6,6 +6,21 @@
 > Precedência quando dois documentos discordam: `CLAUDE.md` > `docs/specs/` > `docs/prd/` >
 > `HANDOFF-*.md` > `README.md`.
 
+## Este repositório é um FORK
+
+ConectorGreen é um fork do DeskcommCRM (melgarafael). NÃO puxamos atualizações do upstream.
+Aqui, `origin` é `alves87daniel/DeskcommCRM` e a `main` deste fork é `origin/main`: todo
+`git fetch`, `git merge origin/main` e medição de migration vale contra ela. Os checks
+obrigatórios são os que
+`gh api repos/alves87daniel/DeskcommCRM/branches/main/protection --jq '.required_status_checks.contexts|join(", ")'`
+listar (vazio = nenhum ainda).
+Fora do escopo deste fork, mesmo que citados neste arquivo ou no `CLAUDE.md`: o site e as
+páginas de changelog da deskcomm, a parceria HostGator, o executor próprio
+(`infra/executor-proprio/`), os números medidos no repositório do upstream, e a obrigação de o
+fragmento em `.changes/` alimentar vitrine externa.
+Em execução autônoma, quando uma regra exigir recurso do upstream, registre a dúvida no PR e
+siga pelo caminho conservador. Fora de execução autônoma, pare e pergunte.
+
 ## Project Overview
 
 Sistema operacional de vendas open source com agentes de IA nativos, multi-nicho (e-commerce,
@@ -174,7 +189,7 @@ O CI tem cinco checks obrigatórios na `main`: `verify`, `build-and-size`, `inva
 `imagens-ok`. Não confie nesta lista — reconte antes de citar:
 
 ```bash
-gh api repos/melgarafael/DeskcommCRM/branches/main/protection \
+gh api repos/alves87daniel/DeskcommCRM/branches/main/protection \
   --jq '.required_status_checks.contexts|join(", ")'
 ```
 

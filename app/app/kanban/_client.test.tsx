@@ -42,3 +42,48 @@ describe("vizinhoAoMover", () => {
     expect(vizinhoAoMover(lista, 3, "descer")).toBeNull();
   });
 });
+
+/**
+ * A lista de funis oferece o caminho até o editor de etapas — só para quem
+ * pode gerenciar. As mutações da lista (criar, renomear, arquivar) são dublês:
+ * o que se mede é a presença do link e o destino dele.
+ */
+import { render, screen, cleanup } from "@testing-library/react";
+import { afterEach, vi } from "vitest";
+import type { Role } from "@/lib/auth/types";
+
+let papel: Role = "admin";
+vi.mock("@/hooks/auth/AuthProvider", () => ({
+  useActiveOrg: () => ({ role: papel, cliente_pela_agenda: false }),
+}));
+vi.mock("@/hooks/i18n/useT", () => ({ useT: () => (s: string) => s }));
+vi.mock("@/hooks/pipelines/usePipelines", () => {
+  const mut = () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false });
+  return { useCriarFunil: mut, useEditarFunil: mut, useArquivarFunil: mut };
+});
+
+import { FunisClient } from "./_client";
+
+afterEach(cleanup);
+
+describe("FunisClient — atalho para o editor de etapas", () => {
+  it("gerente vê, em cada funil, o link para as etapas daquele funil", () => {
+    papel = "manager";
+    render(
+      <FunisClient funis={[funil("a"), funil("b")]} arquivados={[]} podeGerenciar podeImportar />,
+    );
+    expect(screen.getByTestId("editar-etapas-a").getAttribute("href")).toBe(
+      "/app/settings/tenant/pipelines#etapas-a",
+    );
+    expect(screen.getByTestId("editar-etapas-b").getAttribute("href")).toBe(
+      "/app/settings/tenant/pipelines#etapas-b",
+    );
+  });
+
+  it("agente vê a lista e abre o funil, mas não vê o link das etapas", () => {
+    papel = "agent";
+    render(<FunisClient funis={[funil("a")]} arquivados={[]} podeGerenciar={false} podeImportar />);
+    expect(screen.getByTestId("abrir-a")).toBeInTheDocument();
+    expect(screen.queryByTestId("editar-etapas-a")).toBeNull();
+  });
+});
