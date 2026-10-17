@@ -1,5 +1,19 @@
 # CLAUDE.md — DeskcommCRM
 
+## Este repositório é um FORK — leia antes de qualquer coisa
+ConectorGreen é um fork do DeskcommCRM (melgarafael). NÃO puxamos atualizações do upstream.
+Aqui, `origin` é `alves87daniel/DeskcommCRM` e a `main` deste fork é `origin/main`: todo
+`git fetch`, `git merge origin/main`, `git show origin/main:...` e medição de migration
+(`pnpm checar:colisao-de-migration`) vale contra ela. Os checks obrigatórios são os que
+`gh api repos/alves87daniel/DeskcommCRM/branches/main/protection --jq '.required_status_checks.contexts|join(", ")'`
+listar (vazio = nenhum ainda).
+Fora do escopo deste fork, mesmo que citados abaixo: o site e as páginas de changelog da
+deskcomm, a parceria HostGator, o executor próprio (`infra/executor-proprio/`), os números
+medidos no repositório do upstream, e a obrigação de o fragmento em `.changes/` alimentar
+vitrine externa.
+Em execução autônoma, quando uma regra exigir recurso do upstream, registre a dúvida no PR e
+siga pelo caminho conservador. Fora de execução autônoma, pare e pergunte.
+
 > Instruções pra futuras sessões Claude trabalhando neste repo. Leitura obrigatória antes de qualquer task de código.
 
 **Este arquivo é a doutrina — a autoridade final sobre convenção e anti-pattern.** Complementos, na ordem em que ajudam:
@@ -504,7 +518,7 @@ Checks **obrigatórios** na branch protection da `main` (verificado na configura
 Todos os **cinco** são **obrigatórios** — medido em 2026-08-14 na branch protection:
 
 ```console
-$ gh api repos/melgarafael/DeskcommCRM/branches/main/protection --jq '.required_status_checks.contexts|join(", ")'
+$ gh api repos/alves87daniel/DeskcommCRM/branches/main/protection --jq '.required_status_checks.contexts|join(", ")'
 verify, build-and-size, invariants, e2e, imagens-ok
 ```
 
@@ -582,7 +596,7 @@ Processo padrão (siga sempre):
 
    ```bash
    # A POPULAÇÃO da pergunta: main do PRODUTO (o remoto que aponta para
-   # melgarafael/DeskcommCRM, com qualquer nome) + TODO PR ABERTO, inclusive de
+   # alves87daniel/DeskcommCRM, com qualquer nome) + TODO PR ABERTO, inclusive de
    # fork. O `ls` abaixo mede o DISCO, que responde uma pergunta menor.
    pnpm checar:colisao-de-migration   # declara o que mediu e o que não mediu
    ```
