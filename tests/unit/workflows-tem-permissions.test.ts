@@ -61,6 +61,16 @@ const ESCRITA_JUSTIFICADA: Record<string, string> = {
   "acolhida.yml::pull-requests: write":
     "comenta a acolhida no PR de fork; é o ÚNICO escopo do workflow (o bloco zera o resto), " +
     "e o job não faz checkout nem usa action nenhuma — ver tests/unit/acolhida-nao-toca-no-fork.test.ts",
+  "claude.yml::id-token: write":
+    "é o mecanismo de autenticação da action anthropics/claude-code-action com o app Claude do " +
+    "GitHub: o job emite um token OIDC que a action troca pelo token do app. O GITHUB_TOKEN do " +
+    "job segue só leitura (`contents`, `pull-requests` e `issues` em `read`); o que a action " +
+    "escreve é limitado pelas permissões de instalação do app, configuradas fora deste repositório",
+  "claude-code-review.yml::id-token: write":
+    "é o mecanismo de autenticação da action anthropics/claude-code-action com o app Claude do " +
+    "GitHub: o job emite um token OIDC que a action troca pelo token do app. O GITHUB_TOKEN do " +
+    "job segue só leitura (`contents`, `pull-requests` e `issues` em `read`); o que a action " +
+    "escreve é limitado pelas permissões de instalação do app, configuradas fora deste repositório",
 };
 
 interface Workflow {
