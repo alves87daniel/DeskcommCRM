@@ -1,5 +1,13 @@
 # CLAUDE.md — DeskcommCRM
 
+## Este repositório é um FORK — leia antes de qualquer coisa
+ConectorGreen é um fork do DeskcommCRM (melgarafael). NÃO puxamos atualizações do upstream.
+Não se aplicam aqui, mesmo que citados abaixo: o site e as páginas de changelog da deskcomm,
+a parceria HostGator, o executor próprio (`infra/executor-proprio/`), a branch protection
+e os números medidos no repositório do upstream, e a obrigação de fragmento em `.changes/`
+alimentar vitrine externa. Quando uma regra abaixo exigir um recurso do upstream que não
+existe aqui, pare e pergunte em vez de tentar cumprir.
+
 > Instruções pra futuras sessões Claude trabalhando neste repo. Leitura obrigatória antes de qualquer task de código.
 
 **Este arquivo é a doutrina — a autoridade final sobre convenção e anti-pattern.** Complementos, na ordem em que ajudam:
