@@ -382,3 +382,40 @@ criada.
 | 3   | O travessão `—` do nome humano diverge da regra de separador ASCII do v0 (`F0 - P0.2 - ...`). Resolvida por `GOV-04`: o v0 mantém o seu padrão no seu repositório e o `—` vale para o nome humano do ConectorGreen                                                                                                                                                                                                                                                       | dono do produto | RESOLVIDA (2026-10-07) |
 | 4   | Guarda automática opcional: formato do ID e do registro (teste de documentação). Não criada na ratificação. Precisa de decisão e escopo próprios antes, para não criar check novo sem aprovação                                                                                                                                                                                                                                                                          | arquitetura     | ABERTA (adiada)        |
 | 5   | O relatório `GREEN-MUTATION-CONTEXT-V2.md` cita `docs/audits/deskcomm-fit/05-...`, caminho que não existe neste repositório. Não corrigido aqui por tocar histórico selado                                                                                                                                                                                                                                                                                               | dono do produto | ABERTA                 |
+
+## Emenda de 18/10/2026
+
+Aprovada pelo dono do produto em 18/10/2026. Vale para o **título de ação** e prevalece sobre as seções 6 e 7 onde
+divergir. As 14 áreas (seção 4.1) e os sete tipos (seção 5) continuam como estão.
+
+1. **Separador.** O separador do título passa a ser hífen simples com espaços (`-`). Nunca travessão (`—`) nem
+   meia-risca (`–`), e nunca colchetes.
+2. **ID.** O ID da ação passa a ser o número da issue do GitHub, no formato `#N`, no terceiro bloco do título. O código
+   `CG-<ÁREA>-<NN>` deixa de ser o ID e passa a ser label da issue. "ID A DEFINIR" deixa de existir: cria-se a issue
+   antes.
+3. **Início.** O título nunca começa pelo nome do projeto.
+4. **Formato final.**
+
+   ```
+   ## Área - Ação ou objetivo - #N - Tipo SIGLA
+   ```
+
+   Exemplo: `## Fundação - Consolidação Documental para Integração - #142 - Tipo DOC`
+
+### Propostas pendentes
+
+Termos que apareceram fora da lista. Estão registrados aqui **sem aprovação**; só passam a valer por decisão do dono.
+
+| Termo        | Natureza |
+| ------------ | -------- |
+| Produtos     | área     |
+| Comercial    | área     |
+| Acesso       | área     |
+| Governança   | área     |
+| Validação    | área     |
+| Design       | área     |
+| Documentação | área     |
+| `INT`        | tipo     |
+| `TEST`       | tipo     |
+| `DIAG`       | tipo     |
+| `CONFIG`     | tipo     |
