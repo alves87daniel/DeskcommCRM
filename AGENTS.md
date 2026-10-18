@@ -172,35 +172,9 @@ Se a mudança toca schema/RLS/tabela tenant-aware, rode `pnpm test:db`. Se toca 
 usuário, rode `pnpm test:e2e` com evidência visual. Se toca `Dockerfile*`, `docker-compose*` ou
 `hostgator-setup-kit/`, rode `pnpm test:shell` — é o único gate que exercita o kit.
 
-**O que o CI cobre.** `.github/workflows/ci.yml`: `verify` = os passos do job, na ordem —
-typecheck, lint, `lint:channels`, `test:unit` e `test:shell` hoje, e `pnpm lint` sozinho **não**
-cobre os dois últimos (liste em vez de acreditar nesta linha:
-`awk '/^  verify:/,/^  invariants-majors:/' .github/workflows/ci.yml | grep -A1 'name:'`);
-`invariants` = fachada sobre a matriz `invariants-majors`, que roda `pnpm test:db` (isolamento
-RLS + invariantes de governança) e `pnpm test:db:update` (atualizar banco COM dados) uma vez por
-major de Postgres suportado. `.github/workflows/perf.yml`: `build-and-size` = `pnpm build`.
-`.github/workflows/e2e.yml` roda as specs Playwright contra um Supabase local de verdade com
-o `baseline.sql` aplicado — o mesmo banco que o self-hoster tem. **É check obrigatório** — a
-data de ativação não é auditável pelo repositório, e a lista viva está logo abaixo, com o
-comando ao lado. **Não há número aqui de propósito**: esta linha já afirmou uma contagem exata
-de specs e "a única de fora", e as duas envelheceram — a suíte cresce toda semana e a lista de
-exceções muda com ela. Quem fica de fora é o que a própria variável declara; leia, não confie:
-O CI tem cinco checks obrigatórios na `main`: `verify`, `build-and-size`, `invariants`, `e2e`,
-`imagens-ok`. Não confie nesta lista — reconte antes de citar:
-
-```bash
-gh api repos/alves87daniel/DeskcommCRM/branches/main/protection \
-  --jq '.required_status_checks.contexts|join(", ")'
-```
-
-`e2e` roda as partes da sua matrix em paralelo (quantas:
-`git show origin/main:.github/workflows/e2e.yml | grep -E '^ +parte: \['` — esta linha dizia
-"três" até o PR #983 acrescentar a quarta); as specs de fora estão declaradas, **com motivo
-escrito**, em `FORA_DO_CI` dentro de `.github/workflows/e2e.yml`. Leia em vez de supor:
-
-```bash
-git show origin/main:.github/workflows/e2e.yml | grep -A4 'FORA_DO_CI:'
-```
+**Checks do CI.** A lista dos obrigatórios vem do comando do bloco do fork, no topo deste
+arquivo, nunca de uma prosa. O que cada job mede (`verify`, `invariants`, `build-and-size`,
+`e2e`, `imagens-ok`) e o que `FORA_DO_CI` exclui: [`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
 
 ## Embedded Assistant Guides
 
@@ -209,7 +183,6 @@ o Claude Code lê o espelho em `.claude/skills/`). Carregue o guia quando o pedi
 a pessoa não saiba que ele existe — `tests/unit/skills-embutidas.test.ts` exige que este arquivo
 cite cada um:
 
-**Os cinco são checks obrigatórios** na branch protection da `main` — medido em 2026-08-14 @ `741c4ec8` (o comando exige permissão de **admin** no repositório: com token de contribuidor ele devolve `404`, medido em 2026-09-13):
 | Situação                                                                            | Guia                    |
 | ----------------------------------------------------------------------------------- | ----------------------- |
 | Instalar, atualizar ou consertar a instalação numa VPS; domínio, Supabase, WhatsApp | `deskcomm-instalar`     |
@@ -219,6 +192,7 @@ cite cada um:
 | Contribuir: corrigir bug, abrir ou atualizar PR, migration, conflito com a `main`   | `deskcomm-contribuir`   |
 | Criar extensão/plugin/módulo de nicho, ou transformar um PR de nicho em pacote      | `deskcomm-extensao`     |
 | Escrever ou revisar código aqui                                                     | `deskcomm-doutrina`     |
+| Ler o resultado do `pnpm test:unit` sem falso verde, antes de dizer que passou     | `deskcomm-ler-suite`    |
 
 O gate de arquitetura de qualquer peça que atende pessoas é a skill `sistema-vivo` (lei em
 [`docs/doctrine/sistema-vivo.md`](docs/doctrine/sistema-vivo.md)).
@@ -359,6 +333,10 @@ server; segredo em query string; `throw` cru na borda da API.
 | E2E (Playwright + axe-core)   | `pnpm test:e2e`      | Jornadas reais contra app buildado e o banco do `baseline.sql`                 |
 | Kit self-host (bash)          | `pnpm test:shell`    | `scripts` do kit, `install.sh`, `update.sh` — o único gate do kit              |
 | Jornadas de canal             | `pnpm test:journeys` | `tests/journeys/` (config Playwright própria)                                  |
+
+`pnpm test:unit` sem caminho é a suíte: `vitest run tests/unit` é um recorte. Para ler o resultado
+sem falso verde (o exit code é a autoridade; rodapé, `FAIL`, `Failed Suites`, `Errors`), use a
+skill `deskcomm-ler-suite`.
 
 Convenções: teste ao lado do código (`lib/foo/bar.test.ts`) ou em `tests/{unit,api,invariants,e2e}`.
 `tests/e2e/**` e `tests/invariants/**` são **excluídos** do vitest de propósito — não os mova para
@@ -553,6 +531,7 @@ casar, mesmo que a pessoa não saiba que ele existe. Fora de um clone (ou num cl
 | o agente responde errado, passa tudo para humano, não usa a agenda; melhorar o prompt | `deskcomm-prompt` |
 | contribuir: corrigir bug, abrir ou atualizar PR, migration, conflito com a `main` | `deskcomm-contribuir` — que fica quieto quando `bash .agents/skills/deskcomm-contribuir/scripts/quem-sou.sh` responde `mantenedor` |
 | escrever ou revisar código aqui | `deskcomm-doutrina` (as três regras que mais custam) e `sistema-vivo` (o gate de arquitetura) |
+| ler o resultado do `pnpm test:unit` sem falso verde, antes de dizer que a suíte passou | `deskcomm-ler-suite` |
 
 Os guias têm vitrine pública em [deskcomm.com.br/guias](https://www.deskcomm.com.br/guias) (pt-BR,
 en, es), escrita à mão no repositório `deskcomm-site` (`conteudo/guias.ts`). Guia criado,

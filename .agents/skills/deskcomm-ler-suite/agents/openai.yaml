@@ -1,0 +1,6 @@
+interface:
+  display_name: "Ler a suíte de testes do DeskcommCRM"
+  short_description: "Como ler o resultado do pnpm test:unit sem falso verde"
+  default_prompt: "Use a skill deskcomm-ler-suite antes de dizer que a suíte de testes passou."
+policy:
+  allow_implicit_invocation: true
