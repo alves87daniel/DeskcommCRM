@@ -389,11 +389,12 @@ pnpm playwright test tests/e2e/x.spec.ts    # uma spec e2e
 
 **`pnpm test:unit` (sem caminho) é a suíte: `vitest run tests/unit` é um recorte.** Para ler o
 resultado sem falso verde (o exit code é a autoridade; rodapé, `FAIL`, `Failed Suites`, `Errors`),
-use a skill `deskcomm-ler-suite`.
+use a skill `deskcomm-ler-suite`. Gate escolhido não é suíte: `typecheck` e `lint` verdes não
+dizem nada sobre o arquivo que quebrou.
 
 **Os invariantes não estão no `test:unit`.** `vitest.config.ts` exclui `tests/invariants/**` de propósito: essa suíte precisa de um Postgres real e roda via `vitest.db.config.ts`, orquestrada por `scripts/test-db.sh`. Rodar só `pnpm test:unit` e concluir "está tudo verde" é um falso verde — o isolamento RLS não foi exercitado.
 
-A lista de checks obrigatórios vem do comando do bloco do fork (linhas 7–9), nunca desta prosa. O
+A lista de checks obrigatórios vem do comando do bloco do fork, no topo, nunca desta prosa. O
 que cada job mede e o que `FORA_DO_CI` exclui:
 [`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
 

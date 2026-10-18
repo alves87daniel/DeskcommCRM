@@ -13,6 +13,9 @@ quer dizer nenhum:
 gh api repos/alves87daniel/DeskcommCRM/branches/main/protection --jq '.required_status_checks.contexts|join(", ")'
 ```
 
+Com token sem admin o comando devolve 404; isso não quer dizer lista vazia, e os checks que valem
+são os que o CI mostra no PR.
+
 Pergunte de novo antes de citar a lista. As versões anteriores do `CLAUDE.md` envelheceram duas
 vezes: uma dizia que o `e2e` não era obrigatório depois que ele passou a ser, e outra seguia
 dizendo "quatro" depois que o `imagens-ok` entrou. Triagem que lê a lista velha mede contra a
