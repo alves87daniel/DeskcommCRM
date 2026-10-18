@@ -1,8 +1,9 @@
 # Gabarito das regras não negociáveis do `CLAUDE.md`
 
 > Uma linha por regra, extraída do `CLAUDE.md` antes do enxugamento (issue #15). Entram os itens
-> classificados como REGRA no inventário e as regras de dentro dos itens mistos. A seção de origem
-> vai entre parênteses.
+> classificados como REGRA no inventário, as regras de dentro dos itens mistos e cinco regras de
+> itens PROC ou HIST que o dono do produto aprovou (167 a 171). A seção de origem vai entre
+> parênteses.
 >
 > Uso: ao fim do enxugamento, cada linha daqui precisa estar no `CLAUDE.md` ou ser alcançável por
 > um ponteiro a partir dele. Uma linha que não se acha em nenhum dos dois é regra perdida.
@@ -175,12 +176,6 @@
 164. PR que muda comportamento procura a afirmação de estado sobre ele nos documentos de autoridade e, onde puder, a troca por comando. (Definition of Done)
 165. PR que muda comportamento visível a quem opera uma VPS traz fragmento em `.changes/`, que declara o efeito no operador (`nada_mudou`, `capacidade_nova` ou `exige_acao`), nunca o número. (Definition of Done)
 166. PR que muda comportamento declara o destino (núcleo, extensão, ambos ou infraestrutura), com a razão medida pela pergunta da doutrina de extensões. (Definition of Done)
-
-## Regras de dentro de itens que o inventário classificou como PROC ou HIST
-
-Estas linhas soam como regra, mas os itens de origem não foram classificados como REGRA. Ficam
-aqui para que o enxugamento não as perca. Quem revisar decide se ficam no gabarito.
-
 167. Ao mudar doutrina no `CLAUDE.md`, atualizar o `AGENTS.md`, que é derivado dele. (Preâmbulo)
 168. Arquivo de migration segue `<timestamp>_<NNNN>_<slug>.sql`, e o `NNNN` sai de `pnpm checar:colisao-de-migration`, nunca da listagem do disco. (Migrations, passo 1)
 169. No `baseline.sql` vale a última definição de cada função: perguntar ao banco ou ancorar na última ocorrência, nunca contar com `grep` no arquivo inteiro. (Migrations, passo 10)
