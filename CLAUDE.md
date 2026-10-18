@@ -103,7 +103,7 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 
 ### Audit log
 - Toda mutação POST/PATCH/DELETE bem-sucedida → 1 entrada em `api_audit_log` (fire-and-forget, p99 ≤500ms)
-- Cron que não fez nada não audita. Quem fez, audita. `api_audit_log` é append-only para anon/authenticated/service_role (0258), e o que protege é `revoke` explícito no apêndice, nunca o grant enumerado do dump. Retenção de 5 anos via `fn_expurgar_auditoria_vencida`, sem camada cold. Prova, comandos e racional: [`docs/doctrine/auditoria.md`](docs/doctrine/auditoria.md).
+- Cron que não fez nada não audita. Quem fez, audita. `api_audit_log` é append-only para anon/authenticated/service_role (0258), e o que protege é `revoke` explícito no apêndice, nunca o grant enumerado do dump. Retenção de 5 anos via `fn_expurgar_auditoria_vencida`, sem camada cold (knob `AUDIT_LOG_RETENTION_DAYS`, piso de 90 dias). Prova, comandos e racional: [`docs/doctrine/auditoria.md`](docs/doctrine/auditoria.md).
 - Falha de write em audit gera alerta Sentry, não bloqueia mutação principal
 
 ### LGPD

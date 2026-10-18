@@ -18,7 +18,7 @@ Se a leitura for manual, três coisas são obrigatórias: um `git fetch` antes (
 não é a main atual), `git ls-tree` da main do PRODUTO e não `ls` do disco, e o `NNNN` tirado
 com a **âncora do nome canônico** aplicada ao nome **sem a pasta** —
 `sed 's#.*/##' | sed -nE 's#^[0-9]{14}_([0-9]{4})_.*#\1#p'`. O
-`ls | grep -oE '_[0-9]{4}_'` que estava aqui pegava um `_NNNN_` do SLUG (com
+`ls | grep -oE '_[0-9]{4}_'` que estava no CLAUDE.md pegava um `_NNNN_` do SLUG (com
 `…_0326_relatorio_2024_anual.sql` o teto virava 2024) e media a árvore de
 trabalho, onde a 0336 já podia estar reservada por um PR aberto (#1273).
 

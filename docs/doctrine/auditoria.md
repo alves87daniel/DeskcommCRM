@@ -21,8 +21,8 @@ psql "$SUPABASE_DB_URL" -c "select grantee, privilege_type from information_sche
 O resultado esperado é **vazio**. Sem o filtro de `grantee` aparecem as linhas
 do dono `postgres` — e elas não são defeito.
 
-**Até a 0258 a primeira frase deste item era falsa no Supabase real, com o
-gate verde.** Todo projeto Supabase nasce com um default ACL de TABELAS em
+**Até a 0258 a frase "Audit é append-only para os papéis do PostgREST" era
+falsa no Supabase real, com o gate verde.** Todo projeto Supabase nasce com um default ACL de TABELAS em
 `public` que concede tudo aos três papéis — confira com
 `select defaclacl from pg_default_acl where defaclobjtype = 'r' and defaclnamespace = 'public'::regnamespace;`
 —, e o `GRANT` enumerado que o dump emite para esta tabela só ACRESCENTA, não
@@ -50,7 +50,7 @@ grep -nE '^GRANT [A-Z,]+ ON TABLE' supabase/baseline.sql | grep -v 'GRANT ALL'
 
 ## Retenção e expurgo
 
-**Retenção default de 5 anos, configurável, e agora EXECUTADA.** O expurgo é `public.fn_expurgar_auditoria_vencida` (`security definer`, **piso de 90 dias dentro do corpo**, revogada de anon/authenticated), chamada em lotes pelo cron `app/api/v1/cron/data-retention` (diário). O knob é `AUDIT_LOG_RETENTION_DAYS`. **Não há camada cold/S3** — o "hot 90 dias, cold (S3) o resto" que este arquivo afirmava por meses nunca existiu em código (auditoria de 2026-08-14: zero ocorrência de arquivamento), e um self-host não tem para onde arquivar: o Storage do cliente é a MESMA cota de 1 GB, já dividida com `whatsapp-media`. Para ver o que está em vigor: `grep -n "RETENCAO_AUDITORIA_DIAS" lib/retencao/politica.ts`
+**Retenção default de 5 anos, configurável, e agora EXECUTADA.** O expurgo é `public.fn_expurgar_auditoria_vencida` (`security definer`, **piso de 90 dias dentro do corpo**, revogada de anon/authenticated), chamada em lotes pelo cron `app/api/v1/cron/data-retention` (diário). O knob é `AUDIT_LOG_RETENTION_DAYS`. **Não há camada cold/S3** — o "hot 90 dias, cold (S3) o resto" que o CLAUDE.md afirmava por meses nunca existiu em código (auditoria de 2026-08-14: zero ocorrência de arquivamento), e um self-host não tem para onde arquivar: o Storage do cliente é a MESMA cota de 1 GB, já dividida com `whatsapp-media`. Para ver o que está em vigor: `grep -n "RETENCAO_AUDITORIA_DIAS" lib/retencao/politica.ts`
 
 ## Por que o expurgo não é porta de adulteração
 
