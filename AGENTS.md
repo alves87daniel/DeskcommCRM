@@ -517,6 +517,65 @@ isto, a operação comum continua inteira?** O não-negociável:
   ([ADR-0002](docs/adr/0002-tabelas-de-modulo-num-banco-so.md)): um banco só, `public`, tabelas criadas
   por função provisionadora fixa quando o módulo é instalado na instância.
 
+## Code Review Rules
+
+Regras para quem revisa um PR deste repositório, humano ou automático. Cada uma se confere no diff
+e diz o que apontar e qual é o caminho seguro. Violação de qualquer uma é bloqueadora (P1). Fonte:
+[`docs/doctrine/nao-negociaveis.md`](docs/doctrine/nao-negociaveis.md). O que o CI já reprova
+sozinho (lint, prettier, typecheck) fica fora desta lista.
+
+1. **Service role sem filtro de organização.** Aponte handler ou worker que usa `createAdminClient`
+   (`lib/supabase/admin.ts`) e consulta ou escreve tabela tenant-aware sem `.eq("organization_id", …)`,
+   ou que tira o `organization_id` do body, da query string ou de outro campo que o cliente controla.
+   Caminho seguro: resolver a organização de fonte confiável (sessão via `getUser()`, JWT, segredo de
+   webhook, token no path) e filtrar `organization_id` explicitamente em toda query, inclusive nas
+   que cruzam tabelas. Tabela tenant-aware nova tem
+   `organization_id uuid not null references organizations(id) on delete cascade` e policy
+   `tenant_isolation_<tabela>_all` via `fn_user_org_ids()`.
+2. **`getSession()` no backend.** Aponte qualquer `getSession()` em Route Handler, Server Component,
+   Server Action, `proxy.ts` ou worker. Caminho seguro: `supabase.auth.getUser()`, que valida o JWT
+   no servidor.
+3. **Segredo em query string ou em log.** Aponte API key, token ou bearer lido de `searchParams` ou
+   montado em URL, e segredo, token, CPF, telefone ou e-mail passado a `logger`, Sentry ou mensagem
+   de erro. Aponte também bearer gravado em texto claro no banco. Caminho seguro: credencial só em
+   header (`Authorization`, `X-Api-Key`), log com o identificador e não com o valor, e no banco só o
+   hash SHA256 do token.
+4. **Trigger Postgres que faz HTTP.** Aponte função de trigger que chama `net.http_*`, `pg_net`,
+   `http()` ou qualquer extensão de rede. Caminho seguro: o trigger insere uma linha em `event_log`,
+   e um worker ou cron consome a linha e dispara o efeito fora da transação.
+5. **Migration sem a tripla.** Aponte arquivo novo em `supabase/migrations/` sem, no mesmo PR, o
+   bloco correspondente no apêndice de `supabase/baseline.sql` (rotulado
+   `-- ---- <coisa> (migration NNNN) ----`) e a linha em `supabase/migrations/MANIFEST.md`. Aponte
+   também migration não idempotente (`create` sem `if not exists`, `add column` sem `if not exists`),
+   `BEGIN`/`COMMIT` explícito, edição de migration já aplicada, e `create function` em `public` sem
+   `revoke execute ... from public, anon`. Caminho seguro: migration idempotente, apêndice
+   idempotente e auto-curativo no baseline, linha no MANIFEST, e correção de migration antiga por
+   forward-fix nova.
+6. **Mutação sem audit log.** Aponte handler POST, PATCH ou DELETE de `app/api/v1` que conclui a
+   mutação sem chamar `audit()` de `lib/audit`, ou que bloqueia a resposta esperando o audit (ou
+   falha a mutação quando o audit falha). Aponte também handler mutante sem `requireSupportWrite(`
+   de `lib/impersonate/support.ts` antes do efeito. Caminho seguro: uma entrada em `api_audit_log`
+   por mutação bem-sucedida, fire-and-forget, com falha indo para o Sentry.
+7. **Input externo sem Zod.** Aponte `await req.json()`, `formData()`, `searchParams` ou payload de
+   webhook usado sem passar por um schema Zod (`.parse`/`.safeParse`), e env lida direto de
+   `process.env` fora de `lib/env.ts`. Caminho seguro: schema Zod na borda, erro devolvido por
+   `fail()` de `lib/api/wrappers.ts`, e env nova declarada em `lib/env.ts` e `.env.example`.
+8. **`console.log` em código que vai para a `main`.** Aponte `console.log`, `console.debug` ou
+   `console.info` novo em `app/`, `lib/`, `components/`, `workers/` ou `hooks/`; o lint só avisa,
+   não reprova. Caminho seguro: `logger` de `lib/logger.ts` ou breadcrumb do Sentry, sem dado
+   pessoal.
+9. **Tela nova sem porta.** Aponte `page.tsx` novo em `app/` sem entrada correspondente no
+   `NAV_CATALOG` de `lib/navigation/catalogo.ts`. Caminho seguro: declarar a tela no catálogo, no
+   grupo certo, ou incluí-la na allowlist de `tests/unit/navegacao-completude.test.ts` com
+   justificativa escrita.
+10. **Título do PR fora do padrão.** Aponte título que não segue `Área - Ação - #N - Tipo SIGLA`,
+    que usa travessão, meia-risca ou colchetes como separador, que não traz o número da issue, ou
+    que começa pelo nome do projeto. Caminho seguro: hífen simples com espaços e o número da issue
+    no terceiro bloco, como em
+    `Fundação - Gabarito de regras não negociáveis do CLAUDE.md - #15 - Tipo DOC`; o corpo traz
+    `Closes #N`. Régua em
+    [`docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md`](docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md).
+
 ## Critério de conclusão
 
 Vale a **Definition of Done em [`CLAUDE.md`](CLAUDE.md)** — conte lá em vez de confiar num número aqui (`sed -n '/^## Definition of Done/,/^Um staff engineer/p' CLAUDE.md | grep -cE '^[0-9]+\. '`; esta linha já disse 15 quando o DoD tinha 16). A régua tem que DELIMITAR a seção: a primeira versão desta linha oferecia `grep -c '^[0-9]\+\. \*\*' CLAUDE.md`, que devolve **25** — casa toda linha numerada em negrito do arquivo (anti-patterns, packaging, higiene de branches, migrations) e perde os itens 1–10 do próprio DoD, que não são negrito. Trocar o número pelo comando só ajuda se o comando responder à pergunta. Não declare pronto
