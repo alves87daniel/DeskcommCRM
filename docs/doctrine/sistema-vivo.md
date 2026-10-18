@@ -173,3 +173,13 @@ Primeira passada ancorada no grafo (`graphify`) + `docs/architecture/`. A doutri
 **Acionado em 2026-08-03 — para a pergunta da porta.** A condição acima ("se a doutrina começar a vazar na prática") se cumpriu: nove telas sem porta, todas aprovadas por um gate de hábito. `navegacao-completude.test.ts` varre `app/app/**/page.tsx` e cruza com o registro nos dois sentidos — tela sem porta e destino apontando para rota inexistente. A allowlist exige justificativa escrita por entrada, e um teste cobra que a justificativa exista.
 
 O caso é instrutivo sobre o limite do gate de hábito: **o próprio teste achou duas telas órfãs que três varreduras manuais nesta sessão não acharam** — incluindo uma (`/app/ai/proposals`) que eu havia declarado, com convicção, não ser uma tela. A varredura por arquivo não tem opinião. Onde a propriedade a garantir é *enumerável a partir do repositório*, o teste ganha do hábito; onde ela exige julgamento (a peça faz sentido? o log é útil?), o hábito continua sendo o instrumento certo.
+
+**Onde se declara a porta: no catálogo, não no registro.** O item 14 do Definition of Done (`CLAUDE.md`) dizia `lib/navigation/registry.ts`, e quem o seguisse abria um
+arquivo **sem um único lugar onde declarar**: o `registry.ts` só deriva
+(`NAV_DESTINATIONS` sai de `NAV_CATALOG`) e reexporta. Ele é a FACE do
+módulo — é dele que o teste importa, e por isso o engano é fácil. Quem
+declara é o catálogo. Para conferir sem acreditar neste parágrafo:
+
+```bash
+grep -c 'href:' lib/navigation/catalogo.ts lib/navigation/registry.ts
+```

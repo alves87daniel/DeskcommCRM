@@ -130,3 +130,13 @@ stack em operação, não o WAHA isolado — e a folga existe justamente porque 
 parcela por sessão não é conhecida com precisão.
 
 Ao terminar, feche o ciclo — merge na `main` e volte a VPS pra imagem oficial.
+
+## Histórico: o `worker` que se construía na VPS
+
+> Saiu do `CLAUDE.md` (seção Deploy em produção) no enxugamento da issue #21.
+
+A frase "o caminho normal não constrói nada na VPS" já foi meia-verdade: valia para o `app` e era falsa para o produto,
+porque o serviço `worker` não tinha `image:` — era construído na VPS de todo
+cliente e nunca reconstruído por nenhum `update.sh`. Hoje os três serviços
+nossos (`app`, `worker`, `scheduler`) são imagens publicadas, e um teste
+reprova o retorno do padrão. Ver [`docs/doctrine/packaging.md`](../doctrine/packaging.md).

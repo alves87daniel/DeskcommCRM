@@ -23,6 +23,8 @@ régua errada.
 
 ## O que cada job mede
 
+- **`claude-review`** (`claude-code-review.yml`) e o `@claude` (`claude.yml`) — a `claude-code-action` restaura `CLAUDE.md` e `.claude/` a partir da `main` antes de rodar (o head do PR é tratado como não confiável), então edição nesses arquivos não pode ser pedida via `@claude` no PR: faça localmente.
+
 - **`verify`** (`ci.yml`) — **job de fachada** sobre a matriz `verify-parte`, como o
   `invariants`. Juntas, as partes rodam as cercas estruturais, typecheck, lint, `lint:channels`,
   a auditoria de `role-rank`, a guarda de colisão de migration, o `test:unit` dividido entre elas

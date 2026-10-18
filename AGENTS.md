@@ -60,7 +60,7 @@ Playwright 1 · Sentry 11 · WAHA 2026.7.2 (engine NOWEB) · Upstash Redis · Ve
 - **Auth** — Supabase Auth + `@supabase/ssr`, cookie `SameSite=Strict`. Sempre `getUser()` no
   server; **nunca** `getSession()`. MFA TOTP é opcional e ligado por quem administra
   (duas políticas que somam: plataforma e organização), regra pura em
-  `lib/auth/politica-mfa.ts`.
+  `lib/auth/politica-mfa.ts`. Quem tem fator prova sempre: [`docs/doctrine/auth-e-mfa.md`](docs/doctrine/auth-e-mfa.md).
 - **Filas** — event sourcing leve: `event_log` + workers drenados por cron. Trigger Postgres
   **nunca** faz HTTP.
 - **IA** — Vercel AI Gateway (Anthropic primário; embeddings pela OpenAI ou pelo Google, escolha da organização), RAG por tenant,
@@ -88,7 +88,7 @@ Superfícies **não-cookie** (cada uma com guard próprio, nunca o cookie de ses
 `lib/api/auth-dual.ts`. Esta última cresce rota por rota (decisão do dono em 17/09/2026: converter
 o que cada integração precisar), então o inventário é um comando e não uma lista:
 `git grep -ln "auth-dual" -- app/api/v1`. Rota com o helper **também** precisa de entrada em
-`lib/auth/public-paths.ts`, senão o `proxy.ts` devolve 401 antes do handler. Inventário e superfície de ataque: [`docs/threat-model.md`](docs/threat-model.md).
+`lib/auth/public-paths.ts`, senão o `proxy.ts` devolve 401 antes do handler. Detalhes: [`docs/doctrine/api-auth-dual.md`](docs/doctrine/api-auth-dual.md). Inventário e superfície de ataque: [`docs/threat-model.md`](docs/threat-model.md).
 
 Turno do agente de IA: inbound WhatsApp → HMAC + idempotência → `event_log` → worker →
 `runAgentTurn` (RAG + tools MCP) → guardrails → adapter WAHA → handoff humano se o gatilho
@@ -235,7 +235,7 @@ filtra `organization_id` manualmente. Sem gate automático para isso — a respo
 **Audit log** — cron que não fez nada não audita; quem fez, audita. `api_audit_log` é append-only
 para anon/authenticated/service_role (0258), e o que protege é `revoke` explícito no apêndice,
 nunca o grant enumerado do dump. Retenção de 5 anos via `fn_expurgar_auditoria_vencida`, sem
-camada cold. Prova, comandos e racional: [`docs/doctrine/auditoria.md`](docs/doctrine/auditoria.md).
+camada cold (knob `AUDIT_LOG_RETENTION_DAYS`, piso de 90 dias). Prova, comandos e racional: [`docs/doctrine/auditoria.md`](docs/doctrine/auditoria.md).
 
 **Migrations** — mudança de schema sai **sempre** como tripla: migration versionada em
 `supabase/migrations/`, apêndice idempotente em `supabase/baseline.sql` e linha em
@@ -277,7 +277,7 @@ o controlador (`organizations.legal_name`) e o DPO.
   de roteamento. Todo `up -d` leva os **dois** arquivos de compose:
 **Anti-patterns proibidos** — string que deveria ser FK; duplicação sem source of truth declarado;
 feature nomeando um provider de canal (gate `pnpm lint:channels`); tela nova sem porta declarada em
-`lib/navigation/registry.ts` (gate `tests/unit/navegacao-completude.test.ts`); `getSession()` no
+`lib/navigation/catalogo.ts` (gate `tests/unit/navegacao-completude.test.ts`); `getSession()` no
 server; segredo em query string; `throw` cru na borda da API.
 
 ## Important Files
@@ -379,7 +379,8 @@ pela tela como um usuário leigo faria, em ambiente fresco estilo VPS, com evid�
 `curl` não conta como prova de UX. Quando o caminho passa por um agente de IA, o caso de aceite
 mede o **par** (tela pelo agente + ferramenta chamada direto, com o mesmo texto cru) e só conta
 quando os dois concordam: [`docs/doctrine/prova-em-par.md`](docs/doctrine/prova-em-par.md). Mapa de jornadas:
-[`docs/testing/user-journey-map.md`](docs/testing/user-journey-map.md).
+[`docs/testing/user-journey-map.md`](docs/testing/user-journey-map.md). Receita do ambiente fresco e registro:
+[`docs/doctrine/qa-visual.md`](docs/doctrine/qa-visual.md).
 
 Cada linha abaixo traz o comando que a mede — **rode o comando em vez de citar número**. Este
 bloco já foi datado num SHA uma vez e não funcionou: os itens envelhecem em ritmos diferentes, e o
@@ -478,7 +479,7 @@ itens envelhecem em ritmos diferentes, e o cabeçalho passava a mentir por todos
 - Descadastro (STOP): quem bloqueia é só a regra de `lib/opt-out/deteccao.ts`, quando o próprio cliente
   manda o STOP (não há bloqueio à mão no produto — `lib/channels/pos-entrada.ts` é o único escritor); o Jev
   (`lib/ai/decisao/pedidos.ts`) só é perguntado onde ela disse não, e nunca bloqueia ninguém — no
-  máximo abre um aviso na Central ("Avisar a equipe").
+  máximo abre um aviso na Central ("Avisar a equipe"). Regra e vocabulário: [`docs/doctrine/opt-out.md`](docs/doctrine/opt-out.md).
 
 ## Packaging — se você tocou `Dockerfile*`, `docker-compose*.yml` ou `hostgator-setup-kit/`
 
@@ -541,12 +542,6 @@ casar, mesmo que a pessoa não saiba que ele existe. Fora de um clone (ou num cl
 | escrever ou revisar código aqui | `deskcomm-doutrina` (as três regras que mais custam) e `sistema-vivo` (o gate de arquitetura) |
 | ler o resultado do `pnpm test:unit` sem falso verde, antes de dizer que a suíte passou | `deskcomm-ler-suite` |
 
-Os guias têm vitrine pública em [deskcomm.com.br/guias](https://www.deskcomm.com.br/guias) (pt-BR,
-en, es), escrita à mão no repositório `deskcomm-site` (`conteudo/guias.ts`). Guia criado,
-renomeado ou com comando novo → o PR avisa que aquela página precisa acompanhar. Ela sai do mesmo
-PR do `deskcomm-site` que a página de changelog; quem quiser saber se já está no ar usa o `curl` da
-seção "A vitrine" em [`docs/doctrine/versionamento.md`](docs/doctrine/versionamento.md).
-
 ## Regra final — não invente
 
 Este repositório tem PRDs, specs, regras de negócio e doutrina escritos
@@ -561,11 +556,6 @@ nunca o número. O número é calculado a partir do conjunto; confira com `pnpm 
 corte com `pnpm release:cortar`. Régua e porquê: [`docs/doctrine/versionamento.md`](docs/doctrine/versionamento.md).
 Quem instalou lê o [`CHANGELOG.md`](CHANGELOG.md) antes de rodar `update.sh` — mudança que exige
 ação manual aparece sob "⚠️ Requer atenção".
-Toda versão publicada aparece também em [deskcomm.com.br/changelog](https://www.deskcomm.com.br/changelog)
-(pt-BR, en, es): a LP lê o `CHANGELOG.md` da `main`, ninguém escreve release no site, e o último
-passo do corte reprova se a versão não chegou lá. Mudar o cabeçalho `## [X.Y.Z] — AAAA-MM-DD` quebra
-essa página — ver "A vitrine" em `docs/doctrine/versionamento.md`. Enquanto as três páginas não
-responderem 200, esse passo reprova TODO corte; o `curl` que mede isso abre aquela seção.
 
 **Regra final — não invente.** Este repositório tem PRDs, specs, regras de negócio e doutrina
 escritos. Nunca invente regra de negócio, número, SLA ou comportamento de produto. Se a regra não
