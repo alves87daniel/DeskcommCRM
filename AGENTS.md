@@ -60,7 +60,7 @@ Playwright 1 · Sentry 11 · WAHA 2026.7.2 (engine NOWEB) · Upstash Redis · Ve
 - **Auth** — Supabase Auth + `@supabase/ssr`, cookie `SameSite=Strict`. Sempre `getUser()` no
   server; **nunca** `getSession()`. MFA TOTP é opcional e ligado por quem administra
   (duas políticas que somam: plataforma e organização), regra pura em
-  `lib/auth/politica-mfa.ts`.
+  `lib/auth/politica-mfa.ts`. Quem tem fator prova sempre: [`docs/doctrine/auth-e-mfa.md`](docs/doctrine/auth-e-mfa.md).
 - **Filas** — event sourcing leve: `event_log` + workers drenados por cron. Trigger Postgres
   **nunca** faz HTTP.
 - **IA** — Vercel AI Gateway (Anthropic primário; embeddings pela OpenAI ou pelo Google, escolha da organização), RAG por tenant,
@@ -88,7 +88,7 @@ Superfícies **não-cookie** (cada uma com guard próprio, nunca o cookie de ses
 `lib/api/auth-dual.ts`. Esta última cresce rota por rota (decisão do dono em 17/09/2026: converter
 o que cada integração precisar), então o inventário é um comando e não uma lista:
 `git grep -ln "auth-dual" -- app/api/v1`. Rota com o helper **também** precisa de entrada em
-`lib/auth/public-paths.ts`, senão o `proxy.ts` devolve 401 antes do handler. Inventário e superfície de ataque: [`docs/threat-model.md`](docs/threat-model.md).
+`lib/auth/public-paths.ts`, senão o `proxy.ts` devolve 401 antes do handler. Detalhes: [`docs/doctrine/api-auth-dual.md`](docs/doctrine/api-auth-dual.md). Inventário e superfície de ataque: [`docs/threat-model.md`](docs/threat-model.md).
 
 Turno do agente de IA: inbound WhatsApp → HMAC + idempotência → `event_log` → worker →
 `runAgentTurn` (RAG + tools MCP) → guardrails → adapter WAHA → handoff humano se o gatilho
@@ -172,35 +172,9 @@ Se a mudança toca schema/RLS/tabela tenant-aware, rode `pnpm test:db`. Se toca 
 usuário, rode `pnpm test:e2e` com evidência visual. Se toca `Dockerfile*`, `docker-compose*` ou
 `hostgator-setup-kit/`, rode `pnpm test:shell` — é o único gate que exercita o kit.
 
-**O que o CI cobre.** `.github/workflows/ci.yml`: `verify` = os passos do job, na ordem —
-typecheck, lint, `lint:channels`, `test:unit` e `test:shell` hoje, e `pnpm lint` sozinho **não**
-cobre os dois últimos (liste em vez de acreditar nesta linha:
-`awk '/^  verify:/,/^  invariants-majors:/' .github/workflows/ci.yml | grep -A1 'name:'`);
-`invariants` = fachada sobre a matriz `invariants-majors`, que roda `pnpm test:db` (isolamento
-RLS + invariantes de governança) e `pnpm test:db:update` (atualizar banco COM dados) uma vez por
-major de Postgres suportado. `.github/workflows/perf.yml`: `build-and-size` = `pnpm build`.
-`.github/workflows/e2e.yml` roda as specs Playwright contra um Supabase local de verdade com
-o `baseline.sql` aplicado — o mesmo banco que o self-hoster tem. **É check obrigatório** — a
-data de ativação não é auditável pelo repositório, e a lista viva está logo abaixo, com o
-comando ao lado. **Não há número aqui de propósito**: esta linha já afirmou uma contagem exata
-de specs e "a única de fora", e as duas envelheceram — a suíte cresce toda semana e a lista de
-exceções muda com ela. Quem fica de fora é o que a própria variável declara; leia, não confie:
-O CI tem cinco checks obrigatórios na `main`: `verify`, `build-and-size`, `invariants`, `e2e`,
-`imagens-ok`. Não confie nesta lista — reconte antes de citar:
-
-```bash
-gh api repos/alves87daniel/DeskcommCRM/branches/main/protection \
-  --jq '.required_status_checks.contexts|join(", ")'
-```
-
-`e2e` roda as partes da sua matrix em paralelo (quantas:
-`git show origin/main:.github/workflows/e2e.yml | grep -E '^ +parte: \['` — esta linha dizia
-"três" até o PR #983 acrescentar a quarta); as specs de fora estão declaradas, **com motivo
-escrito**, em `FORA_DO_CI` dentro de `.github/workflows/e2e.yml`. Leia em vez de supor:
-
-```bash
-git show origin/main:.github/workflows/e2e.yml | grep -A4 'FORA_DO_CI:'
-```
+**Checks do CI.** A lista dos obrigatórios vem do comando do bloco do fork, no topo deste
+arquivo, nunca de uma prosa. O que cada job mede (`verify`, `invariants`, `build-and-size`,
+`e2e`, `imagens-ok`) e o que `FORA_DO_CI` exclui: [`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
 
 ## Embedded Assistant Guides
 
@@ -209,7 +183,6 @@ o Claude Code lê o espelho em `.claude/skills/`). Carregue o guia quando o pedi
 a pessoa não saiba que ele existe — `tests/unit/skills-embutidas.test.ts` exige que este arquivo
 cite cada um:
 
-**Os cinco são checks obrigatórios** na branch protection da `main` — medido em 2026-08-14 @ `741c4ec8` (o comando exige permissão de **admin** no repositório: com token de contribuidor ele devolve `404`, medido em 2026-09-13):
 | Situação                                                                            | Guia                    |
 | ----------------------------------------------------------------------------------- | ----------------------- |
 | Instalar, atualizar ou consertar a instalação numa VPS; domínio, Supabase, WhatsApp | `deskcomm-instalar`     |
@@ -219,6 +192,7 @@ cite cada um:
 | Contribuir: corrigir bug, abrir ou atualizar PR, migration, conflito com a `main`   | `deskcomm-contribuir`   |
 | Criar extensão/plugin/módulo de nicho, ou transformar um PR de nicho em pacote      | `deskcomm-extensao`     |
 | Escrever ou revisar código aqui                                                     | `deskcomm-doutrina`     |
+| Ler o resultado do `pnpm test:unit` sem falso verde, antes de dizer que passou     | `deskcomm-ler-suite`    |
 
 O gate de arquitetura de qualquer peça que atende pessoas é a skill `sistema-vivo` (lei em
 [`docs/doctrine/sistema-vivo.md`](docs/doctrine/sistema-vivo.md)).
@@ -258,6 +232,11 @@ ou e-mail; o `beforeSend` do Sentry higieniza, mas não é a única camada.
 em toda tabela tenant-aware. `lib/supabase/admin.ts` **bypassa RLS**: toda query com service role
 filtra `organization_id` manualmente. Sem gate automático para isso — a responsabilidade é sua.
 
+**Audit log** — cron que não fez nada não audita; quem fez, audita. `api_audit_log` é append-only
+para anon/authenticated/service_role (0258), e o que protege é `revoke` explícito no apêndice,
+nunca o grant enumerado do dump. Retenção de 5 anos via `fn_expurgar_auditoria_vencida`, sem
+camada cold (knob `AUDIT_LOG_RETENTION_DAYS`, piso de 90 dias). Prova, comandos e racional: [`docs/doctrine/auditoria.md`](docs/doctrine/auditoria.md).
+
 **Migrations** — mudança de schema sai **sempre** como tripla: migration versionada em
 `supabase/migrations/`, apêndice idempotente em `supabase/baseline.sql` e linha em
 `supabase/migrations/MANIFEST.md`. Nunca edite migration já aplicada; corrija com uma nova.
@@ -267,6 +246,9 @@ duas origens de `EXECUTE`.
 função aparece várias vezes, e quem vale é a **última**. Pergunte ao banco depois de aplicar
 (`pg_get_functiondef`) ou ancore no último `create or replace` (`rfind`, nunca `find`).
 Contar no arquivo responde "o arquivo menciona", não "o banco faz".
+O `NNNN` sai de `pnpm checar:colisao-de-migration`, nunca de `ls | tail`: o teto é a `main` mais
+todo PR em voo. Numeração, as duas origens de `EXECUTE` e a leitura do baseline:
+[`docs/doctrine/migrations.md`](docs/doctrine/migrations.md).
 
 **Marca própria (white-label)** — o produto é revendido e o nome não é seu. **Nunca** escreva
 "Deskcomm"/"DeskcommCRM" em código que alcança o usuário: `tests/unit/branding.test.ts` varre
@@ -295,7 +277,7 @@ o controlador (`organizations.legal_name`) e o DPO.
   de roteamento. Todo `up -d` leva os **dois** arquivos de compose:
 **Anti-patterns proibidos** — string que deveria ser FK; duplicação sem source of truth declarado;
 feature nomeando um provider de canal (gate `pnpm lint:channels`); tela nova sem porta declarada em
-`lib/navigation/registry.ts` (gate `tests/unit/navegacao-completude.test.ts`); `getSession()` no
+`lib/navigation/catalogo.ts` (gate `tests/unit/navegacao-completude.test.ts`); `getSession()` no
 server; segredo em query string; `throw` cru na borda da API.
 
 ## Important Files
@@ -360,6 +342,10 @@ server; segredo em query string; `throw` cru na borda da API.
 | Kit self-host (bash)          | `pnpm test:shell`    | `scripts` do kit, `install.sh`, `update.sh` — o único gate do kit              |
 | Jornadas de canal             | `pnpm test:journeys` | `tests/journeys/` (config Playwright própria)                                  |
 
+`pnpm test:unit` sem caminho é a suíte: `vitest run tests/unit` é um recorte. Para ler o resultado
+sem falso verde (o exit code é a autoridade; rodapé, `FAIL`, `Failed Suites`, `Errors`), use a
+skill `deskcomm-ler-suite`.
+
 Convenções: teste ao lado do código (`lib/foo/bar.test.ts`) ou em `tests/{unit,api,invariants,e2e}`.
 `tests/e2e/**` e `tests/invariants/**` são **excluídos** do vitest de propósito — não os mova para
 dentro do include do unit. Fixtures em `tests/fixtures/`, helpers em `tests/helpers/`, setup global
@@ -393,7 +379,8 @@ pela tela como um usuário leigo faria, em ambiente fresco estilo VPS, com evid�
 `curl` não conta como prova de UX. Quando o caminho passa por um agente de IA, o caso de aceite
 mede o **par** (tela pelo agente + ferramenta chamada direto, com o mesmo texto cru) e só conta
 quando os dois concordam: [`docs/doctrine/prova-em-par.md`](docs/doctrine/prova-em-par.md). Mapa de jornadas:
-[`docs/testing/user-journey-map.md`](docs/testing/user-journey-map.md).
+[`docs/testing/user-journey-map.md`](docs/testing/user-journey-map.md). Receita do ambiente fresco e registro:
+[`docs/doctrine/qa-visual.md`](docs/doctrine/qa-visual.md).
 
 Cada linha abaixo traz o comando que a mede — **rode o comando em vez de citar número**. Este
 bloco já foi datado num SHA uma vez e não funcionou: os itens envelhecem em ritmos diferentes, e o
@@ -492,7 +479,7 @@ itens envelhecem em ritmos diferentes, e o cabeçalho passava a mentir por todos
 - Descadastro (STOP): quem bloqueia é só a regra de `lib/opt-out/deteccao.ts`, quando o próprio cliente
   manda o STOP (não há bloqueio à mão no produto — `lib/channels/pos-entrada.ts` é o único escritor); o Jev
   (`lib/ai/decisao/pedidos.ts`) só é perguntado onde ela disse não, e nunca bloqueia ninguém — no
-  máximo abre um aviso na Central ("Avisar a equipe").
+  máximo abre um aviso na Central ("Avisar a equipe"). Regra e vocabulário: [`docs/doctrine/opt-out.md`](docs/doctrine/opt-out.md).
 
 ## Packaging — se você tocou `Dockerfile*`, `docker-compose*.yml` ou `hostgator-setup-kit/`
 
@@ -553,12 +540,7 @@ casar, mesmo que a pessoa não saiba que ele existe. Fora de um clone (ou num cl
 | o agente responde errado, passa tudo para humano, não usa a agenda; melhorar o prompt | `deskcomm-prompt` |
 | contribuir: corrigir bug, abrir ou atualizar PR, migration, conflito com a `main` | `deskcomm-contribuir` — que fica quieto quando `bash .agents/skills/deskcomm-contribuir/scripts/quem-sou.sh` responde `mantenedor` |
 | escrever ou revisar código aqui | `deskcomm-doutrina` (as três regras que mais custam) e `sistema-vivo` (o gate de arquitetura) |
-
-Os guias têm vitrine pública em [deskcomm.com.br/guias](https://www.deskcomm.com.br/guias) (pt-BR,
-en, es), escrita à mão no repositório `deskcomm-site` (`conteudo/guias.ts`). Guia criado,
-renomeado ou com comando novo → o PR avisa que aquela página precisa acompanhar. Ela sai do mesmo
-PR do `deskcomm-site` que a página de changelog; quem quiser saber se já está no ar usa o `curl` da
-seção "A vitrine" em [`docs/doctrine/versionamento.md`](docs/doctrine/versionamento.md).
+| ler o resultado do `pnpm test:unit` sem falso verde, antes de dizer que a suíte passou | `deskcomm-ler-suite` |
 
 ## Regra final — não invente
 
@@ -574,11 +556,6 @@ nunca o número. O número é calculado a partir do conjunto; confira com `pnpm 
 corte com `pnpm release:cortar`. Régua e porquê: [`docs/doctrine/versionamento.md`](docs/doctrine/versionamento.md).
 Quem instalou lê o [`CHANGELOG.md`](CHANGELOG.md) antes de rodar `update.sh` — mudança que exige
 ação manual aparece sob "⚠️ Requer atenção".
-Toda versão publicada aparece também em [deskcomm.com.br/changelog](https://www.deskcomm.com.br/changelog)
-(pt-BR, en, es): a LP lê o `CHANGELOG.md` da `main`, ninguém escreve release no site, e o último
-passo do corte reprova se a versão não chegou lá. Mudar o cabeçalho `## [X.Y.Z] — AAAA-MM-DD` quebra
-essa página — ver "A vitrine" em `docs/doctrine/versionamento.md`. Enquanto as três páginas não
-responderem 200, esse passo reprova TODO corte; o `curl` que mede isso abre aquela seção.
 
 **Regra final — não invente.** Este repositório tem PRDs, specs, regras de negócio e doutrina
 escritos. Nunca invente regra de negócio, número, SLA ou comportamento de produto. Se a regra não

@@ -195,6 +195,8 @@ correção é prioridade, não tipo. Tipos de **commit** (seção 8) são outro 
 
 ## 6. Identificação
 
+> Superado pela Emenda de 18/10/2026 no que diz respeito a separador e ID; ver fim do documento.
+
 ### 6.1 Formato
 
 ```text
@@ -251,6 +253,8 @@ essas são decisões separadas, tomadas pelo dono do produto, e não se deduzem 
 | Tags (`GREEN-BASELINE-1.0`, `v1.69.0`)       | Marcos do Git                                     | Imutáveis; citar o ID do item que as produziu, se existir        |
 
 ## 7. Nomes humanos
+
+> Superado pela Emenda de 18/10/2026 no que diz respeito a separador e ID; ver fim do documento.
 
 ### 7.1 Formato
 
@@ -373,6 +377,8 @@ criada.
 | `GOV-04` | 2026-10-07 | Nome humano com travessão entre área e resultado; ID ao final nos títulos de PR e sessão (seção 7) | APROVADA | Travessão `—` mantido como separador do nome humano, que vem primeiro nos títulos visíveis. Não altera as convenções técnicas de Git. Pendência 3 resolvida                                                                                                                                                                   |
 | `GOV-05` | 2026-10-07 | Convenções operacionais novas de branch, commit, documento, ADR e migration (seção 8)              | APROVADA | Convenções mantidas sem alteração. Nenhuma guarda automática de ID criada nesta ratificação (pendência 4)                                                                                                                                                                                                                     |
 
+> `GOV-03` e `GOV-04`: Superado pela Emenda de 18/10/2026 no que diz respeito a separador e ID; ver fim do documento.
+
 ## 12. Pendências
 
 | #   | Pendência                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Dono            | Estado                 |
@@ -382,3 +388,37 @@ criada.
 | 3   | O travessão `—` do nome humano diverge da regra de separador ASCII do v0 (`F0 - P0.2 - ...`). Resolvida por `GOV-04`: o v0 mantém o seu padrão no seu repositório e o `—` vale para o nome humano do ConectorGreen                                                                                                                                                                                                                                                       | dono do produto | RESOLVIDA (2026-10-07) |
 | 4   | Guarda automática opcional: formato do ID e do registro (teste de documentação). Não criada na ratificação. Precisa de decisão e escopo próprios antes, para não criar check novo sem aprovação                                                                                                                                                                                                                                                                          | arquitetura     | ABERTA (adiada)        |
 | 5   | O relatório `GREEN-MUTATION-CONTEXT-V2.md` cita `docs/audits/deskcomm-fit/05-...`, caminho que não existe neste repositório. Não corrigido aqui por tocar histórico selado                                                                                                                                                                                                                                                                                               | dono do produto | ABERTA                 |
+
+## Emenda de 18/10/2026
+
+Aprovada pelo dono do produto em 18/10/2026. Vale para o **título de ação** e prevalece sobre as seções 6 e 7 onde
+divergir. As 14 áreas (seção 4.1) e os sete tipos (seção 5) continuam como estão.
+
+1. **Separador.** O separador do título passa a ser hífen simples com espaços (`-`). Nunca travessão (`—`) nem
+   meia-risca (`–`), e nunca colchetes.
+2. **ID.** O ID da ação passa a ser o número da issue do GitHub, no formato `#N`, no terceiro bloco do título. O código
+   `CG-<ÁREA>-<NN>` deixa de ser o ID e passa a ser label da issue. "ID A DEFINIR" deixa de existir: cria-se a issue
+   antes.
+3. **Início.** O título nunca começa pelo nome do projeto.
+4. **Formato final.**
+
+   ```
+   ## Área - Ação ou objetivo - #N - Tipo SIGLA
+   ```
+
+   Exemplo: `## Fundação - Consolidação Documental para Integração - #142 - Tipo DOC`
+
+### Propostas pendentes
+
+Termos que apareceram fora da lista. Estão registrados aqui **sem aprovação**; só passam a valer por decisão do dono.
+
+| Termo        | Natureza |
+| ------------ | -------- |
+| Governança   | área     |
+| Validação    | área     |
+| Design       | área     |
+| Documentação | área     |
+| `INT`        | tipo     |
+| `TEST`       | tipo     |
+| `DIAG`       | tipo     |
+| `CONFIG`     | tipo     |

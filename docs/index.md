@@ -95,6 +95,15 @@ Detalham schema SQL e payloads exatos. **Consulte antes de modelar qualquer cois
 | [`doctrine/prova-em-par.md`](doctrine/prova-em-par.md) | **Prova em Par — emenda ao item 12 do DoD.** Caso de aceite que atravessa agente de IA mede tela + ferramenta com o mesmo texto cru, e só conta quando os dois concordam |
 | [`doctrine/destrutivo-pede-confirmacao.md`](doctrine/destrutivo-pede-confirmacao.md) | Ação destrutiva pede confirmação que **nomeia o alvo** — dois botões gêmeos, o mesmo contrato |
 | [`doctrine/extensoes.md`](doctrine/extensoes.md) | **Doutrina de Extensões — a LEI.** Núcleo × extensão pela pergunta "com zero ativações a operação comum continua inteira?" + 13 não-negociáveis, com as políticas do DEC-004 (item 18 do DoD) |
+| [`doctrine/api-auth-dual.md`](doctrine/api-auth-dual.md) | **Auth dual na API** — cookie ou `Bearer dsk_`, habilitado rota por rota pelo helper e por `lib/auth/public-paths.ts` |
+| [`doctrine/auth-e-mfa.md`](doctrine/auth-e-mfa.md) | **MFA** — as duas políticas que somam, cadastrar × provar, e onde se liga e desliga |
+| [`doctrine/opt-out.md`](doctrine/opt-out.md) | **Opt-out (STOP)** — a regra única de `lib/opt-out/deteccao.ts`, o vocabulário e o papel do Jev |
+| [`doctrine/waha.md`](doctrine/waha.md) | **WAHA** — grupos ligados na inbox e o cron `recover-stuck-messages` |
+| [`doctrine/qa-visual.md`](doctrine/qa-visual.md) | **QA Visual com Recursos Reais** — o que conta como recurso real, prioridade de primeira impressão, registro e a receita do ambiente fresco |
+| [`doctrine/migrations.md`](doctrine/migrations.md) | **Migrations** — como achar o `NNNN` livre, as duas origens de `EXECUTE` numa função nova e por que no `baseline.sql` vale a última definição |
+| [`doctrine/auditoria.md`](doctrine/auditoria.md) | **Auditoria** — cron sem efeito não audita, append-only da 0258 sob o default ACL do Supabase, retenção e expurgo, com os comandos de conferência |
+| [`doctrine/checks-de-ci.md`](doctrine/checks-de-ci.md) | **Os checks do CI** — o que `verify`, `invariants`, `build-and-size`, `e2e` e `imagens-ok` medem, e os comandos que perguntam ao workflow em vez de confiar num número |
+| [`doctrine/nao-negociaveis.md`](doctrine/nao-negociaveis.md) | **Gabarito das regras não negociáveis do `CLAUDE.md`** — uma linha por regra, com a seção de origem. Toda linha precisa estar no `CLAUDE.md` ou ser alcançável por ponteiro a partir dele |
 | [`specs/19`](specs/19-spec-console-de-agencia.md) | **Console de Agência** — operar N organizações clientes; unidade de cobrança decidida (retainer por cliente operado). Lei em [`doctrine/operacao-de-agentes.md`](doctrine/operacao-de-agentes.md) |
 | [`adr/0001-packaging-e-distribuicao.md`](adr/0001-packaging-e-distribuicao.md) | ADR do packaging: namespace, os 3 packages, e o que foi recusado |
 | [`adr/0002-tabelas-de-modulo-num-banco-so.md`](adr/0002-tabelas-de-modulo-num-banco-so.md) | **Aceita em 17/09/2026.** Tabelas de módulo opcional: um banco só, `public`, criadas por função provisionadora fixa quando o módulo é instalado |
