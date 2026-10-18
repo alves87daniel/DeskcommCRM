@@ -12,7 +12,7 @@
   Cobre português e espanhol, nos dois níveis (inequívoco e ambíguo) — foi preciso um PR
   além do #275 (que só tinha coberto o vocabulário inequívoco) para o espanhol ganhar a
   camada ambígua e as construções com pronome preso ("escribirme"). Para ver o vocabulário
-  em vigor sem confiar nesta linha:
+  em vigor sem confiar neste texto:
   `sed -n '/PALAVRAS_DE_OPT_OUT/,/^]/p' lib/opt-out/deteccao.ts | grep -E '^ *"'`, e as frases de controle em
   `tests/unit/opt-out-deteccao.test.ts`.
   O Jev (`lib/ai/decisao/pedidos.ts`) só é perguntado onde esta regra disse não, e nunca bloqueia

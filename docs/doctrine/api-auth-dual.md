@@ -6,7 +6,7 @@
 - **Auth dual é a direção do produto, e ela se cumpre rota por rota.** Cookie de sessão para o
   frontend; `Authorization: Bearer dsk_...` (linha de `api_tokens`, resolvida no servidor) para
   chamada de servidor. O prefixo é **`dsk_`**, e quem o exige é `lib/mcp/auth.ts` — `tok_` nunca
-  existiu no código e estava escrito aqui, em `AGENTS.md` e na Spec 09 até 17/09/2026
+  existiu no código e estava escrito no `CLAUDE.md`, em `AGENTS.md` e na Spec 09 até 17/09/2026
   - O helper é `lib/api/auth-dual.ts`, e habilitar uma rota é **por rota**: não há chave geral.
     Para saber quais já aceitam bearer — o número muda, o comando não:
     `git grep -ln "auth-dual" -- app/api/v1` (mais `app/api/v1/contacts/route.ts`, que implementou
