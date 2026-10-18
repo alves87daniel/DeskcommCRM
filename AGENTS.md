@@ -232,6 +232,11 @@ ou e-mail; o `beforeSend` do Sentry higieniza, mas não é a única camada.
 em toda tabela tenant-aware. `lib/supabase/admin.ts` **bypassa RLS**: toda query com service role
 filtra `organization_id` manualmente. Sem gate automático para isso — a responsabilidade é sua.
 
+**Audit log** — cron que não fez nada não audita; quem fez, audita. `api_audit_log` é append-only
+para anon/authenticated/service_role (0258), e o que protege é `revoke` explícito no apêndice,
+nunca o grant enumerado do dump. Retenção de 5 anos via `fn_expurgar_auditoria_vencida`, sem
+camada cold. Prova, comandos e racional: [`docs/doctrine/auditoria.md`](docs/doctrine/auditoria.md).
+
 **Migrations** — mudança de schema sai **sempre** como tripla: migration versionada em
 `supabase/migrations/`, apêndice idempotente em `supabase/baseline.sql` e linha em
 `supabase/migrations/MANIFEST.md`. Nunca edite migration já aplicada; corrija com uma nova.
@@ -241,6 +246,9 @@ duas origens de `EXECUTE`.
 função aparece várias vezes, e quem vale é a **última**. Pergunte ao banco depois de aplicar
 (`pg_get_functiondef`) ou ancore no último `create or replace` (`rfind`, nunca `find`).
 Contar no arquivo responde "o arquivo menciona", não "o banco faz".
+O `NNNN` sai de `pnpm checar:colisao-de-migration`, nunca de `ls | tail`: o teto é a `main` mais
+todo PR em voo. Numeração, as duas origens de `EXECUTE` e a leitura do baseline:
+[`docs/doctrine/migrations.md`](docs/doctrine/migrations.md).
 
 **Marca própria (white-label)** — o produto é revendido e o nome não é seu. **Nunca** escreva
 "Deskcomm"/"DeskcommCRM" em código que alcança o usuário: `tests/unit/branding.test.ts` varre

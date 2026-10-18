@@ -103,47 +103,7 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 
 ### Audit log
 - Toda mutação POST/PATCH/DELETE bem-sucedida → 1 entrada em `api_audit_log` (fire-and-forget, p99 ≤500ms)
-- **Rodada de cron que não fez nada NÃO é mutação e não audita** — e a que fez, audita. `routing-worker` (1×/min) e o extinto `attendant-heartbeat` (1×/5min, removido no #720) auditavam incondicionalmente: ~51.840 linhas/mês numa instalação que não atende ninguém, e numa VPS real **95% do audit log** era batida de cron vazia (`docs/testing/user-journey-map.md`, achado 17). A guarda certa é *auditar quando houve efeito*, nunca *parar de auditar* — as duas direções são medidas por `tests/unit/cron-audita-so-quando-ha-efeito.test.ts`, que varre o AST de **toda** rota de `app/api/v1/cron/`
-- Audit é append-only para os papéis do PostgREST, e isso é do SCHEMA e não da prosa: `anon`, `authenticated` e `service_role` não têm GRANT de UPDATE, DELETE **nem TRUNCATE** em `api_audit_log` — **nem `service_role`** (migration 0258). O dono (`postgres`) pode tudo, como em qualquer tabela: a garantia é sobre os papéis que o PostgREST assume, nunca absoluta. Para conferir na fonte em vez de acreditar nesta linha:
-
-  ```bash
-  psql "$SUPABASE_DB_URL" -c "select grantee, privilege_type from information_schema.role_table_grants
-    where table_schema='public' and table_name='api_audit_log'
-      and privilege_type in ('DELETE','UPDATE','TRUNCATE')
-      and grantee in ('anon','authenticated','service_role','PUBLIC');"
-  ```
-
-  O resultado esperado é **vazio**. Sem o filtro de `grantee` aparecem as linhas
-  do dono `postgres` — e elas não são defeito.
-
-  **Até a 0258 a primeira frase deste item era falsa no Supabase real, com o
-  gate verde.** Todo projeto Supabase nasce com um default ACL de TABELAS em
-  `public` que concede tudo aos três papéis — confira com
-  `select defaclacl from pg_default_acl where defaclobjtype = 'r' and defaclnamespace = 'public'::regnamespace;`
-  —, e o `GRANT` enumerado que o dump emite para esta tabela só ACRESCENTA, não
-  retira. Com a service key, que ignora RLS, uma linha escolhida da auditoria
-  era apagada ou reescrita pela REST; `anon`/`authenticated` só não o faziam
-  porque a RLS não tem policy de UPDATE/DELETE.
-
-  **A lição que sobrevive ao conserto é sobre a régua, não sobre o grant.** A
-  sonda de `tests/invariants/retencao-poda-e-expurgo.test.ts` ficou verde duas
-  vezes medindo o universo errado: primeiro perguntando só por DELETE/UPDATE com
-  TRUNCATE concedido ao lado; depois perguntando pelos três num Postgres onde o
-  prelude de `scripts/test-db.sh` reproduzia o default ACL do Supabase só para
-  FUNÇÕES — um banco onde o defeito não podia existir. Desde a issue #887 o
-  prelude reproduz também o de TABELAS, e aquela sonda passou a medir o Supabase.
-  A prova com controle próprio segue sendo
-  `tests/invariants/audit-log-sob-o-default-acl-do-supabase.test.ts`: concede o
-  default ACL à tabela, reaplica o bloco da 0258 extraído do baseline e só então
-  sonda. **Enumerar privilégios no dump não protege tabela nenhuma no Supabase
-  real**; o que protege é `revoke` explícito no apêndice. Quais tabelas o dump
-  enumera em vez de `GRANT ALL`:
-
-  ```bash
-  grep -nE '^GRANT [A-Z,]+ ON TABLE' supabase/baseline.sql | grep -v 'GRANT ALL'
-  ```
-- **Retenção default de 5 anos, configurável, e agora EXECUTADA.** O expurgo é `public.fn_expurgar_auditoria_vencida` (`security definer`, **piso de 90 dias dentro do corpo**, revogada de anon/authenticated), chamada em lotes pelo cron `app/api/v1/cron/data-retention` (diário). O knob é `AUDIT_LOG_RETENTION_DAYS`. **Não há camada cold/S3** — o "hot 90 dias, cold (S3) o resto" que este arquivo afirmava por meses nunca existiu em código (auditoria de 2026-08-14: zero ocorrência de arquivamento), e um self-host não tem para onde arquivar: o Storage do cliente é a MESMA cota de 1 GB, já dividida com `whatsapp-media`. Para ver o que está em vigor: `grep -n "RETENCAO_AUDITORIA_DIAS" lib/retencao/politica.ts`
-- Por que uma `security definer` de expurgo não é porta de adulteração (o argumento inteiro está no cabeçalho da migration 0167): ela **não tem seletor de linha** — nenhum parâmetro de org, ator, ação ou id, e o único predicado é `created_at < now() - N dias`; o piso mora **no corpo**, não em quem chama; não é alcançável pela REST; é, desde a 0258, o **único** apagamento de auditoria ao alcance da service key — e não escolhe linha, só alcança a ponta mais velha que o piso; e **registra a própria erosão** (`retention.sweep_run`, com a contagem, numa linha nova demais para a chamada seguinte alcançar)
+- Cron que não fez nada não audita. Quem fez, audita. `api_audit_log` é append-only para anon/authenticated/service_role (0258), e o que protege é `revoke` explícito no apêndice, nunca o grant enumerado do dump. Retenção de 5 anos via `fn_expurgar_auditoria_vencida`, sem camada cold. Prova, comandos e racional: [`docs/doctrine/auditoria.md`](docs/doctrine/auditoria.md).
 - Falha de write em audit gera alerta Sentry, não bloqueia mutação principal
 
 ### LGPD
@@ -443,49 +403,7 @@ Ao mexer em schema, RLS, RBAC, atribuição, escopo, roteamento, follow-up, webh
 
 Processo padrão (siga sempre):
 
-1. **Arquivo versionado** em `supabase/migrations/` com o padrão do repo: `<timestamp>_<NNNN>_<slug>.sql` (ex.: `20260706210000_0027_whatsapp_conversation_unification.sql`). `NNNN` é o próximo número sequencial — e **não** é o do último arquivo da listagem:
-
-   ```bash
-   # A POPULAÇÃO da pergunta: main do PRODUTO (o remoto que aponta para
-   # alves87daniel/DeskcommCRM, com qualquer nome) + TODO PR ABERTO, inclusive de
-   # fork. O `ls` abaixo mede o DISCO, que responde uma pergunta menor.
-   pnpm checar:colisao-de-migration   # declara o que mediu e o que não mediu
-   ```
-
-   Se a leitura for manual, três coisas são obrigatórias: um `git fetch` antes (a árvore em dia
-   não é a main atual), `git ls-tree` da main do PRODUTO e não `ls` do disco, e o `NNNN` tirado
-   com a **âncora do nome canônico** aplicada ao nome **sem a pasta** —
-   `sed 's#.*/##' | sed -nE 's#^[0-9]{14}_([0-9]{4})_.*#\1#p'`. O
-   `ls | grep -oE '_[0-9]{4}_'` que estava aqui pegava um `_NNNN_` do SLUG (com
-   `…_0326_relatorio_2024_anual.sql` o teto virava 2024) e media a árvore de
-   trabalho, onde a 0336 já podia estar reservada por um PR aberto (#1273).
-
-   O `checar` mede o arquivo que você **já** acrescentou: sem migration nova, ele responde
-   `OK — nenhuma migration acrescentada` e não dá número. Crie o arquivo com um número provisório
-   e rode; ou, para alocar antes, use a enumeração do que está em voo em `triagem/TRIAGEM.md`
-   (modo de falha 37). O teto é a main **mais** tudo em voo, em NNNN **e** em timestamp.
-
-   O nome do arquivo começa pelo **timestamp**, e timestamp e `NNNN` podem discordar: em
-   09/09/2026 o `ls | tail -1` devolvia o `_0230_` (timestamp de 07/09) enquanto o maior `NNNN`
-   era `_0231_` (timestamp de 05/09). Um contribuidor externo seguiu a instrução antiga ao pé da
-   letra, escolheu `0231`, e o `manifest-x-migrations` reprovou o PR dele por colisão — a
-   instrução é que estava errada, não ele. Ordene pelo número, nunca pela listagem.
-
-   **E o número livre hoje pode estar tomado quando o seu PR entrar.** A colisão só aparece
-   quando o SEGUNDO PR de schema é mesclado — medido em 19/09/2026: **11 PRs abertos colidiam
-   com a `main` com os cinco checks obrigatórios verdes**. O `verify` **já executa** a guarda
-   (`pnpm checar:colisao-de-migration`, o alias de `scripts/checar-colisao-de-migration.sh` —
-   procurar pelo nome do arquivo no `ci.yml` devolve zero e mente), e mesmo assim os 12 passaram:
-   cada um mediu a `main` do dia em que rodou — o `verify` do #965 terminou em 16/09 e segue verde.
-   Por isso há duas camadas a mais: o CI reprova quando **um número deste PR foi tomado** por
-   migration que entrou na base depois da prévia (colisão, nunca atraso — PR atrasado e sem colisão
-   segue verde), e fora de `pull_request` ele varre a árvore inteira — nenhum `NNNN` nem timestamp pode aparecer duas vezes na `main`. Antes de escolher o número quando houver outros PRs de schema em voo, peça-o
-   a quem estiver alocando na rodada: **não há reserva, quem mescla primeiro fica com o número**.
-   Para ver o que está tomado agora, incluindo o que ainda não foi mesclado:
-
-   ```bash
-   pnpm checar:colisao-de-migration          # mede o SEU PR contra origin/main
-   ```
+1. **Arquivo versionado** em `supabase/migrations/` com o padrão `<timestamp>_<NNNN>_<slug>.sql`. O `NNNN` sai de `pnpm checar:colisao-de-migration`, nunca de `ls | tail`: o teto é a `main` mais todo PR em voo, e quem mescla primeiro fica com o número. Ver [`docs/doctrine/migrations.md`](docs/doctrine/migrations.md) §Numeração.
 2. **Idempotente sempre que possível**: `add column if not exists`, `create ... if not exists`, `create or replace function`. Uma migration deve poder ser re-aplicada sem quebrar nem duplicar efeito.
 3. **Portável em `psql` puro** (clones podem não usar o MCP/CLI Supabase): **sem** `create temporary table ... on commit drop` fora de transação explícita; **sem** `BEGIN`/`COMMIT` explícito (o runner já envolve em transação, como as demais migrations). Prefira CTEs, subqueries de janela e colunas-mapa (ex.: `is_merged_into`) a temp tables.
 4. **Data migrations genéricas**: se a migration corrige/deduplica dados, escreva pensando em QUALQUER banco de clone (não hardcode IDs do seu tenant). Repointe FKs conferindo o catálogo (`information_schema` FK map) para não perder histórico.
@@ -500,39 +418,10 @@ Processo padrão (siga sempre):
    grant  execute on function public.fn_x(...) to <só quem precisa>;
    ```
 
-   São duas origens distintas de `EXECUTE`, e tratar só uma deixa a função exposta com o gate verde: **(A)** o grant direto a `anon` do `ALTER DEFAULT PRIVILEGES ... GRANT ALL ON FUNCTIONS TO anon` do baseline, que vale para toda função criada depois dele — isto é, para todo apêndice novo — e que `revoke from public` **não** remove; **(B)** o grant a `PUBLIC` que o Postgres dá a qualquer função ao criá-la, que `revoke from anon` **não** remove. Sem os dois, o PostgREST expõe a função como RPC alcançável pela anon key, que vai para o browser. Vigiado por `tests/invariants/hardening-definer-varredura.test.ts`, que varre todas as `security definer` de `public` (issue #128 — a versão anterior checava uma lista fixa de 6, e 8 de 25 estavam expostas).
+   São duas origens de `EXECUTE` (default ACL para `anon` e grant a `PUBLIC`), e por isso o revoke
+   cobre as duas. Racional em [`docs/doctrine/migrations.md`](docs/doctrine/migrations.md).
 
-10. **Ler o baseline com `grep` no arquivo inteiro mede a definição ERRADA.** O
-    `baseline.sql` é dump + apêndice, então a mesma função aparece **várias
-    vezes** — e quem vale é a **última**, porque o arquivo é aplicado inteiro e
-    em ordem. Medido em 2026-09-20: `fn_meet_action` tinha **quatro**
-    definições; a primeira (o corpo do dump) ainda trazia `errcode='40001'` nas
-    três recusas permanentes, e a última — a que o banco instala — trazia
-    `PT409`. Uma sonda de `grep`/`awk` ancorada na primeira ocorrência afirmou
-    sobre o produto o oposto do que o produto faz. O mesmo vale para
-    `fn_lgpd_cascade_redact_contact`, que tem oito.
-
-    **As duas formas certas**, e a primeira decide:
-
-    ```bash
-    # (a) PERGUNTE AO BANCO, depois de aplicar — é o que o cliente terá
-    pnpm test:db tests/invariants/<um caso que consulte>  # ou, num psql já com o baseline aplicado:
-    psql "$URL" -Atc "select pg_get_functiondef(p.oid) from pg_proc p
-      join pg_namespace n on n.oid=p.pronamespace
-      where n.nspname='public' and p.proname='fn_x'"
-    ```
-
-    ```bash
-    # (b) ANCORE NA ÚLTIMA definição, quando só o arquivo estiver à mão
-    python3 -c "
-    s=open('supabase/baseline.sql').read()
-    i=s.rfind('create or replace function public.fn_x')   # rfind, nunca find
-    print(s[i:s.index('\$\$;', i)+3])"
-    ```
-
-    Contar ocorrências no arquivo inteiro responde *"o arquivo menciona"*, nunca
-    *"o banco faz"*. As duas perguntas divergem sempre que há apêndice — e
-    apêndice é o mecanismo padrão desta casa.
+10. No `baseline.sql` vale a **última** definição de cada função. Pergunte ao banco (`pg_get_functiondef`) ou use `rfind`, nunca `grep` no arquivo. Ver [`docs/doctrine/migrations.md`](docs/doctrine/migrations.md).
 
 **Resumo do fluxo de uma mudança de schema:** arquivo em `migrations/` (fonte da verdade p/ Supabase CLI) **+** apêndice idempotente no `baseline.sql` (p/ o kit self-host) **+** linha no MANIFEST. Os dois artefatos de schema andam juntos. Nunca edite migrations já aplicadas — corrija com uma "forward-fix" nova (e mais um apêndice no baseline).
 
