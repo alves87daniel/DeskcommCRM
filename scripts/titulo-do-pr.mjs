@@ -172,18 +172,18 @@ function main() {
   const problemas = problemasDoTitulo(item.title, alvo);
   if (alvo === "pr") problemas.push(...problemasDoCorpo(item.title, item.body));
 
-  const nome = alvo === "pr" ? "PR" : "issue";
+  const nome = alvo === "pr" ? "do PR" : "da issue";
   if (problemas.length === 0) {
-    console.log(`Título da ${nome} no padrão: "${item.title}".`);
+    console.log(`Título ${nome} no padrão: "${item.title}".`);
     return;
   }
 
   const formato = alvo === "pr" ? FORMATO_PR : FORMATO_ISSUE;
   const exemplo = alvo === "pr" ? EXEMPLO_PR : EXEMPLO_ISSUE;
-  console.log(`::error title=Título da ${nome} fora do padrão::${problemas.join(" ")}`);
+  console.log(`::error title=Título ${nome} fora do padrão::${problemas.join(" ")}`);
   console.log(
     [
-      `Título da ${nome} fora do padrão: "${item.title}"`,
+      `Título ${nome} fora do padrão: "${item.title}"`,
       "",
       ...problemas.map((p) => `  - ${p}`),
       "",
@@ -192,7 +192,7 @@ function main() {
       ...(alvo === "pr" ? ["E o corpo do PR traz: Closes #N"] : []),
       "",
       "Régua: docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md (Emenda de 18/10/2026).",
-      `Corrija o título da ${nome}; o check roda de novo ao editar.`,
+      `Corrija o título ${nome}; o check roda de novo ao editar.`,
     ].join("\n"),
   );
   process.exit(1);

@@ -116,7 +116,7 @@ describe("título de PR", () => {
     expect(r.status).toBe(1);
     expect(r.saida).toContain(trecho);
     expect(r.saida).toContain("Formato esperado: Área - Ação ou objetivo - #N - Tipo SIGLA");
-    expect(r.saida).toContain("::error title=Título da PR fora do padrão::");
+    expect(r.saida).toContain("::error title=Título do PR fora do padrão::");
   });
 
   it("reprova corpo sem Closes #N", () => {
