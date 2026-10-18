@@ -195,6 +195,8 @@ correção é prioridade, não tipo. Tipos de **commit** (seção 8) são outro 
 
 ## 6. Identificação
 
+> Superado pela Emenda de 18/10/2026 no que diz respeito a separador e ID; ver fim do documento.
+
 ### 6.1 Formato
 
 ```text
@@ -251,6 +253,8 @@ essas são decisões separadas, tomadas pelo dono do produto, e não se deduzem 
 | Tags (`GREEN-BASELINE-1.0`, `v1.69.0`)       | Marcos do Git                                     | Imutáveis; citar o ID do item que as produziu, se existir        |
 
 ## 7. Nomes humanos
+
+> Superado pela Emenda de 18/10/2026 no que diz respeito a separador e ID; ver fim do documento.
 
 ### 7.1 Formato
 
@@ -373,6 +377,8 @@ criada.
 | `GOV-04` | 2026-10-07 | Nome humano com travessão entre área e resultado; ID ao final nos títulos de PR e sessão (seção 7) | APROVADA | Travessão `—` mantido como separador do nome humano, que vem primeiro nos títulos visíveis. Não altera as convenções técnicas de Git. Pendência 3 resolvida                                                                                                                                                                   |
 | `GOV-05` | 2026-10-07 | Convenções operacionais novas de branch, commit, documento, ADR e migration (seção 8)              | APROVADA | Convenções mantidas sem alteração. Nenhuma guarda automática de ID criada nesta ratificação (pendência 4)                                                                                                                                                                                                                     |
 
+> `GOV-03` e `GOV-04`: Superado pela Emenda de 18/10/2026 no que diz respeito a separador e ID; ver fim do documento.
+
 ## 12. Pendências
 
 | #   | Pendência                                                                                                                                                                                                                                                                                                                                                                                                                                                                | Dono            | Estado                 |
@@ -408,9 +414,6 @@ Termos que apareceram fora da lista. Estão registrados aqui **sem aprovação**
 
 | Termo        | Natureza |
 | ------------ | -------- |
-| Produtos     | área     |
-| Comercial    | área     |
-| Acesso       | área     |
 | Governança   | área     |
 | Validação    | área     |
 | Design       | área     |
