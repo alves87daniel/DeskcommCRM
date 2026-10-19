@@ -1,0 +1,44 @@
+name: titulo-do-pr
+
+# Confere o título de PR e de issue contra a Emenda de 18/10/2026 de
+# docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md (issue #25):
+#
+#   PR:    Área - Ação ou objetivo - #N - Tipo SIGLA   + `Closes #N` no corpo
+#   Issue: Área - Ação ou objetivo - Tipo SIGLA
+#
+# A regra, as listas de área e tipo e as isenções (bots e o PR de release)
+# moram em scripts/titulo-do-pr.mjs, vigiado por tests/unit/titulo-do-pr.test.ts.
+# O job NÃO tem `if:` de propósito: isenção pulada viraria `skipped`, e quem
+# decide isentar é o script, que diz no log por que isentou.
+#
+# `edited` está nos gatilhos porque o conserto de um título reprovado é editar
+# o título, e sem ele o check ficaria vermelho até o próximo push.
+on:
+  pull_request:
+    types: [opened, edited, reopened, synchronize]
+  issues:
+    types: [opened, edited, reopened]
+
+# Só leitura: o título e o corpo vêm no payload do evento, e o checkout lê só
+# o script. Nada aqui comenta, rotula nem roda código de dependência.
+permissions:
+  contents: read
+
+concurrency:
+  group: titulo-do-pr-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  titulo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Fixado por SHA (v7.0.1). Em issue, o checkout é a branch padrão.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          sparse-checkout: scripts/titulo-do-pr.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Conferir o título
+        run: node scripts/titulo-do-pr.mjs

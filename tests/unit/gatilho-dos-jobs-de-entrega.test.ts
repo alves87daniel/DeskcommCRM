@@ -235,6 +235,16 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
     efeito: "Este é o check obrigatório `build-and-size` (`pnpm build` em Node 22).",
   },
 
+  // A isenção (bots e o PR de release) mora no script, não num `if:`: pulado,
+  // o job viraria `skipped`, e um título fora do padrão entraria verde.
+  "titulo-do-pr.yml::titulo": {
+    condicao: null,
+    efeito:
+      "Este job confere o título de PR e de issue contra a Emenda de 18/10/2026 do vocabulário " +
+      "(scripts/titulo-do-pr.mjs). Desligá-lo deixa entrar PR sem o número da issue, com área " +
+      "ou tipo fora das listas aprovadas e sem `Closes #N`, sem erro em lugar nenhum.",
+  },
+
   // --- e o que legitimamente tem interruptor -----------------------------------
   "acolhida.yml::acolher": {
     condicao:
