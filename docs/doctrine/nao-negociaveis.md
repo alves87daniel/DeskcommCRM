@@ -186,3 +186,4 @@ aqui para que o enxugamento não as perca. Quem revisar decide se ficam no gabar
 169. No `baseline.sql` vale a última definição de cada função: perguntar ao banco ou ancorar na última ocorrência, nunca contar com `grep` no arquivo inteiro. (Migrations, passo 10)
 170. Medidas de front-end por ferramenta (`getBoundingClientRect`, `getComputedStyle`), nunca a olho. (QA Visual)
 171. O exit code da suíte é a autoridade; rodapé e `grep FAIL` são explicação dele. (Testes)
+172. A plataforma não custeia IA: código de produto não lê chave de IA do ambiente para atender organização; a chave sai só de `ai_provider_credentials` da organização, e sem ela o recurso fica desligado com aviso na tela. (Anti-patterns, item 15; ADR-0005)
