@@ -1301,7 +1301,7 @@ ler_rodada_do_banco() {
 # `publish-image.yml` digam o mesmo. Se você é um fork, é lá que está a lista do
 # que trocar junto — e, desde 18/09/2026, o CI do SEU fork não cobra este valor:
 # a asserção só vale quando o dono do runner é o dono deste repositório.
-IMG_NS="ghcr.io/melgarafael"
+IMG_NS="ghcr.io/alves87daniel"
 IMG_APP="${IMG_NS}/deskcommcrm"
 IMG_WORKER="${IMG_NS}/deskcomm-worker"
 IMG_SCHEDULER="${IMG_NS}/deskcomm-scheduler"
@@ -1321,7 +1321,7 @@ IMG_VOICE_AGENT="${IMG_NS}/deskcomm-voice-agent"
 # alguém porque não deu para resolver um número de versão seria trocar um
 # problema de previsibilidade por um de disponibilidade.
 ultima_versao_publicada() {
-  local url="${1:-https://github.com/melgarafael/DeskcommCRM.git}" ref
+  local url="${1:-https://github.com/alves87daniel/DeskcommCRM.git}" ref
   command -v git >/dev/null 2>&1 || return 0
   # `grep -v -- -` descarta PRERELEASE (v1.11.0-rc1, v1.1.1-jmpo.1 — esta última
   # existe de verdade neste repo). O `--sort=-v:refname` do git põe o prerelease
@@ -1342,15 +1342,15 @@ ultima_versao_publicada() {
 # com `image:` falha a operação inteira, a instalação morre no passo de subir.
 #
 # ⚠️ O DONO E O REGISTRO SAEM DO `IMG_NS`, NUNCA DE UM LITERAL. Achado por
-# @galeonel no PR #605: as duas URLs abaixo tinham `melgarafael` cravado. Num
+# @galeonel no PR #605: as duas URLs abaixo tinham o dono do upstream cravado. Num
 # fork que troca o `IMG_NS`, isso faz o pré-voo conferir os pacotes do UPSTREAM
 # enquanto `gravar_imagens` escreve no `.env` do cliente as referências do FORK
 # — a sonda mede um caminho e o usuário usa outro, que é a falha-em-verde do
 # passe 5 da triagem.
 #
 # E o literal escapava da catraca por acidente: `namespace-das-imagens.test.ts`
-# procura a string contígua `ghcr.io/melgarafael`, e a URL do token a parte em
-# `ghcr.io/token?scope=repository:melgarafael/`.
+# procura a string contígua `<registry>/<dono>` de IMG_NS, e a URL do token a
+# parte em `<registry>/token?scope=repository:<dono>/`.
 ghcr_status() {
   local img="$1" tag="$2" tok registry owner
   registry="${IMG_NS%%/*}"

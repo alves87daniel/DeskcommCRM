@@ -243,7 +243,12 @@ describe("o kit aponta para o que o CI realmente publica", () => {
       expect(texto).toContain(`REPO_URL="\${REPO_URL:-${repo}.git}"`);
     }
     expect(COMUM).toContain(`local url="\${1:-${repo}.git}" ref`);
-    for (const dockerfile of ["Dockerfile", "Dockerfile.worker", "Dockerfile.scheduler"]) {
+    for (const dockerfile of [
+      "Dockerfile",
+      "Dockerfile.worker",
+      "Dockerfile.scheduler",
+      "Dockerfile.voice-agent",
+    ]) {
       expect(fs.readFileSync(path.join(RAIZ, dockerfile), "utf8")).toContain(
         `org.opencontainers.image.source="${repo}"`,
       );
