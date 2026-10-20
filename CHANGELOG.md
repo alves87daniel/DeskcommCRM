@@ -8,6 +8,16 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [2.0.0] — 2026-10-20
+
+### ⚠️ Requer atenção
+
+- **O compose e o kit de instalação passam a puxar as imagens deste repositório** O canal `stable` e os números de versão ainda não existem no registro deste repositório: só `main` e `latest`. Antes de instalar ou atualizar uma VPS pelo kit, publique a primeira versão (tag `vX.Y.Z` contida na `main`), que é o que faz o CI apontar `stable` para ela. Até lá, `install.sh` e `update.sh` cairiam em `stable` e o `docker compose pull` falharia com imagem não encontrada. Uma instalação que já tenha `APP_IMAGE`, `WORKER_IMAGE`, `SCHEDULER_IMAGE` ou `VOICE_AGENT_IMAGE` no `.env` apontando para o registro de origem é regravada pelo `update.sh` para as imagens deste repositório.
+
+### Alterado
+
+- **O compose e o kit de instalação passam a puxar as imagens deste repositório** O `docker-compose.prod.yml`, o `.env.hostgator.example` e o kit de instalação (`install.sh`, `comecar.sh`, `_common.sh`) deixam de apontar para as imagens e para o repositório do projeto de origem e passam a apontar para `ghcr.io/alves87daniel/*` e `alves87daniel/DeskcommCRM`. As quatro imagens (`deskcommcrm`, `deskcomm-worker`, `deskcomm-scheduler`, `deskcomm-voice-agent`) já são publicadas aqui a cada merge na `main`, nas tags `main` e `latest`, e o `update.sh` passa a gravar no `.env` da instalação as referências deste repositório. Crédito: @alves87daniel.
+
 ## [1.69.0] — 2026-09-30
 
 ### Adicionado
@@ -9734,7 +9744,8 @@ Primeira versão marcada do DeskcommCRM. O projeto vinha sendo desenvolvido publ
 
 - **Node 22 é obrigatório para desenvolvimento.** A suíte de invariantes instancia o cliente do Supabase, que exige o `WebSocket` global — nativo apenas a partir do Node 22. Isso não afeta quem apenas hospeda: a VPS roda a imagem pronta.
 
-[Não lançado]: https://github.com/melgarafael/DeskcommCRM/compare/v1.69.0...HEAD
+[Não lançado]: https://github.com/alves87daniel/DeskcommCRM/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/alves87daniel/DeskcommCRM/compare/v1.69.0...v2.0.0
 [1.69.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.68.0...v1.69.0
 [1.68.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.67.0...v1.68.0
 [1.67.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.66.1...v1.67.0
