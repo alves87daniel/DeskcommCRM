@@ -53,8 +53,12 @@ conceito de produto: existe a chave de cada organização, e mais nada.
 ### D2 — A única fonte de chave é a credencial da organização
 
 A chave de todo ponto de IA sai de `ai_provider_credentials` da organização, **ativa e validada**,
-escolhida pelo binding do ponto (`ai_purpose_bindings`) ou, sem binding, pela credencial mais
-recente do provedor da organização. Nenhum resolvedor tem degrau abaixo desse, e nenhum escolhe por
+escolhida nesta ordem: a credencial fixada na versão publicada do agente
+(`ai_agent_versions.credential_id`, escolhida no editor do agente e honrada hoje por
+`lib/ai/runtime/agent.ts`); senão o binding do ponto (`ai_purpose_bindings`); senão a credencial mais
+recente do provedor da organização. A credencial fixada continua exigindo ser ativa, validada e da
+mesma organização: trocar ou cadastrar outra chave nunca muda em silêncio a conta de um agente que
+fixou a sua. Nenhum resolvedor tem degrau abaixo desse, e nenhum escolhe por
 outra ordem. Hoje quatro caminhos escolhem diferente e passam a seguir esta: o agente de voz
 (`lib/ai/agents.ts`) e os embeddings da base de conhecimento (`lib/ai/embeddings/chave.ts`), que
 pegam a mais antiga; o assistente de prospecção (`lib/prospecting/agent-setup.ts`), que ordena da
@@ -79,10 +83,16 @@ assumir o lead. Isso deixa de valer.
 
 ### D4 — As envs de IA ficam vazias em produção
 
-`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` e `AI_GATEWAY_API_KEY` continuam
-**declaradas** em `lib/env.ts`, para scripts locais de desenvolvimento e teste (`scripts/smoke-llm.ts`,
+`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `AI_GATEWAY_API_KEY` e
+`TRANSCRIPTION_API_KEY` continuam **declaradas** em `lib/env.ts`, para scripts locais de desenvolvimento e teste (`scripts/smoke-llm.ts`,
 `scripts/provoke-agent-turn.ts` e afins), e **vazias** em toda instalação de produção. Código de
 produto em `app/`, `lib/`, `workers/`, `hooks/` e `components/` não as lê para atender organização.
+
+`TRANSCRIPTION_API_KEY` entra na lista porque é chave de IA paga pela instalação: hoje
+`workers/media-derive-worker.ts` a usa, com prioridade, para transcrever o áudio de **todas** as
+organizações. A transcrição passa a usar uma credencial da organização. O endereço e o modelo do
+serviço compatível (`TRANSCRIPTION_BASE_URL`, `TRANSCRIPTION_MODEL`) podem continuar como
+configuração da instalação, porque não custam nada a ninguém sem a chave.
 
 "Vazias" vale também para quem já instalou: o `hostgator-setup-kit/update.sh` esvazia as variáveis
 do `.env` existente de forma idempotente, **uma por provedor**. Uma instalação pode ter duas chaves
@@ -139,8 +149,11 @@ tanto a duplicata barrada pela restrição única `(organization_id, provider, l
   (`origemDaChave === 'chave_da_instalacao'`), que deixa de existir; construí-lo reintroduziria o
   caminho que esta ADR proíbe. Por isso o campo `teto_ia_usd_cents` de `cobranca_planos`, o recurso
   `'ia_usd_cents'` de `fn_limite_do_plano`, a linha "Teto de IA do plano" da §5 e o campo no
-  `POST /api/v1/admin/cobranca/planos` saem do desenho. O controle de gasto de IA fica com o
-  orçamento que cada organização escolhe (`ai_budgets`), sobre a própria chave. Medido em
+  `POST /api/v1/admin/cobranca/planos` saem do desenho. O que resta de controle de gasto é o
+  orçamento que cada organização escolhe (`ai_budgets`), sobre a própria chave, e ele hoje só barra
+  o turno do agent-engine (`lib/agent-engine/edge/llm/run-model-call.ts`) e a resposta automática
+  (`workers/ai-response-worker.ts`); os demais pontos pagos não passam por ele (ver "O que esta ADR
+  não decide"). Medido em
   20/10/2026: nada disso foi construído (`grep -rln "teto_ia\|ia_usd_cents" lib app workers supabase`
   volta vazio).
 
@@ -162,8 +175,11 @@ tanto a duplicata barrada pela restrição única `(organization_id, provider, l
   #33.
 - **Credencial compartilhada entre organizações do mesmo licenciado:** não existe hoje; se um dia
   for pedida, é outra ADR, e a chave continua sendo de uma organização, nunca da instalação.
-- **O destino de `TRANSCRIPTION_API_KEY`** (serviço de transcrição compatível): a #33 decide se
-  vira credencial da organização ou sai.
+- **A forma da credencial de transcrição** da organização (provedor próprio para o serviço
+  compatível ou reuso da credencial OpenAI): é da #33. Que a chave não é da instalação, D4 já decide.
+- **Medição e teto para todos os pontos pagos:** o orçamento da organização (`ai_budgets`) hoje só
+  barra o turno do agent-engine e a resposta automática; embeddings, derivação de mídia e voz não
+  passam por ele nem gravam em `llm_calls`. Fechar isso é trabalho próprio, fora desta ADR.
 
 ## Aceite
 
