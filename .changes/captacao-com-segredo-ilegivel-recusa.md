@@ -7,4 +7,9 @@ Uma fonte de captação com assinatura (HMAC) aceitava qualquer envio, sem confe
 
 ## Requer atenção
 
-Depois de atualizar, abra Webhooks › Leads recebidos. Se aparecer alguma recusa com o motivo "O segredo de assinatura desta fonte não pôde ser lido nesta instalação", essa fonte parou de receber leads. Para voltar a receber, crie uma fonte nova em Webhooks › Receber dados, troque o endereço no formulário que envia os leads e exclua a fonte antiga. A fonte nova nasce sem assinatura, porque a tela ainda não grava o segredo. Se nenhuma recusa com esse motivo aparecer, não há nada a fazer.
+Se você tem alguma fonte de captação com assinatura (HMAC) criada antes desta versão, faça uma destas duas coisas para cada uma delas, logo depois de atualizar:
+
+1. Envie um teste assinado pela ferramenta que manda os leads, como um formulário de teste, e confira em Webhooks › Leads recebidos que ele chegou como lead criado.
+2. Ou recrie a fonte: crie uma fonte nova em Webhooks › Receber dados, troque o endereço no formulário que envia os leads e exclua a fonte antiga. A fonte nova nasce sem assinatura, porque a tela ainda não grava o segredo.
+
+Não espere uma recusa aparecer para agir: a fonte afetada só registra a recusa quando chega um envio, e esse envio já é um lead perdido. Fontes sem assinatura não são afetadas.
