@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
  * `PUBLIC_PATHS` tira essas rotas do estrangulamento a montante (o `proxy.ts`
  * global só reconhece cookie), então *o que não for contado na rota não é
  * contado em lugar nenhum* (`lib/api/auth-dual.ts:159`). As 4 irmãs
- * (`messages`, `drafts`, `leads`, `agenda`) já aplicam; estas 4 aqui estavam
+ * (`messages`, `drafts`, `leads`, `agenda`) já aplicam; estas aqui estavam
  * sem o limitador — uma integração por token em laço numa delas não atravessa
  * o teto de escrita por token nem por organização, derrubando o número real
  * (WhatsApp bane por VOLUME).
@@ -23,11 +23,12 @@ import { describe, expect, it } from "vitest";
 const RAIZ = process.cwd();
 
 /** Caminhos RELATIVOS das rotas Bearer (resolveAuthDual) que devem aplicar o teto. */
+// `drafts/consume` e `notes/media` também chamam `resolveAuthDual`, mas não
+// estão em `lib/auth/public-paths.ts`: o `proxy.ts` recusa Bearer nelas antes
+// do handler. Ficam fora desta lista até serem liberadas para token (#36).
 const ROTAS_COM_TETO = [
-  "app/api/v1/conversations/[id]/drafts/consume/route.ts",
   "app/api/v1/conversations/open-with-contact/route.ts",
   "app/api/v1/conversations/[id]/media/route.ts",
-  "app/api/v1/conversations/[id]/notes/media/route.ts",
 ] as const;
 
 const caminho = (rel: string) => path.join(RAIZ, rel);
@@ -42,10 +43,10 @@ describe("rotas Bearer aplicam teto de escrita", () => {
       .toMatch(/await tetoDeEscritaDoToken\(authz, "[^"]+", requestId\)/);
   });
 
-  it("a lista das 4 rotas tem exatamente as 4 que hoje aplicam o teto (controle de vacuidade)", () => {
+  it("a lista das 2 rotas tem exatamente as 2 que hoje aplicam o teto (controle de vacuidade)", () => {
     // Controle positivo: o teste não pode ficar verde por varrer nada. Se a
     // lista esvaziar ou um caminho voltar a não existir, reprova.
-    expect(ROTAS_COM_TETO.length).toBe(4);
+    expect(ROTAS_COM_TETO.length).toBe(2);
     for (const rel of ROTAS_COM_TETO) {
       const fonte = readFileSync(caminho(rel), "utf8");
       expect(

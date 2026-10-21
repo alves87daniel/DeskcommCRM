@@ -5,7 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * TETO DE ESCRITA, medido pelo comportamento (issue #38, item 5 da triagem #36).
  *
  * A irmã `rotas-bearer-aplicam-teto-de-escrita.test.ts` varre o código-fonte.
- * Esta chama o POST de cada rota com um token cuja cota acabou e confere a
+ * Esta chama o POST de cada rota liberada para Bearer em
+ * `lib/auth/public-paths.ts` com um token cuja cota acabou e confere a
  * resposta: 429 com `Retry-After`, o balde certo consultado e nenhum efeito
  * (nem cliente admin, nem a função de domínio). O helper `tetoDeEscritaDoToken`
  * roda DE VERDADE; só o contador (`checkRateLimit`) é dublê, para o teste
@@ -29,7 +30,6 @@ vi.mock("@/lib/supabase/admin", () => ({
     throw new Error("a rota tocou o banco antes do teto");
   }),
 }));
-vi.mock("@/lib/inbox/rascunho-sugerido", () => ({ consumirRascunho: vi.fn() }));
 vi.mock("@/lib/messaging/open-shared-contact-conversation", () => ({
   openSharedContactConversation: vi.fn(),
 }));
@@ -58,12 +58,9 @@ vi.mock("@/lib/api/auth-dual", async (importOriginal) => {
 
 import { checkRateLimit } from "@/lib/ai/dispatcher/rate-limit";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { consumirRascunho } from "@/lib/inbox/rascunho-sugerido";
 import { openSharedContactConversation } from "@/lib/messaging/open-shared-contact-conversation";
-import { POST as consumirPost } from "@/app/api/v1/conversations/[id]/drafts/consume/route";
 import { POST as abrirPost } from "@/app/api/v1/conversations/open-with-contact/route";
 import { POST as midiaPost } from "@/app/api/v1/conversations/[id]/media/route";
-import { POST as midiaDaNotaPost } from "@/app/api/v1/conversations/[id]/notes/media/route";
 
 const contexto = { params: Promise.resolve({ id: CONV }) };
 
@@ -71,16 +68,11 @@ function req(caminho: string): NextRequest {
   return new NextRequest(`http://localhost${caminho}`, {
     method: "POST",
     headers: { authorization: "Bearer dsk_teste", "content-type": "application/json" },
-    body: JSON.stringify({ draft_id: CONV, contact_id: CONV }),
+    body: JSON.stringify({ contact_id: CONV }),
   });
 }
 
 const ROTAS = [
-  {
-    nome: "drafts/consume",
-    recurso: "drafts.consume",
-    chamar: () => consumirPost(req(`/api/v1/conversations/${CONV}/drafts/consume`), contexto),
-  },
   {
     nome: "open-with-contact",
     recurso: "conversations.open",
@@ -91,16 +83,10 @@ const ROTAS = [
     recurso: "conversation_media",
     chamar: () => midiaPost(req(`/api/v1/conversations/${CONV}/media`), contexto),
   },
-  {
-    nome: "conversations/[id]/notes/media",
-    recurso: "conversation_notes",
-    chamar: () => midiaDaNotaPost(req(`/api/v1/conversations/${CONV}/notes/media`), contexto),
-  },
 ] as const;
 
 function nenhumEfeito() {
   expect(createAdminClient).not.toHaveBeenCalled();
-  expect(consumirRascunho).not.toHaveBeenCalled();
   expect(openSharedContactConversation).not.toHaveBeenCalled();
 }
 
