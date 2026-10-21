@@ -15,12 +15,12 @@ entrar neste repositório (seção 7).
 
 ## 1. O que o CRM importa hoje
 
-| Dado                      | Onde na tela                                                                 | Formato                              | Limites                                                         | Quem pode          |
-| ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------ | --------------------------------------------------------------- | ------------------ |
-| **Contatos**              | Contatos › botão **Importar CSV**                                            | só CSV (`.xlsx` é recusado)          | 5 MB, 500 linhas por arquivo                                    | `agent` ou acima   |
-| **Oportunidades** (leads) | Quadro (funil) › botão **Importar planilha**, escolhendo o funil de destino  | só CSV; a tela oferece um modelo CSV | 5 MB, 500 linhas; **toda linha entra na primeira etapa aberta** | `agent` ou acima   |
-| Empresas e pessoas        | Importações (só com o módulo **Empresas e pessoas** ligado em Configurações) | CSV ou `.xlsx` (primeira aba)        | 2 MB, 2.000 linhas                                              | `manager` ou acima |
-| Catálogo da loja          | Produtos › Importar planilha                                                 | só CSV                               | 500 linhas                                                      | `manager` ou acima |
+| Dado                      | Onde na tela                                                                 | Formato                                                                                                                                                                                                       | Limites                                                         | Quem pode          |
+| ------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | ------------------ |
+| **Contatos**              | Contatos › botão **Importar CSV**                                            | só CSV (`.xlsx` é recusado)                                                                                                                                                                                   | 5 MB, 500 linhas por arquivo                                    | `agent` ou acima   |
+| **Oportunidades** (leads) | Quadro (funil) › botão **Importar planilha**, escolhendo o funil de destino  | só CSV; a tela oferece um modelo CSV                                                                                                                                                                          | 5 MB, 500 linhas; **toda linha entra na primeira etapa aberta** | `agent` ou acima   |
+| Empresas e pessoas        | Importações (só com o módulo **Empresas e pessoas** ligado em Configurações) | CSV, ou `.xlsx` de **uma aba só** (esse importador lê só a primeira aba; o modelo deste runbook tem Instruções em primeiro, então **exporte a aba Empresas e pessoas como CSV**, não envie o `.xlsx` inteiro) | 2 MB, 2.000 linhas                                              | `manager` ou acima |
+| Catálogo da loja          | Produtos › Importar planilha                                                 | só CSV                                                                                                                                                                                                        | 500 linhas                                                      | `manager` ou acima |
 
 O catálogo da loja (Produtos) **não é** o catálogo Green: são tabelas diferentes. O catálogo Green
 vive em Configurações › Produtos Green e não tem importador (seção 5).
@@ -42,9 +42,9 @@ o caminho é a tela.
 ## 2. Antes de começar
 
 1. **Funil pronto.** Crie o funil (ou confira o existente) com as etapas na ordem certa. A
-   importação joga tudo na **primeira etapa aberta** (nem Ganho nem Perdido). Se a primeira coluna do
-   quadro for "Pago" ou "Perdido", a importação é recusada ou nasce errada: deixe uma etapa aberta em
-   primeiro.
+   importação joga tudo na **primeira etapa aberta** do funil, na ordem do quadro: etapas de Ganho e
+   de Perdido são ignoradas na escolha, mesmo que estejam em primeiro. A importação só é recusada se o
+   funil não tiver **nenhuma** etapa aberta. Não precisa reordenar o quadro por causa disso.
 2. **Produtos Green cadastrados** em Configurações › Produtos Green (manager+), um por um. O
    `code` segue a regra `^[a-z][a-z0-9_]{1,62}$` (minúsculas, números e `_`, começando por letra) e
    não pode ser trocado depois. Use a aba **Produtos Green** do modelo só para listar o que vai
@@ -110,21 +110,26 @@ Regras que o importador aplica (`lib/contacts/csv.ts`):
 
 Regras que o importador aplica (`lib/leads/planilha.ts`):
 
-| Coluna            | Outros nomes aceitos                                              | Regra                                                                                                                              |
-| ----------------- | ----------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `nome`            | `titulo`, `negocio`, `oportunidade`, `empresa`, `assunto`, `lead` | o nome do card; sem ele, o nome do contato vira o título                                                                           |
-| `nome do contato` | `contato`, `responsavel`, `pessoa`                                | quem é a pessoa                                                                                                                    |
-| `telefone`        | `celular`, `whatsapp`, `fone`, `phone`                            | mesma regra de contatos. Se já existe um contato com esse telefone, a oportunidade é ligada a ele; se não, o contato é criado      |
-| `email`           | `e-mail`                                                          | só entra se tiver `@`; não é usado para achar contato existente (só o telefone é)                                                  |
-| `valor`           | `preco`, `ticket`, `value`                                        | em reais, formato brasileiro: `12.500,00`, `1200`, `R$ 1.200,00`. Valor ilegível recusa a linha; **`1200.50` é lido como 120.050** |
-| `origem`          | `fonte`, `canal`, `source`                                        | texto livre, sem acento, sempre com a mesma grafia (`indicacao`, `site`, `meta_ads`, `whatsapp`). Vazio vira `importacao_planilha` |
-| `tags`            | `etiquetas`, `marcadores`                                         | separadas por `,`, `;` ou `\|`, até 20                                                                                             |
-| `observacao`      | `descricao`, `notas`, `detalhes`                                  | texto livre; vai para a descrição do card                                                                                          |
+| Coluna            | Outros nomes aceitos                                              | Regra                                                                                                                                                                                                                                      |
+| ----------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `nome`            | `titulo`, `negocio`, `oportunidade`, `empresa`, `assunto`, `lead` | o nome do card; sem ele, o nome do contato vira o título                                                                                                                                                                                   |
+| `nome do contato` | `contato`, `responsavel`, `pessoa`                                | quem é a pessoa                                                                                                                                                                                                                            |
+| `telefone`        | `celular`, `whatsapp`, `fone`, `phone`                            | mesma regra de contatos. Se já existe um contato com esse telefone, a oportunidade é ligada a ele; se não, o contato é criado                                                                                                              |
+| `email`           | `e-mail`                                                          | só entra se tiver `@`; **só é gravado quando o importador cria o contato**. Contato que já existe (achado pelo telefone) não ganha nem corrige e-mail por aqui; a oportunidade não tem campo de e-mail. Para corrigir e-mail, use Contatos |
+| `valor`           | `preco`, `ticket`, `value`                                        | em reais, formato brasileiro: `12.500,00`, `1200`, `R$ 1.200,00`. Valor ilegível recusa a linha; **`1200.50` é lido como 120.050**                                                                                                         |
+| `origem`          | `fonte`, `canal`, `source`                                        | texto livre, sem acento, sempre com a mesma grafia (`indicacao`, `site`, `meta_ads`, `whatsapp`). Vazio vira `importacao_planilha`                                                                                                         |
+| `tags`            | `etiquetas`, `marcadores`                                         | separadas por `,`, `;` ou `\|`, até 20. **Ficam como escritas** (`Quente` e `quente` são duas tags diferentes no filtro do quadro): escreva sempre em minúsculas, como o importador de contatos já faz sozinho                             |
+| `observacao`      | `descricao`, `notas`, `detalhes`                                  | texto livre; vai para a descrição do card                                                                                                                                                                                                  |
 
 - **Obrigatório:** a planilha precisa ter a coluna `nome` **ou** `nome do contato`; a linha precisa
   ter ao menos 2 caracteres num dos dois.
-- **Telefone ilegível não derruba a linha:** a oportunidade entra **sem contato** e o resumo avisa.
-  Corrija no card ou arrume a planilha e importe só essas linhas.
+- **Telefone ilegível não derruba a linha:** a oportunidade **entra assim mesmo, sem contato**, e o
+  resumo avisa. **Não reimporte essa linha:** este importador não reconhece oportunidade repetida, e a
+  linha corrigida viraria um segundo card. Corrija o telefone no card que já entrou (abra o card e
+  ligue o contato), ou apague esse card antes de importar a linha de novo.
+- **Reimportar o mesmo arquivo cria tudo de novo.** Diferente do importador de contatos, aqui não há
+  "duplicado": cada linha vira uma oportunidade nova, mesmo que igual a uma que já existe. Importe cada
+  arquivo uma vez; o que precisar de ajuste, ajuste no card.
 - **Etapa:** não existe coluna de etapa. Tudo entra na primeira etapa aberta do funil escolhido.
 - Cada linha passa pelo mesmo caminho de um negócio criado à mão (mesma validação, mesma auditoria
   `lead.created`), por isso o teto de 500 linhas.
@@ -145,8 +150,10 @@ A aba **Contexto Green** do modelo existe para você já reunir produto e etapa 
 
 - Contatos: a lista mostra os importados; o filtro por tag ajuda a achar o lote (`cliente`, `sp`).
 - Quadro: a primeira etapa deve ter o número de cards que o resumo disse em `criados`.
-- Audit Log (menu lateral): uma entrada `contacts.imported` e uma `lead.imported` por
-  arquivo, com os totais. Se algo deu errado, é por aqui que se prova o que entrou.
+- Audit Log (menu lateral, **só `manager` ou acima**): uma entrada `contacts.imported` e uma
+  `lead.imported` por arquivo, com os totais. Se algo deu errado, é por aqui que se prova o que entrou.
+  Quem importa como `agent` não alcança essa tela: guarde o resumo que apareceu na janela (print ou
+  anotação dos totais e das linhas recusadas) e peça a um `manager` para conferir no Audit Log.
 
 ---
 
@@ -167,6 +174,12 @@ Modelo completo das entidades e o que o Green reaproveita:
 ---
 
 ## 5. O que o importador não cobre, e o caminho mais simples (sem implementar)
+
+> **Decisão do dono, 2026-10-21:** nenhuma das colunas abaixo (`etapa`, `produto`, `origem`) será
+> implementada por ora. O volume é baixo e esses dados entram **manualmente**; o produto Green por
+> oportunidade depende de regras de negócio (produto, localidade e tipo de contrato) que ainda serão
+> definidas. O desenho futuro e as perguntas em aberto estão na issue #54. O que segue é o registro
+> das lacunas e do caminho anotado, não um plano de implementação.
 
 ### 5.1 Etapa e produto Green por linha (a lacuna que pesa)
 
@@ -216,7 +229,7 @@ descrição do card e fica legível para quem atende e para o agente de IA.
 
 Oportunidade histórica já ganha ou perdida não deve ser importada como aberta e fechada no quadro
 uma a uma: importe só o que está **em andamento**. Histórico fechado, se precisar entrar, é assunto
-de outra issue (o importador recusa, de propósito, nascer em etapa de ganho ou perda).
+da issue #54 (o importador escolhe, de propósito, só etapa aberta).
 
 ---
 
@@ -226,7 +239,8 @@ de outra issue (o importador recusa, de propósito, nascer em etapa de ganho ou 
 2. Terça: planilha preenchida; exportar as abas Contatos e Oportunidades em CSV; importar **num
    ambiente de teste primeiro** (ou com 10 linhas) e ler o resumo.
 3. Quarta: importar Contatos (todos os arquivos), depois Oportunidades (um arquivo por etapa, se
-   for seguir a saída da seção 5.1).
+   for seguir a saída da seção 5.1). **Cada arquivo de Oportunidades sobe uma vez só**; o que der
+   errado se corrige no card, não reimportando.
 4. Quinta: produto Green pelo dossiê; arrastar os lotes para a etapa certa; conferir auditoria.
 5. Sexta: folga para as linhas recusadas.
 
