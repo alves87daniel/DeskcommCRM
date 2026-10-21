@@ -1,0 +1,55 @@
+name: vigia-de-revisao-de-novo
+
+# Roda de novo o check `vigia-de-revisao` quando alguém comenta `/vigia` no PR.
+#
+# Existe porque RESOLVER UMA CONVERSA DE REVISÃO NÃO DISPARA WORKFLOW NENHUM: o
+# Actions não tem evento de conversa resolvida. Sem este atalho, o check ficaria
+# vermelho depois de tudo resolvido até o próximo push.
+#
+# Por que "rodar de novo" e não conferir aqui mesmo: um workflow de
+# `issue_comment` roda no commit da branch padrão, e o check que ele produzisse
+# ficaria pendurado na `main`, não no PR. Rodar de novo a última execução do
+# vigia para o commit do PR atualiza o check no lugar certo.
+#
+# O job não faz checkout nem roda código de ninguém: só `gh`, com o número do PR
+# vindo do evento. O texto do comentário só é lido pela condição do `if:`, nunca
+# interpolado num comando.
+on:
+  issue_comment:
+    types: [created]
+
+# `actions: write` é o mínimo que pede a nova execução; `pull-requests: read` lê
+# o commit atual do PR.
+permissions:
+  actions: write
+  pull-requests: read
+
+jobs:
+  de-novo:
+    # Só em PR, só com o comando no começo do comentário, e só de quem tem
+    # escrita no repositório. Pulado aqui é o esperado: este job não é check.
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '/vigia') && contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Rodar de novo o vigia no commit atual do PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.issue.number }}
+        run: |
+          set -euo pipefail
+          head=$(gh pr view "$PR" --repo "$REPO" --json headRefOid --jq .headRefOid)
+          linha=$(gh run list --repo "$REPO" --workflow vigia-de-revisao.yml --commit "$head" \
+            --limit 1 --json databaseId,status --jq '.[0] | "\(.databaseId) \(.status)"')
+          if [ -z "$linha" ] || [ "$linha" = "null null" ]; then
+            echo "::warning::Nenhuma execução do vigia-de-revisao para ${head:0:7}. Faça um push no PR para criar a primeira."
+            exit 0
+          fi
+          read -r id status <<<"$linha"
+          if [ "$status" != "completed" ]; then
+            echo "A execução $id do vigia já está em andamento ($status); ela lê as conversas de agora."
+            exit 0
+          fi
+          gh run rerun "$id" --repo "$REPO"
+          echo "Vigia de revisão rodando de novo para ${head:0:7} (execução $id)."
