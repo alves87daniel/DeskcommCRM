@@ -171,7 +171,7 @@ begin
 end;
 $$;
 
-revoke all on function public.fn_publish_ai_agent_version(uuid,uuid,uuid,boolean,text) from public,anon,authenticated;
+revoke execute on function public.fn_publish_ai_agent_version(uuid,uuid,uuid,boolean,text) from public, anon, authenticated;
 grant execute on function public.fn_publish_ai_agent_version(uuid,uuid,uuid,boolean,text) to service_role;
 
 -- O vocabulário da passagem ganha o motivo "IA desligada por falta de chave"

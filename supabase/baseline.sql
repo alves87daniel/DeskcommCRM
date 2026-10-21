@@ -48221,7 +48221,7 @@ begin
 end;
 $$;
 
-revoke all on function public.fn_publish_ai_agent_version(uuid,uuid,uuid,boolean,text) from public,anon,authenticated;
+revoke execute on function public.fn_publish_ai_agent_version(uuid,uuid,uuid,boolean,text) from public, anon, authenticated;
 grant execute on function public.fn_publish_ai_agent_version(uuid,uuid,uuid,boolean,text) to service_role;
 -- O vocabulário da passagem ('ia_sem_chave') entra EDITANDO o bloco da 0291 lá em
 -- cima, e não com um drop/add aqui: uma constraint por nome no arquivo inteiro
