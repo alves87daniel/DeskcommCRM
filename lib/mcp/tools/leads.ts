@@ -24,6 +24,20 @@ import {
 import { createLeadSchema, updateLeadSchema } from "@/lib/schemas/leads";
 import { resolveUserNames } from "./_users";
 import type { McpContext, McpToolDefinition } from "../types";
+import { ApiError } from "@/lib/api/types";
+
+/**
+ * A recusa ÚNICA das leituras de negócio durante um turno: negócio de outro
+ * cliente, inexistente, de outra organização ou sem contato ligado recebem
+ * este MESMO objeto — um uuid não vira oráculo de existência.
+ */
+const NEGOCIO_FORA_DA_CONVERSA = {
+  permitido: false,
+  motivo: "fora_da_conversa",
+  mensagem:
+    "esta conversa é com outra pessoa — um negócio que não é deste cliente não é seu para ver; " +
+    "siga a conversa com quem está falando.",
+} as const;
 
 /**
  * A unidade de `value_cents` DITA AO MODELO. O negócio guarda o valor × 100 em
@@ -103,7 +117,8 @@ export const crmListLeads: McpToolDefinition<typeof listInputShape> = {
   name: "crm_list_leads",
   description:
     "Lista leads do CRM filtrando por pipeline, stage, status e owner. Cursor base64 para paginação. " +
-    "Governança por lead: owner_user_id + owner_user_name (só o nome do dono, sem email/telefone), stage ({ id, name } legível além do stage_id) e tags[].",
+    "Governança por lead: owner_user_id + owner_user_name (só o nome do dono, sem email/telefone), stage ({ id, name } legível além do stage_id) e tags[]." +
+    " Em conversa de atendimento, lista apenas os negócios do contato desta conversa.",
   inputSchema: listInputShape,
   category: "read",
   requiresRole: "agent",
@@ -123,6 +138,9 @@ export const crmListLeads: McpToolDefinition<typeof listInputShape> = {
         owner_user_id: input.owner_user_id,
         lost_reason: input.lost_reason,
         lost_reason_category: input.lost_reason_category,
+        // Escopo do turno NA CONSULTA, antes do limite: filtrar a página depois
+        // esconderia negócios do próprio cliente que caíssem fora dela.
+        contact_id: ctx.contatoDoTurno,
         limit: input.limit,
         cursor: input.cursor,
       },
@@ -147,12 +165,14 @@ export const crmGetLead: McpToolDefinition<typeof getInputShape> = {
   name: "crm_get_lead",
   description:
     "Retorna um lead pelo UUID. Inclui pipeline_id, stage_id, status, owner. " +
-    "Governança: owner_user_id + owner_user_name (só o nome, sem email/telefone), stage ({ id, name } legível) e tags[].",
+    "Governança: owner_user_id + owner_user_name (só o nome, sem email/telefone), stage ({ id, name } legível) e tags[]." +
+    " Em conversa de atendimento, só abre negócio do contato desta conversa.",
   inputSchema: getInputShape,
   category: "read",
   requiresRole: "agent",
   requiresScope: "mcp:read",
   handler: async (input, ctx) => {
+    const doTurno = ctx.contatoDoTurno;
     const lead = await getLeadHandler(
       ctx.supabase,
       {
@@ -161,7 +181,13 @@ export const crmGetLead: McpToolDefinition<typeof getInputShape> = {
         requestId: ctx.requestId,
       },
       input.lead_id,
-    );
+    ).catch((e: unknown) => {
+      // Com turno, o `404` vira a MESMA recusa do negócio de outro cliente.
+      if (doTurno && e instanceof ApiError && e.status === 404) return null;
+      throw e;
+    });
+    if (doTurno && (!lead || lead.contact_id !== doTurno)) return NEGOCIO_FORA_DA_CONVERSA;
+    if (!lead) throw new Error("not_found");
     if ((lead as { organization_id?: string }).organization_id !== ctx.organizationId) {
       // Defesa em profundidade — service-role bypassa RLS.
       throw new Error("not_found");
