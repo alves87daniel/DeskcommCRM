@@ -55,7 +55,7 @@ régua errada.
 - **`imagens-ok`** (`publish-image.yml`) — reprova quando qualquer uma das três imagens Docker não
   constrói.
 - **`vigia-de-revisao`** (`vigia-de-revisao.yml`) — reprova o PR que tem conversa de revisão **não
-  resolvida** com selo P0 ou P1 no começo do primeiro comentário (o selo `![P1 Badge](…)` do
+  resolvida** com selo P0 ou P1 no começo do primeiro comentário (o selo `![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)` do
   Codex, ou `**P1**`, `[P1]`, `P1:` em texto puro). P2 e P3 só aparecem listados. Com P0/P1
   aberto, mantém **um** comentário no PR mencionando `@alves87daniel`; quando surge P0/P1 novo, o
   comentário é recriado para a menção notificar (edição não notifica). Roda na abertura, no push,
