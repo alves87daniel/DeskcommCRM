@@ -585,10 +585,12 @@ comenta `/vigia` no PR, porque resolver uma conversa não dispara o check sozinh
 [`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
 
 **No máximo 2 rodadas de correção por PR.** Na terceira, P1 que só afeta instalações já
-existentes vira item de issue e o merge segue; P1 que afeta instalação nova sempre corrige. O P1
-que vira issue tem a conversa respondida com o link da issue e então resolvida: o
-`vigia-de-revisao` só lê se a conversa está resolvida, e conversa aberta segue reprovando, mesmo
-marcada como Outdated.
+existentes vira item de issue e o merge segue; P1 que afeta instalação nova sempre corrige.
+
+**Quem corrige responde e resolve.** A sessão que corrige um P0/P1 responde na conversa dizendo o
+commit que corrigiu e resolve a conversa ela mesma. P1 levado para issue também é respondido com o
+link da issue e resolvido pela sessão. O `vigia-de-revisao` só lê se a conversa está resolvida:
+conversa aberta segue reprovando, mesmo marcada como Outdated.
 
 ## Critério de conclusão
 
