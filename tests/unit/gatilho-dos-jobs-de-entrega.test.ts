@@ -297,10 +297,12 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
       "resposta, sem erro em lugar nenhum.",
   },
   // O `/vigia` é interruptor de propósito: o job não é check, só pede uma nova
-  // execução do `vigia-de-revisao` no commit do PR.
+  // execução do `vigia-de-revisao` no commit do PR. O filtro de texto é largo
+  // (`contains`, não `startsWith`) porque o `startsWith` pulava o `/vigia` que o
+  // Git Bash deforma (issue #55); quem decide se é o comando é o script.
   "vigia-de-revisao-de-novo.yml::de-novo": {
     condicao:
-      "github.event.issue.pull_request && startsWith(github.event.comment.body, '/vigia') && " +
+      "github.event.issue.pull_request && contains(github.event.comment.body, 'vigia') && " +
       'contains(fromJSON(\'["OWNER", "MEMBER", "COLLABORATOR"]\'), github.event.comment.author_association)',
     efeito:
       "Este job roda de novo o vigia-de-revisao quando quem tem escrita comenta `/vigia` no PR, " +
