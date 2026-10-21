@@ -178,8 +178,12 @@ function rodar(): Promise<{ status: number | null; saida: string }> {
   );
   return new Promise((ok) => {
     const filho = spawn(process.execPath, [SCRIPT], {
+      // No CI o processo já traz GITHUB_* de verdade: cada um que o script lê
+      // é sobrescrito aqui, e o resumo do passo é zerado para o teste não
+      // escrever no resumo do job real.
       env: {
-        PATH: process.env.PATH,
+        ...process.env,
+        GITHUB_STEP_SUMMARY: "",
         GITHUB_EVENT_NAME: "pull_request",
         GITHUB_EVENT_PATH: evento,
         GITHUB_TOKEN: "token-de-teste",
