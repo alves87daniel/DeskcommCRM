@@ -95,21 +95,21 @@ Turno do agente de IA: inbound WhatsApp → HMAC + idempotência → `event_log`
 disparar. Entrada do turno em `lib/agent-engine/agent/inbound-turn.ts`; diagrama em
 `docs/architecture/agent-turn.html`.
 
-| Path                                                                                                 | O quê                                                                                                                                                                                              |
-| ---------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `app/api/v1/`                                                                                        | Route handlers REST (versionado por path) — **reconte, não cite**: `git ls-files 'app/api/v1/**/route.ts' \| wc -l` (e `git ls-files 'app/api/**/route.ts' \| wc -l` para o total de `app/api/**`) |
-| `app/api/internal/`, `app/api/mcp/`, `app/api/v1/cron/`                                              | superfícies não-cookie (secret/bearer próprio)                                                                                                                                                     |
-| `app/app/`                                                                                           | UI autenticada do tenant · `app/admin/` UI de plataforma                                                                                                                                           |
-| `app/actions/`                                                                                       | Server Actions (auth, onboarding, team, settings)                                                                                                                                                  |
-| `lib/agent-engine/`, `lib/ai/`                                                                       | runtime do agente, guardrails, RAG, dispatcher                                                                                                                                                     |
-| `lib/api/wrappers.ts`                                                                                | `ok()` / `fail()` — **use sempre**, não monte Response na mão                                                                                                                                      |
-| `lib/auth/require-role.ts`                                                                           | `requireRole()` — guard canônico de RBAC                                                                                                                                                           |
-| `lib/supabase/{browser,server,admin}.ts`                                                             | clients canônicos                                                                                                                                                                                  |
-| `workers/`                                                                                           | workers de `event_log` + crons                                                                                                                                                                     |
-| `supabase/migrations/`                                                                               | schema versionado · `supabase/baseline.sql` = o que o self-host aplica                                                                                                                             |
-| `proxy.ts`                                                                                           | middleware do Next 16 (auth de borda, `X-Request-Id`)                                                                                                                                              |
-| Idempotência de worker: `unique (organization_id, external_id)` + captura de `code === '23505'`.     |
-| Contrato completo em [`docs/specs/07-spec-events-workers.md`](docs/specs/07-spec-events-workers.md). |
+| Path | O quê |
+|---|---|
+| `app/api/v1/` | Route handlers REST (versionado por path) — **reconte, não cite**: `git ls-files 'app/api/v1/**/route.ts' \| wc -l` (e `git ls-files 'app/api/**/route.ts' \| wc -l` para o total de `app/api/**`) |
+| `app/api/internal/`, `app/api/mcp/`, `app/api/v1/cron/` | superfícies não-cookie (secret/bearer próprio) |
+| `app/app/` | UI autenticada do tenant · `app/admin/` UI de plataforma |
+| `app/actions/` | Server Actions (auth, onboarding, team, settings) |
+| `lib/agent-engine/`, `lib/ai/` | runtime do agente, guardrails, RAG, dispatcher |
+| `lib/api/wrappers.ts` | `ok()` / `fail()` — **use sempre**, não monte Response na mão |
+| `lib/auth/require-role.ts` | `requireRole()` — guard canônico de RBAC |
+| `lib/supabase/{browser,server,admin}.ts` | clients canônicos |
+| `workers/` | workers de `event_log` + crons |
+| `supabase/migrations/` | schema versionado · `supabase/baseline.sql` = o que o self-host aplica |
+| `proxy.ts` | middleware do Next 16 (auth de borda, `X-Request-Id`) |
+Idempotência de worker: `unique (organization_id, external_id)` + captura de `code === '23505'`.
+Contrato completo em [`docs/specs/07-spec-events-workers.md`](docs/specs/07-spec-events-workers.md).
 
 ## Key Directories
 
@@ -192,7 +192,7 @@ cite cada um:
 | Contribuir: corrigir bug, abrir ou atualizar PR, migration, conflito com a `main`   | `deskcomm-contribuir`   |
 | Criar extensão/plugin/módulo de nicho, ou transformar um PR de nicho em pacote      | `deskcomm-extensao`     |
 | Escrever ou revisar código aqui                                                     | `deskcomm-doutrina`     |
-| Ler o resultado do `pnpm test:unit` sem falso verde, antes de dizer que passou      | `deskcomm-ler-suite`    |
+| Ler o resultado do `pnpm test:unit` sem falso verde, antes de dizer que passou     | `deskcomm-ler-suite`    |
 
 O gate de arquitetura de qualquer peça que atende pessoas é a skill `sistema-vivo` (lei em
 [`docs/doctrine/sistema-vivo.md`](docs/doctrine/sistema-vivo.md)).
@@ -275,10 +275,10 @@ o controlador (`organizations.legal_name`) e o DPO.
 - **`docker-compose.traefik.yml`** — numa VPS que já tem proxy reverso próprio
   (Hostinger, Coolify, Dokploy…), é o único lugar que dá ao contêiner `app` as labels
   de roteamento. Todo `up -d` leva os **dois** arquivos de compose:
-  **Anti-patterns proibidos** — string que deveria ser FK; duplicação sem source of truth declarado;
-  feature nomeando um provider de canal (gate `pnpm lint:channels`); tela nova sem porta declarada em
-  `lib/navigation/catalogo.ts` (gate `tests/unit/navegacao-completude.test.ts`); `getSession()` no
-  server; segredo em query string; `throw` cru na borda da API.
+**Anti-patterns proibidos** — string que deveria ser FK; duplicação sem source of truth declarado;
+feature nomeando um provider de canal (gate `pnpm lint:channels`); tela nova sem porta declarada em
+`lib/navigation/catalogo.ts` (gate `tests/unit/navegacao-completude.test.ts`); `getSession()` no
+server; segredo em query string; `throw` cru na borda da API.
 
 ## Important Files
 
@@ -334,13 +334,13 @@ o controlador (`organizations.legal_name`) e o DPO.
 - `lib/database.types.ts` (gerado do schema Supabase — o tamanho de hoje sai de `wc -l lib/database.types.ts`)
 - `graphify-out/` (grafo de conhecimento local; ignorado pelo git e **ausente num clone fresco** — só existe depois de rodar `/graphify .`)
 - `pnpm-lock.yaml`, `tsconfig.tsbuildinfo`, `next-env.d.ts`, `.next/`
-  | Camada | Comando | O que cobre |
-  | ----------------------------- | -------------------- | ------------------------------------------------------------------------------ |
-  | Unit (vitest, jsdom) | `pnpm test:unit` | `tests/unit/**` + todo `*.test.ts(x)` ao lado do código. Timeout 15s por teste |
-  | Invariantes de banco (Docker) | `pnpm test:db` | Isolamento cross-tenant/RLS, RBAC e governança contra Postgres efêmero |
-  | E2E (Playwright + axe-core) | `pnpm test:e2e` | Jornadas reais contra app buildado e o banco do `baseline.sql` |
-  | Kit self-host (bash) | `pnpm test:shell` | `scripts` do kit, `install.sh`, `update.sh` — o único gate do kit |
-  | Jornadas de canal | `pnpm test:journeys` | `tests/journeys/` (config Playwright própria) |
+| Camada                        | Comando              | O que cobre                                                                    |
+| ----------------------------- | -------------------- | ------------------------------------------------------------------------------ |
+| Unit (vitest, jsdom)          | `pnpm test:unit`     | `tests/unit/**` + todo `*.test.ts(x)` ao lado do código. Timeout 15s por teste |
+| Invariantes de banco (Docker) | `pnpm test:db`       | Isolamento cross-tenant/RLS, RBAC e governança contra Postgres efêmero         |
+| E2E (Playwright + axe-core)   | `pnpm test:e2e`      | Jornadas reais contra app buildado e o banco do `baseline.sql`                 |
+| Kit self-host (bash)          | `pnpm test:shell`    | `scripts` do kit, `install.sh`, `update.sh` — o único gate do kit              |
+| Jornadas de canal             | `pnpm test:journeys` | `tests/journeys/` (config Playwright própria)                                  |
 
 `pnpm test:unit` sem caminho é a suíte: `vitest run tests/unit` é um recorte. Para ler o resultado
 sem falso verde (o exit code é a autoridade; rodapé, `FAIL`, `Failed Suites`, `Errors`), use a
@@ -398,8 +398,8 @@ cabeçalho passava a mentir por todos eles.
   que originou a discussão, está **fechada** e o título dela descreve um estado que já não vale.
   Quantas existem: `ls tests/e2e/*.spec.ts | wc -l`. Quantas ficam fora:
   `git show origin/main:.github/workflows/e2e.yml | grep -A4 'FORA_DO_CI:'`.
-  **Antes de declarar pronto**, siga a **Definition of Done de [`CLAUDE.md`](CLAUDE.md)** — não
-  confie na memória, conte lá:
+**Antes de declarar pronto**, siga a **Definition of Done de [`CLAUDE.md`](CLAUDE.md)** — não
+confie na memória, conte lá:
 
 ```bash
 sed -n '/^## Definition of Done/,/^Um staff engineer/p' CLAUDE.md | grep -cE '^[0-9]+\. '
@@ -432,7 +432,6 @@ itens envelhecem em ritmos diferentes, e o cabeçalho passava a mentir por todos
   (DoD 12). E o gate só vale em PR que alcança o `e2e` (regra em `scripts/pr-alcanca-o-e2e.sh`):
   o que pula as partes sai com `e2e` verde sem ter provado tela nenhuma, a da instalação fresca
   inclusive. O número e a contagem que ficavam aqui eram de uma fotografia de agosto.
-
 - Rate limit HTTP: `lib/auth/rate-limit.ts` cobre **login, signup, recuperação de senha e
   aceite de convite** (contando por IP **e** por identificador hasheado); `checkRateLimit` cobre
   o webhook de captação e o dispatcher de IA. **Crons seguem sem.** O MCP conta em dois pontos:
@@ -600,15 +599,15 @@ Antigravity; o Claude Code lê o espelho em `.claude/skills/` (`pnpm skills:sync
 casar, mesmo que a pessoa não saiba que ele existe. Fora de um clone (ou num clone antigo),
 `bash scripts/instalar-guias.sh` liga os guias nas pastas globais dos cinco CLIs:
 
-| situação                                                                                            | guia                                                                                                                               |
-| --------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| instalar, atualizar ou consertar a instalação numa VPS; domínio, Supabase, WhatsApp que não conecta | `deskcomm-instalar`                                                                                                                |
-| configurar o CRM para um cliente ou nicho: agentes, roteadores, follow-ups, base de conhecimento    | `deskcomm-cliente-novo`                                                                                                            |
-| desempenho, conversão, custo de IA, funil, relatório                                                | `deskcomm-metricas`                                                                                                                |
-| o agente responde errado, passa tudo para humano, não usa a agenda; melhorar o prompt               | `deskcomm-prompt`                                                                                                                  |
-| contribuir: corrigir bug, abrir ou atualizar PR, migration, conflito com a `main`                   | `deskcomm-contribuir` — que fica quieto quando `bash .agents/skills/deskcomm-contribuir/scripts/quem-sou.sh` responde `mantenedor` |
-| escrever ou revisar código aqui                                                                     | `deskcomm-doutrina` (as três regras que mais custam) e `sistema-vivo` (o gate de arquitetura)                                      |
-| ler o resultado do `pnpm test:unit` sem falso verde, antes de dizer que a suíte passou              | `deskcomm-ler-suite`                                                                                                               |
+| situação | guia |
+|---|---|
+| instalar, atualizar ou consertar a instalação numa VPS; domínio, Supabase, WhatsApp que não conecta | `deskcomm-instalar` |
+| configurar o CRM para um cliente ou nicho: agentes, roteadores, follow-ups, base de conhecimento | `deskcomm-cliente-novo` |
+| desempenho, conversão, custo de IA, funil, relatório | `deskcomm-metricas` |
+| o agente responde errado, passa tudo para humano, não usa a agenda; melhorar o prompt | `deskcomm-prompt` |
+| contribuir: corrigir bug, abrir ou atualizar PR, migration, conflito com a `main` | `deskcomm-contribuir` — que fica quieto quando `bash .agents/skills/deskcomm-contribuir/scripts/quem-sou.sh` responde `mantenedor` |
+| escrever ou revisar código aqui | `deskcomm-doutrina` (as três regras que mais custam) e `sistema-vivo` (o gate de arquitetura) |
+| ler o resultado do `pnpm test:unit` sem falso verde, antes de dizer que a suíte passou | `deskcomm-ler-suite` |
 
 ## Regra final — não invente
 
