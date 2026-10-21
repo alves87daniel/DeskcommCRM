@@ -86,7 +86,7 @@
     "ipaddr.js": "^2.5.0",
     "jsonc-parser": "^3.3.1",
     "lucide-react": "^1.47.0",
-    "next": "^16.3.6",
+    "next": "^16.3.8",
     "next-themes": "^0.4.6",
     "nodemailer": "10.0.10",
     "pdfjs-dist": "^6.3.289",
@@ -139,7 +139,7 @@
   "packageManager": "pnpm@9.15.9",
   "//jsdom": "Fixado em 30.0.1 de propósito (sem ^). O jsdom 30.1 guarda a implementação do Blob num campo privado (#impl), e o ambiente jsdom do vitest (makeCompatBlob) lê o Blob pela 1ª símbolo da instância: com 30.1.x, URL.createObjectURL(file) e FormData/Request com File lançam `Cannot read properties of undefined (reading '_buffer')` — 4 casos da suíte (composer-attach x2, composer-colar-imagem, upload-templates-media-security). Upstream: vitest-dev/vitest#11336, aberta e sem conserto em nenhuma release (5.0.2 ainda quebra). Tire o pin quando o vitest instalado trouxer o conserto; o sinal é esses 4 casos verdes com jsdom 30.1+. Rastreio: melgarafael/DeskcommCRM#1745.",
   "pnpm": {
-    "//overrides": "Pisos de versão para dependência TRANSITIVA com advisory. Não é atalho: `pnpm update <pkg>` só casa o padrão contra o package.json (hono/js-yaml/nanoid não estão lá, e não se movem), e `pnpm update` sem alvo reescreve 29 ranges diretas e arrasta 139 pacotes. Override é a única ferramenta que move transitiva sem arrastar o mundo. Os seletores com `@<major>` são LOAD-BEARING: o lock tem duas árvores de brace-expansion (1.x e 5.x) e duas de path-to-regexp (6.x e 8.x); sem o escopo, o override rebaixa a árvore nova para a antiga — em silêncio, com `pnpm audit` ainda verde.",
+    "//overrides": "Pisos de versão para dependência TRANSITIVA com advisory. Não é atalho: `pnpm update <pkg>` só casa o padrão contra o package.json (hono/js-yaml/nanoid não estão lá, e não se movem), e `pnpm update` sem alvo reescreve 29 ranges diretas e arrasta 139 pacotes. Override é a única ferramenta que move transitiva sem arrastar o mundo. Os seletores com `@<major>` são LOAD-BEARING: o lock tem duas árvores de brace-expansion (1.x e 5.x) e duas de path-to-regexp (6.x e 8.x); sem o escopo, o override rebaixa a árvore nova para a antiga — em silêncio, com `pnpm audit` ainda verde. O piso vai em `solid-js`, e não em `seroval`: o 1.9.15 prende `seroval ~1.5.4`, e forçar o 1.6 ali seria dar ao solid uma faixa que ele não declara; o 1.9.17 já declara `~1.6.8`, que fecha os dois advisories do seroval.",
     "overrides": {
       "postcss": "^8.5.28",
       "sharp": "^0.35.0",
@@ -149,7 +149,9 @@
       "path-to-regexp@6": "^6.3.0",
       "fast-uri": "^3.1.7",
       "qs": "^6.16.0",
-      "browserslist": "^4.28.8"
+      "browserslist": "^4.28.8",
+      "solid-js": "^1.9.17",
+      "proxy-addr": "^2.0.8"
     },
     "patchedDependencies": {
       "@react-pdf/hyphenate": "patches/@react-pdf__hyphenate.patch"
