@@ -1710,10 +1710,9 @@ OWNER_EMAIL='eu@exemplo.com.br'
 OWNER_PASSWORD='senha12345'
 WAHA_HMAC_SECRET='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'"
 # WAHA_HMAC_SECRET entra porque toda instalação real o tem (o install.sh gera 64
-# hex e grava) e o update.sh RECUSA seguir sem um que o CRM aceite conferir
-# (`recusar_segredo_hmac_do_waha`, issue #40). Sem ele aqui, todo cenário do
-# update.sh pararia na guarda do começo e leria como "não chegou ao banco / ao
-# up -d" — defeito de fixture, não do produto.
+# hex e grava). Sem ele, o update.sh gera um e recria app e WAHA logo no começo
+# (`consertar_segredo_hmac_do_waha`, issue #40) — uma chamada de docker que os
+# cenários abaixo não esperam. O cenário do conserto tem o seu próprio bloco.
 
 # montar_vps <raiz> <pasta do projeto>   < corpo do dublê de `docker`
 # Define VPS_RAIZ / VPS_PROJ / VPS_LOG para o `rodar` logo abaixo.
@@ -3090,6 +3089,60 @@ NEXT_PUBLIC_APP_URL='https://crm.exemplo.com.br'")"
   printf '  ✓ o update.sh recria a bridge do proxy antes de subir a stack\n'
 ) || fail=1
 rm -rf "$TMP6"
+
+echo "integração: update.sh conserta o WAHA_HMAC_SECRET curto e recria app e WAHA"
+# Desde a issue #40 o WAHA assina com WAHA_HMAC_SECRET, e o CRM descarta segredo
+# com menos de 16 caracteres: um .env antigo com segredo curto pararia toda
+# mensagem recebida. O install.sh recusa; o update.sh, que roda sem ninguém
+# olhando, conserta — gera outro, grava no .env e recria app e WAHA JUNTOS, antes
+# de decidir versão (senão "já está na versão mais recente" sairia sem recriar).
+TMP_HMAC="$(mktemp -d)"
+(
+  montar_vps "$TMP_HMAC" "crmhmac" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$DOCKER_LOG"
+case "$1" in
+  compose) case "$*" in *" exec "*) printf 'healthy\n{"data":{"status":"healthy"}}\n' ;; esac; exit 0 ;;
+esac
+exit 0
+STUB
+  (cd "$VPS_PROJ" && git init -q -b main . \
+    && git -c user.email=t@exemplo -c user.name=teste add -A \
+    && git -c user.email=t@exemplo -c user.name=teste commit -qm base \
+    && git tag v9.9.9) >/dev/null 2>&1
+
+  # A linha extra vem DEPOIS da do BASE_ENV: o load_env fica com a última, e o
+  # update.sh carrega o segredo curto.
+  saida="$(rodar update.sh --skip-backup "INTERNAL_SECRET='segredo-de-teste'
+NEXT_PUBLIC_APP_URL='https://crm.exemplo.com.br'
+WAHA_HMAC_SECRET='curto'")"
+
+  n_recria="$(grep -n -E '^compose .* up -d --no-deps --force-recreate app waha$' "$VPS_LOG" | head -1 | cut -d: -f1)"
+  n_up="$(grep -n -E '^compose .* up -d$' "$VPS_LOG" | head -1 | cut -d: -f1)"
+  if [ -z "$n_up" ]; then
+    printf '  ✗ o update.sh não chegou ao "up -d" — teste inconclusivo, não verde\n'
+    printf '     última linha da saída: %s\n' "$(printf '%s' "$saida" | tail -1)"; exit 1
+  fi
+  printf '  ✓ não recusou: seguiu até o "up -d" da versão\n'
+  linhas="$(grep -c '^WAHA_HMAC_SECRET=' "$VPS_PROJ/.env")"
+  novo="$(grep '^WAHA_HMAC_SECRET=' "$VPS_PROJ/.env" | tail -1 | sed "s/^WAHA_HMAC_SECRET=//; s/^'//; s/'\$//")"
+  if [ "$linhas" -ne 1 ] || ! printf '%s' "$novo" | grep -qxE '[0-9a-f]{64}'; then
+    printf '  ✗ o .env não ficou com UM segredo de 64 hex (linhas=%s, tamanho=%s)\n' "$linhas" "${#novo}"; exit 1
+  fi
+  printf '  ✓ o .env ficou com um segredo novo de 64 hex, numa linha só\n'
+  if [ -z "$n_recria" ]; then
+    printf '  ✗ não recriou app e WAHA com o segredo novo\n'
+    printf '     chamadas de compose vistas: %s\n' "$(grep '^compose' "$VPS_LOG" | tr '\n' '|')"; exit 1
+  fi
+  if [ "$n_recria" -gt "$n_up" ]; then
+    printf '  ✗ recriou app e WAHA só depois do "up -d" (linha %s vs %s)\n' "$n_recria" "$n_up"; exit 1
+  fi
+  printf '  ✓ recriou app e WAHA antes de seguir com a versão\n'
+  case "$saida" in *"$novo"*) printf '  ✗ o log mostrou o segredo novo\n'; exit 1 ;; esac
+  case "$saida" in *"Gerei um novo"*) ;; *) printf '  ✗ o log não avisou da troca\n'; exit 1 ;; esac
+  printf '  ✓ avisou da troca sem mostrar o segredo\n'
+) || fail=1
+rm -rf "$TMP_HMAC"
 
 echo "integração: update.sh quando a rede do NPM sumiu"
 # NPM nunca é "nossa" bridge — ninguém cria de novo, só morre explicando ANTES

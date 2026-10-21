@@ -40,9 +40,21 @@ recusar_projeto_de_outra_arvore || die "Atualização interrompida para não que
 # ── 0-. O WAHA vai assinar com um segredo que o CRM aceita? ──────────────────
 # Desde a issue #40 o compose entrega WAHA_HMAC_SECRET ao WAHA como chave de
 # assinatura. Curto, vazio ou com espaço nas pontas, o CRM descarta o segredo e
-# recusa toda entrega assinada — o WhatsApp para de receber. Aqui, antes de
-# backup, código, banco ou contêiner: recusar sem ter mexido em nada.
-recusar_segredo_hmac_do_waha || die "Atualização interrompida: o WAHA_HMAC_SECRET do .env não serve (motivo acima). NÃO mexi em nada."
+# recusa toda entrega assinada — o WhatsApp para de receber. Aqui não se recusa
+# (ninguém está olhando: o agent.sh roda isto a cada 5 minutos): gera-se um
+# segredo novo no .env e o app e o WAHA são recriados JÁ, juntos. Recriar aqui,
+# e não só no `up -d` do fim, é o que vale também quando a atualização sai mais
+# abaixo com "já está na versão mais recente".
+HMAC_RC=0
+consertar_segredo_hmac_do_waha .env || HMAC_RC=$?
+case "$HMAC_RC" in
+  0)
+    dc up -d --no-deps --force-recreate app waha >/dev/null 2>&1 \
+      || c_ylw "⚠ Não consegui recriar o app e o WAHA com o segredo novo — rode: docker compose $(dc_files) up -d --force-recreate app waha"
+    ;;
+  1) ;;
+  *) die "Atualização interrompida: o WAHA_HMAC_SECRET do .env não serve e não consegui gerar outro (openssl ausente ou .env sem escrita). NÃO mexi em nada." ;;
+esac
 
 # Single-server: o Supabase desta VPS também tem dono. E o e-mail de acesso
 # (GoTrue) acompanha o SMTP do CRM AQUI, antes da decisão de versão: é este

@@ -215,8 +215,8 @@ printf 'services:\n  app:\n    image: \${APP_IMAGE:-x}\n' > "$PROJ/docker-compos
 # existe na máquina do cliente.
 printf 'services:\n  app:\n    pull_policy: never\n    build:\n      context: .\n' > "$PROJ/docker-compose.build.yml"
 printf 'select 1;\n' > "$PROJ/supabase/baseline.sql"
-# WAHA_HMAC_SECRET: toda instalação real tem (o install.sh gera 64 hex), e o
-# update.sh recusa seguir sem um que o CRM aceite conferir (issue #40).
+# WAHA_HMAC_SECRET: toda instalação real tem (o install.sh gera 64 hex). Sem
+# ele, o update.sh gera um e recria app e WAHA no começo (issue #40).
 cat > "$PROJ/.env" <<ENV
 APP_IMAGE=${NS}/deskcommcrm:latest
 APP_PULL_POLICY=always
