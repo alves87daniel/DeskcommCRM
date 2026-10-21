@@ -826,6 +826,28 @@ recusar_projeto_de_outra_arvore() {  # recusar_projeto_de_outra_arvore <como rep
   return 1
 }
 
+# O segredo com que o WAHA ASSINA os webhooks tem de ser um que o CRM aceita para
+# CONFERIR. O compose entrega `WAHA_HMAC_SECRET` ao WAHA em
+# `WHATSAPP_HOOK_HMAC_KEY` (issue #40), e `lib/waha/webhook-auth.ts` descarta
+# segredo com menos de 16 caracteres (`MIN_SECRET_LEN`, depois de `trim()`) —
+# e aí toda entrega ASSINADA vira `bad_signature`, mesmo com a exigência de
+# assinatura desligada. Um segredo curto ou vazio no .env pararia, em silêncio,
+# toda mensagem recebida no WhatsApp. Espaço nas pontas dá o mesmo: o WAHA assina
+# com o valor cru e o CRM confere com o aparado.
+#
+# Falha FECHADA antes de o WAHA receber o valor, e diz como consertar. O
+# install.sh chama DEPOIS de gerar o segredo que falta (vazio ali vira 64 hex);
+# o update.sh chama antes de mexer em qualquer coisa.
+recusar_segredo_hmac_do_waha() {  # recusar_segredo_hmac_do_waha  (lê $WAHA_HMAC_SECRET)
+  local segredo="${WAHA_HMAC_SECRET:-}" aparado
+  aparado="$(printf '%s' "$segredo" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  if [ "${#aparado}" -ge 16 ] && [ "$aparado" = "$segredo" ]; then
+    return 0
+  fi
+  printf '%s\n' "WAHA_HMAC_SECRET no .env tem ${#segredo} caractere(s)$([ "$aparado" != "$segredo" ] && printf ' com espaço nas pontas'). O WAHA assina as mensagens recebidas com ele, e o CRM só confere assinatura com segredo de 16 caracteres ou mais, sem espaço nas pontas: com este valor, toda mensagem do WhatsApp seria recusada. Gere um segredo novo com 'openssl rand -hex 32', ponha o resultado na linha WAHA_HMAC_SECRET= do .env e rode de novo. O segredo só existe entre o CRM e o WAHA desta instalação; trocá-lo não afeta mais nada." >&2
+  return 1
+}
+
 # A bridge que ESTE projeto reserva para o proxy externo. Um `basename` cru
 # diverge numa pasta com maiúscula, ponto ou underscore inicial — e aí o kit
 # cria uma rede e o compose procura outra.

@@ -37,6 +37,13 @@ done
 # em 401. Ver `recusar_projeto_de_outra_arvore` em _common.sh.
 recusar_projeto_de_outra_arvore || die "Atualização interrompida para não quebrar a instalação que está no ar."
 
+# ── 0-. O WAHA vai assinar com um segredo que o CRM aceita? ──────────────────
+# Desde a issue #40 o compose entrega WAHA_HMAC_SECRET ao WAHA como chave de
+# assinatura. Curto, vazio ou com espaço nas pontas, o CRM descarta o segredo e
+# recusa toda entrega assinada — o WhatsApp para de receber. Aqui, antes de
+# backup, código, banco ou contêiner: recusar sem ter mexido em nada.
+recusar_segredo_hmac_do_waha || die "Atualização interrompida: o WAHA_HMAC_SECRET do .env não serve (motivo acima). NÃO mexi em nada."
+
 # Single-server: o Supabase desta VPS também tem dono. E o e-mail de acesso
 # (GoTrue) acompanha o SMTP do CRM AQUI, antes da decisão de versão: é este
 # comando que o instalador ensina a rodar depois de configurar /admin/email, e
