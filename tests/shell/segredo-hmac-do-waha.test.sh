@@ -60,6 +60,7 @@ check "16 caracteres passa (o piso de MIN_SECRET_LEN)" aceita "abcdefghijklmnop"
 check "64 hex (o que o install.sh gera) passa" aceita "$(printf 'a%.0s' $(seq 1 64))"
 check "espaço na ponta é recusado (o WAHA assina cru, o CRM confere aparado)" recusa " abcdefghijklmnop"
 check "16 caracteres só depois de aparar é recusado" recusa "abcdefghijklmno "
+check "o \\r de um .env com CRLF não conta como espaço" aceita "abcdefghijklmnop"$'\r'
 
 # ── Onde os scripts chamam ───────────────────────────────────────────────────
 # Linha (não comentada) da primeira ocorrência de um padrão; vazio se não há.

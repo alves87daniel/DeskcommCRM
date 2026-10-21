@@ -840,6 +840,9 @@ recusar_projeto_de_outra_arvore() {  # recusar_projeto_de_outra_arvore <como rep
 # o update.sh chama antes de mexer em qualquer coisa.
 recusar_segredo_hmac_do_waha() {  # recusar_segredo_hmac_do_waha  (lê $WAHA_HMAC_SECRET)
   local segredo="${WAHA_HMAC_SECRET:-}" aparado
+  # Um \r no fim é o fim de linha de um .env com CRLF, que o `load_env` não tira
+  # e o compose não entrega como parte do valor — não é espaço do segredo.
+  segredo="${segredo%$'\r'}"
   aparado="$(printf '%s' "$segredo" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
   if [ "${#aparado}" -ge 16 ] && [ "$aparado" = "$segredo" ]; then
     return 0
