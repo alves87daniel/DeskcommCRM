@@ -1,0 +1,55 @@
+name: vigia-de-revisao
+
+# Barra o merge de PR com apontamento P0 ou P1 ABERTO da revisão automática
+# (Codex, Claude) e avisa quem decide o merge (issue #47). Determinístico, sem
+# modelo de IA: lê as conversas de revisão não resolvidas pela API e o selo de
+# prioridade no começo de cada uma.
+#
+# A regra, o formato do selo e o comentário único moram em
+# scripts/vigia-de-revisao.mjs, vigiado por tests/unit/vigia-de-revisao.test.ts.
+# O job NÃO tem `if:` de propósito: pulado, ele viraria `skipped`, que a
+# proteção da branch lê como verde.
+#
+# Gatilhos: abertura e push no PR, revisão nova e comentário de revisão novo,
+# editado ou apagado. RESOLVER UMA CONVERSA NÃO DISPARA NADA — o Actions não tem
+# evento para isso. Depois de resolver, comente `/vigia` no PR
+# (vigia-de-revisao-de-novo.yml roda este check de novo) ou use "Re-run" nele.
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+  pull_request_review:
+    types: [submitted, dismissed]
+  pull_request_review_comment:
+    types: [created, edited, deleted]
+
+# `pull-requests: write` é o mínimo que lê as conversas pela GraphQL e mantém o
+# comentário único no PR. Em PR de fork o GitHub entrega o token só de leitura:
+# o check continua valendo, e o script avisa que não comentou.
+permissions:
+  contents: read
+  pull-requests: write
+
+# A revisão do Codex chega como uma revisão mais um comentário por apontamento,
+# quase ao mesmo tempo: só a última rodada importa.
+concurrency:
+  group: vigia-de-revisao-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  vigia-de-revisao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # Fixado por SHA (v7.0.1), como em titulo-do-pr.yml. Só o script: nada de
+      # `pnpm install`, nada de código do PR além dele.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          sparse-checkout: scripts/vigia-de-revisao.mjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+
+      - name: Conferir apontamentos P0/P1 abertos
+        run: node scripts/vigia-de-revisao.mjs
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          VIGIA_MENCIONAR: alves87daniel

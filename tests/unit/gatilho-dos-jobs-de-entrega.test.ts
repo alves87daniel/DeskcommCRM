@@ -156,7 +156,8 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
   // Desligar qualquer um destes faz o PR entrar sem ter sido testado.
   "ci.yml::verify-parte": {
     condicao: null,
-    efeito: "São as partes da suíte (typecheck + lint + test:unit); sem elas o `verify` não tem o que ler.",
+    efeito:
+      "São as partes da suíte (typecheck + lint + test:unit); sem elas o `verify` não tem o que ler.",
   },
   // A suíte foi dividida em partes (tempo medido, ver ci.yml); o nome que a
   // branch protection exige continua sendo `verify`, agora o agregado.
@@ -288,6 +289,26 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
       "marcado como pronto. Desligá-lo faz os PRs entrarem sem a revisão automática, sem erro " +
       "em lugar nenhum.",
   },
+  // Sem `if:` pelo mesmo motivo do `titulo`: quem decide o veredito é o script.
+  "vigia-de-revisao.yml::vigia-de-revisao": {
+    condicao: null,
+    efeito:
+      "Este job reprova o PR com apontamento P0 ou P1 aberto da revisão automática e avisa no PR " +
+      "(scripts/vigia-de-revisao.mjs). Desligá-lo deixa entrar PR com apontamento grave sem " +
+      "resposta, sem erro em lugar nenhum.",
+  },
+  // O `/vigia` é interruptor de propósito: o job não é check, só pede uma nova
+  // execução do `vigia-de-revisao` no commit do PR.
+  "vigia-de-revisao-de-novo.yml::de-novo": {
+    condicao:
+      "github.event.issue.pull_request && startsWith(github.event.comment.body, '/vigia') && " +
+      'contains(fromJSON(\'["OWNER", "MEMBER", "COLLABORATOR"]\'), github.event.comment.author_association)',
+    efeito:
+      "Este job roda de novo o vigia-de-revisao quando quem tem escrita comenta `/vigia` no PR, " +
+      "porque resolver uma conversa não dispara workflow nenhum. Sem a condição ele rodaria a " +
+      "cada comentário de qualquer pessoa; desligado, o check fica vermelho depois de tudo " +
+      "resolvido até o próximo push.",
+  },
 };
 
 interface JobLido {
@@ -308,7 +329,9 @@ interface JobLido {
 function lerJobs(): JobLido[] {
   const achados: JobLido[] = [];
 
-  for (const arquivo of readdirSync(DIR).filter((f) => /\.ya?ml$/.test(f)).sort()) {
+  for (const arquivo of readdirSync(DIR)
+    .filter((f) => /\.ya?ml$/.test(f))
+    .sort()) {
     const brutas = readFileSync(join(DIR, arquivo), "utf8").split("\n");
     // Comentário não conta em NENHUMA direção: um `#` falando de `if:` não pode
     // satisfazer o mapa, e um `#` na coluna 0 no meio de `jobs:` não pode
@@ -365,7 +388,10 @@ describe("nenhum job pode ser desligado por uma condição — `skipped` conta c
     // nada — o modo de falha mais comum desta classe de teste.
     expect(jobs.length, "jobs lidos em .github/workflows").toBeGreaterThanOrEqual(10);
     expect(
-      jobs.filter((j) => j.condicao !== null).map(chave).sort(),
+      jobs
+        .filter((j) => j.condicao !== null)
+        .map(chave)
+        .sort(),
       "o recorte de `if:` está cego — nenhuma condição foi lida, e o mapa passaria por vacuidade",
     ).not.toEqual([]);
     // E o inverso: se TUDO virasse condição, a comparação também seria inútil.

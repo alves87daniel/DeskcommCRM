@@ -1,6 +1,7 @@
 # CLAUDE.md — DeskcommCRM
 
 ## Este repositório é um FORK — leia antes de qualquer coisa
+
 ConectorGreen é um fork do DeskcommCRM (melgarafael). NÃO puxamos atualizações do upstream.
 Aqui, `origin` é `alves87daniel/DeskcommCRM` e a `main` deste fork é `origin/main`: todo
 `git fetch`, `git merge origin/main`, `git show origin/main:...` e medição de migration
@@ -52,6 +53,7 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 ## Convenções críticas (NÃO NEGOCIÁVEIS)
 
 ### Multi-tenancy
+
 - `organization_id uuid not null references organizations(id) on delete cascade` em **toda** tabela tenant-aware
 - RLS policy `tenant_isolation_<tabela>_all` aplicada via helper `fn_user_org_ids()`
 - Service role bypassa RLS — handlers que usam admin client **DEVEM** filtrar `organization_id` manualmente, resolvido de fonte confiável (cookie/JWT/webhook secret/path token), **NUNCA do body**
@@ -59,11 +61,13 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 - Teste de isolamento (cria 2 tenants, verifica não-vazamento) é obrigatório no CI antes de merge
 
 ### Idempotência & event sourcing leve
+
 - Mensagens WhatsApp e eventos externos: `unique (organization_id, external_id)` + captura `code === '23505'` no INSERT
 - POSTs de criação na API aceitam header `Idempotency-Key: <uuid>` (TTL 24h). O recibo mora no **Postgres** (`public.idempotency_keys`, único por organização + chave + endpoint), não no Upstash — ver `lib/api/idempotency.ts`. Quais rotas leem o header: `grep -rln 'Idempotency-Key' app/api/v1 --include='route.ts'`
 - **Trigger Postgres NUNCA faz HTTP.** Trigger emite linha em `event_log`; worker (cron / Realtime listener) consome e dispara side effect
 
 ### API REST `/api/v1/`
+
 - Versionamento por path. JSON snake_case. UUID v4. ISO-8601 UTC. Dinheiro em `_cents` + `currency` ISO-4217
 - Wrapper sucesso: `{ data, meta?: { cursor, has_more, total } }`
 - Wrapper erro: `{ error: { code, message, details? } }` — usar helpers `ok()` / `fail()` de `lib/api/wrappers.ts`
@@ -75,6 +79,7 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 - `X-Request-Id` em toda response (correlaciona com audit log)
 
 ### Auth & RBAC
+
 - Sempre `getUser()` (valida JWT no backend). NUNCA `getSession()` (confia no cookie local)
 - 4 roles dentro do tenant: `viewer` (1) < `agent` (2) < `manager` (3) < `admin` (4)
 - Super-admin de plataforma é uma role transversal — `is_platform_admin` (decisão final na Spec 01)
@@ -85,11 +90,13 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
   `requireRole`/RBAC/MFA — e é cobrada pelo gate `tests/unit/suporte-cobertura-de-efeitos.test.ts`
 
 ### Audit log
+
 - Toda mutação POST/PATCH/DELETE bem-sucedida → 1 entrada em `api_audit_log` (fire-and-forget, p99 ≤500ms)
 - Cron que não fez nada não audita. Quem fez, audita. `api_audit_log` é append-only para anon/authenticated/service_role (0258), e o que protege é `revoke` explícito no apêndice, nunca o grant enumerado do dump. Retenção de 5 anos via `fn_expurgar_auditoria_vencida`, sem camada cold (knob `AUDIT_LOG_RETENTION_DAYS`, piso de 90 dias). Prova, comandos e racional: [`docs/doctrine/auditoria.md`](docs/doctrine/auditoria.md).
 - Falha de write em audit gera alerta Sentry, não bloqueia mutação principal
 
 ### LGPD
+
 - Anonimização preferida sobre delete. Nome do contato vira `Cliente Anonimizado #N`
 - Cascade de redact: contact + conversations + messages (mídia removida do storage) + activities (preserva timestamps)
 - Reversão de anonimização: 403 `lgpd_anonymization_irreversible`
@@ -97,6 +104,7 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 - Action audit obrigatória: `lgpd.data_request_received`, `lgpd.export_generated`, `lgpd.redact_executed`, `lgpd.consent_changed`
 
 ### WAHA
+
 - Imagem NOWEB pinada por arquitetura: `latest-2026.7.2` em x86 e `noweb-arm-2026.7.2` em ARM64. Não bloquear segunda sessão por tier: conferir resposta estruturada e pós-condição da operação.
 - Engine NOWEB default; WEBJS apenas se precisar stickers animados / botões
 - Auth: env do WAHA recebe **hash SHA512 hex** da api key; cliente envia plaintext em `X-Api-Key`
@@ -108,6 +116,7 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 - Grupos entram só os ligados em Conexões › Grupos e nunca vão para funil/IA. O cron `recover-stuck-messages` falha `sending` com mais de 5 min, abre aviso e nunca reenvia. Ver [`docs/doctrine/waha.md`](docs/doctrine/waha.md).
 
 ### Marca própria (white-label)
+
 - **Uma imagem Docker serve todas as marcas.** Nada de `NEXT_PUBLIC_*` para marca, nada de `public/favicon.ico`, nada de imagem por revendedor — a imagem é pré-buildada e o `update.sh` regrava `APP_IMAGE` incondicionalmente
 - **O banco está ACIMA do `.env`.** `platform_branding` (instalação) e `organizations.settings.branding` (organização) são a fonte; `APP_NAME`/`APP_LOGO_URL`/`APP_ACCENT_HEX` são **semente e piso de rollback** (o `agent.sh` reverte a imagem, nunca o banco)
 - **Resolvedor NUNCA lança.** `lib/branding/instalacao.ts` e `lib/branding/saida.ts` degradam para o padrão do produto e seguem: `branding()` roda em `app/layout.tsx`, e um throw ali é 500 em todas as telas
@@ -116,12 +125,14 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 - Vazamento de marca no código é vigiado por `tests/unit/branding.test.ts` (varre `app|components|lib|workers|hooks`), com allowlist que **só encolhe**. Contexto de venda em [`docs/white-label.md`](docs/white-label.md); mapa em `docs/architecture/marca-propria.architecture.json`
 
 ### Doutrina DIRC (antes de adicionar campo)
+
 - **D**uplicar — vive aqui mesmo?
 - **I**ntegrar — vem de outra tabela via FK?
 - **R**eferenciar — só ponteiro?
 - **C**alcular — pode ser computado on-demand?
 
 ### Modelagem
+
 - 5 tabelas core CRM: `crm_pipelines`, `crm_stages`, `crm_leads`, `crm_lead_activities` (polimórfica timeline), `crm_lead_links` (polimórficos vínculos)
 - `position_in_stage numeric` (fractional indexing via `midpoint()`) — **NUNCA `int`**
 - `external_id` nullable (mensagem outbound `sending` ainda não tem ID WAHA)
@@ -154,23 +165,23 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 
 ## Paths importantes
 
-| Path | Conteúdo |
-|---|---|
-| `docs/prd/00-prd-master.md` | Visão geral, escopo MVP, KPIs |
-| `docs/prd/01-prd-platform-base.md` | Auth, tenancy, RBAC, LGPD framework |
-| `docs/prd/02-...06-` | Customer 360, WhatsApp, Pipeline, IA-RAG, Nuvemshop |
-| `docs/specs/` | Specs técnicas detalhadas (schema SQL, payloads exatos) |
-| `docs/business-rules/` | Regras de negócio fora do código |
-| `docs/research/reference-synthesis.md` | Arquitetura herdada do curso WAHA |
-| `tasks/todo.md` | Workflow de construção atual |
-| `app/globals.css` | **Tailwind 4 é CSS-first: não existe `tailwind.config.ts`.** Tokens em `:root` / `[data-theme]`, ponte token → utilitário no `@theme inline`, alcance do scanner nos `@source`. Vigiado por `tests/unit/tailwind-tokens.test.ts` |
-| `lib/api/wrappers.ts` | `ok()`, `fail()`, tipos `ApiSuccess<T>` / `ApiError` |
-| `lib/api/errors.ts` | Códigos de erro canônicos |
-| `lib/env.ts` | Validação Zod das env vars (lança no startup se faltar crítica) |
-| `lib/supabase/{browser,server,admin}.ts` | Clients canônicos |
-| `app/api/v1/health/route.ts` | Health check (Supabase + Redis + WAHA) |
-| `supabase/migrations/` | Schema versionado |
-| `docs/runbooks/deploy.md` | **Deploy em produção — leia ANTES de mexer na VPS** |
+| Path                                     | Conteúdo                                                                                                                                                                                                                         |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `docs/prd/00-prd-master.md`              | Visão geral, escopo MVP, KPIs                                                                                                                                                                                                    |
+| `docs/prd/01-prd-platform-base.md`       | Auth, tenancy, RBAC, LGPD framework                                                                                                                                                                                              |
+| `docs/prd/02-...06-`                     | Customer 360, WhatsApp, Pipeline, IA-RAG, Nuvemshop                                                                                                                                                                              |
+| `docs/specs/`                            | Specs técnicas detalhadas (schema SQL, payloads exatos)                                                                                                                                                                          |
+| `docs/business-rules/`                   | Regras de negócio fora do código                                                                                                                                                                                                 |
+| `docs/research/reference-synthesis.md`   | Arquitetura herdada do curso WAHA                                                                                                                                                                                                |
+| `tasks/todo.md`                          | Workflow de construção atual                                                                                                                                                                                                     |
+| `app/globals.css`                        | **Tailwind 4 é CSS-first: não existe `tailwind.config.ts`.** Tokens em `:root` / `[data-theme]`, ponte token → utilitário no `@theme inline`, alcance do scanner nos `@source`. Vigiado por `tests/unit/tailwind-tokens.test.ts` |
+| `lib/api/wrappers.ts`                    | `ok()`, `fail()`, tipos `ApiSuccess<T>` / `ApiError`                                                                                                                                                                             |
+| `lib/api/errors.ts`                      | Códigos de erro canônicos                                                                                                                                                                                                        |
+| `lib/env.ts`                             | Validação Zod das env vars (lança no startup se faltar crítica)                                                                                                                                                                  |
+| `lib/supabase/{browser,server,admin}.ts` | Clients canônicos                                                                                                                                                                                                                |
+| `app/api/v1/health/route.ts`             | Health check (Supabase + Redis + WAHA)                                                                                                                                                                                           |
+| `supabase/migrations/`                   | Schema versionado                                                                                                                                                                                                                |
+| `docs/runbooks/deploy.md`                | **Deploy em produção — leia ANTES de mexer na VPS**                                                                                                                                                                              |
 
 ---
 
@@ -266,6 +277,11 @@ dizem nada sobre o arquivo que quebrou.
 A lista de checks obrigatórios vem do comando do bloco do fork, no topo, nunca desta prosa. O
 que cada job mede e o que `FORA_DO_CI` exclui:
 [`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
+
+**Apontamento P0 ou P1 aberto da revisão automática barra o merge.** O check `vigia-de-revisao`
+reprova enquanto houver conversa de revisão não resolvida com esse selo no começo. Corrija, resolva
+a conversa e comente `/vigia` no PR: resolver não dispara o check sozinho. Regra em `AGENTS.md`
+(Code Review Rules) e em [`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
 
 Ao mexer em schema, RLS, RBAC, atribuição, escopo, roteamento, follow-up, webhooks ou automações: rode `pnpm test:db` **localmente** antes de abrir PR. É o único caminho que exercita o `baseline.sql` que o self-hoster realmente aplica.
 
