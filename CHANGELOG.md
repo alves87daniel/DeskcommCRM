@@ -8,6 +8,12 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [3.0.1] — 2026-10-21
+
+### Corrigido
+
+- **No atendimento, o agente de IA só lê e altera dados do contato da conversa** Durante uma conversa de atendimento, as ferramentas do agente de IA alcançavam a organização inteira. A busca de contatos devolvia telefone e e-mail de qualquer cliente, a ficha abria qualquer contato, e escritas por identificador aceitavam negócios, compromissos, conversas e casos de outras pessoas. Um cliente no WhatsApp podia pedir ao agente dados de terceiros. Agora, no turno, leituras e escritas ficam presas ao contato da conversa, e o pedido fora dele recebe uma recusa em texto. Fora do atendimento, pela tela, pela API com token ou pelo MCP externo, nada muda. Não é preciso fazer nada na instalação. Porte da correção do projeto original.
+
 ## [3.0.0] — 2026-10-21
 
 ### ⚠️ Requer atenção
@@ -9765,7 +9771,8 @@ Primeira versão marcada do DeskcommCRM. O projeto vinha sendo desenvolvido publ
 
 - **Node 22 é obrigatório para desenvolvimento.** A suíte de invariantes instancia o cliente do Supabase, que exige o `WebSocket` global — nativo apenas a partir do Node 22. Isso não afeta quem apenas hospeda: a VPS roda a imagem pronta.
 
-[Não lançado]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.0...HEAD
+[Não lançado]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.1...HEAD
+[3.0.1]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/alves87daniel/DeskcommCRM/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/alves87daniel/DeskcommCRM/compare/v1.69.0...v2.0.0
 [1.69.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.68.0...v1.69.0
