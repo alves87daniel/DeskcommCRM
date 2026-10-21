@@ -37,7 +37,7 @@ export const MOTIVO_DA_RECUSA_LABEL: Record<MotivoDaRecusa, string> = {
   assinatura_invalida:
     "A assinatura não conferiu. Quem enviou não usou o segredo configurado nesta fonte.",
   assinatura_indecifravel:
-    "O segredo de assinatura desta fonte não pôde ser lido nesta instalação, então nada entra por ela. Cadastre a assinatura de novo na fonte.",
+    "O segredo de assinatura desta fonte não pôde ser lido nesta instalação, então nada entra por ela. Crie uma fonte nova em Webhooks › Receber dados, troque o endereço no formulário que envia os leads e exclua esta fonte.",
   erro_ao_criar_lead:
     "Os dados chegaram, mas o lead não pôde ser criado — confira se o funil e a etapa da fonte ainda existem.",
 };

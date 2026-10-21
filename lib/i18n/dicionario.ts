@@ -5187,8 +5187,8 @@ export const DICIONARIO: Traducoes = {
   "A assinatura não conferiu. Quem enviou não usou o segredo configurado nesta fonte.": {
     es: "La firma no coincidió. Quien envió no usó el secreto configurado en esta fuente.",
   },
-  "O segredo de assinatura desta fonte não pôde ser lido nesta instalação, então nada entra por ela. Cadastre a assinatura de novo na fonte.": {
-    es: "El secreto de firma de esta fuente no se pudo leer en esta instalación, así que nada entra por ella. Vuelve a registrar la firma en la fuente.",
+  "O segredo de assinatura desta fonte não pôde ser lido nesta instalação, então nada entra por ela. Crie uma fonte nova em Webhooks › Receber dados, troque o endereço no formulário que envia os leads e exclua esta fonte.": {
+    es: "El secreto de firma de esta fuente no se pudo leer en esta instalación, así que nada entra por ella. Crea una fuente nueva en Webhooks › Recibir datos, cambia la dirección en el formulario que envía los leads y elimina esta fuente.",
   },
   "Os dados chegaram, mas o lead não pôde ser criado — confira se o funil e a etapa da fonte ainda existem.": {
     es: "Los datos llegaron, pero no se pudo crear el lead. Revisa que el embudo y la etapa de la fuente sigan existiendo.",

@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * conferido com ele. Quando esta instalação não consegue LER o segredo (chave
  * mestra trocada, dado corrompido), não há como conferir — e a resposta certa é
  * recusar, deixando o motivo na tela "Leads recebidos" para o operador
- * recadastrar a assinatura. Mesma regra de `lib/waha/webhook-auth.ts`.
+ * recriar a fonte. Mesma regra de `lib/waha/webhook-auth.ts`.
  *
  * O controle (segredo legível + assinatura certa) mostra que o portão abre
  * quando deve: sem ele, um 401 em tudo também passaria nos outros casos.

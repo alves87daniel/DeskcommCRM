@@ -131,13 +131,13 @@ export async function POST(req: NextRequest, ctx: RouteCtx): Promise<NextRespons
   // ausente/trocada, dado corrompido), não há como conferir — e o que não se
   // confere não entra. Mesma regra da autenticação do WAHA
   // (lib/waha/webhook-auth.ts): falha FECHADA. O operador vê o motivo em
-  // "Leads recebidos" e recadastra a assinatura da fonte.
+  // "Leads recebidos" e recria a fonte (a tela não regrava o segredo de uma fonte).
   let sourceSecret: string | null = null;
   let recusa: MotivoDaRecusa | null = null;
   if (source.secret_encrypted) {
     sourceSecret = await decryptWebhookSecret(admin, source.secret_encrypted as unknown as string);
     if (sourceSecret === null) {
-      logger.error("[webhooks.in] segredo da fonte não decifra — captação recusada até recadastrar a assinatura", {
+      logger.error("[webhooks.in] segredo da fonte não decifra — captação recusada até a fonte ser recriada", {
         organizationId: source.organization_id,
         webhookSourceId: source.id,
         requestId,
