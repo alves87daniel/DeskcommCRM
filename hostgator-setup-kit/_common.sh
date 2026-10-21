@@ -826,6 +826,54 @@ recusar_projeto_de_outra_arvore() {  # recusar_projeto_de_outra_arvore <como rep
   return 1
 }
 
+# O segredo com que o WAHA ASSINA os webhooks tem de ser um que o CRM aceita para
+# CONFERIR. O compose entrega `WAHA_HMAC_SECRET` ao WAHA em
+# `WHATSAPP_HOOK_HMAC_KEY` (issue #40), e `lib/waha/webhook-auth.ts` descarta
+# segredo com menos de 16 caracteres (`MIN_SECRET_LEN`, depois de `trim()`) —
+# e aí toda entrega ASSINADA vira `bad_signature`, mesmo com a exigência de
+# assinatura desligada. Um segredo curto ou vazio no .env pararia, em silêncio,
+# toda mensagem recebida no WhatsApp. Espaço nas pontas dá o mesmo: o WAHA assina
+# com o valor cru e o CRM confere com o aparado.
+#
+# Falha FECHADA antes de o WAHA receber o valor, e diz como consertar. Quem
+# chama é o install.sh, DEPOIS de gerar o segredo que falta (vazio ali vira 64
+# hex). O update.sh não recusa: conserta, em `consertar_segredo_hmac_do_waha`.
+recusar_segredo_hmac_do_waha() {  # recusar_segredo_hmac_do_waha  (lê $WAHA_HMAC_SECRET)
+  local segredo="${WAHA_HMAC_SECRET:-}" aparado
+  # Um \r no fim é o fim de linha de um .env com CRLF, que o `load_env` não tira
+  # e o compose não entrega como parte do valor — não é espaço do segredo.
+  segredo="${segredo%$'\r'}"
+  aparado="$(printf '%s' "$segredo" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  if [ "${#aparado}" -ge 16 ] && [ "$aparado" = "$segredo" ]; then
+    return 0
+  fi
+  printf '%s\n' "WAHA_HMAC_SECRET no .env tem ${#segredo} caractere(s)$([ "$aparado" != "$segredo" ] && printf ' com espaço nas pontas'). O WAHA assina as mensagens recebidas com ele, e o CRM só confere assinatura com segredo de 16 caracteres ou mais, sem espaço nas pontas: com este valor, toda mensagem do WhatsApp seria recusada. Gere um segredo novo com 'openssl rand -hex 32', ponha o resultado na linha WAHA_HMAC_SECRET= do .env e rode de novo. O segredo só existe entre o CRM e o WAHA desta instalação; trocá-lo não afeta mais nada." >&2
+  return 1
+}
+
+# O update.sh CONSERTA o que o install.sh recusa. Quem atualiza não está diante
+# da tela (o agent.sh roda o update.sh a cada 5 minutos), e a doutrina de
+# packaging proíbe atualização que peça edição do .env. Trocar o segredo é
+# seguro: ele só existe entre o CRM e o WAHA desta instalação, e os dois o leem
+# do mesmo .env — basta recriá-los juntos, o que fica a cargo de quem chama.
+#
+# Devolve 0 quando TROCOU (quem chama recria app e WAHA), 1 quando o segredo já
+# servia (nada a fazer; idempotente), 2 quando não conseguiu trocar. Avisa sem
+# mostrar o valor velho nem o novo.
+consertar_segredo_hmac_do_waha() {  # consertar_segredo_hmac_do_waha <envfile>
+  local envfile="${1:-.env}" velho="${WAHA_HMAC_SECRET:-}" novo
+  recusar_segredo_hmac_do_waha 2>/dev/null && return 1
+  [ -f "$envfile" ] || return 2
+  novo="$(openssl rand -hex 32 2>/dev/null)" || return 2
+  [ "${#novo}" -eq 64 ] || return 2
+  set_env_var "$envfile" WAHA_HMAC_SECRET "$novo" || return 2
+  WAHA_HMAC_SECRET="$novo"
+  export WAHA_HMAC_SECRET
+  velho="${velho%$'\r'}"
+  c_ylw "⚠ O WAHA_HMAC_SECRET do .env não servia (${#velho} caractere(s); o CRM só confere assinatura com 16 ou mais, sem espaço nas pontas). Gerei um novo de 64 caracteres e gravei no .env; o CRM e o WAHA vão ser recriados para usar o mesmo. Nada mais muda."
+  return 0
+}
+
 # A bridge que ESTE projeto reserva para o proxy externo. Um `basename` cru
 # diverge numa pasta com maiúscula, ponto ou underscore inicial — e aí o kit
 # cria uma rede e o compose procura outra.

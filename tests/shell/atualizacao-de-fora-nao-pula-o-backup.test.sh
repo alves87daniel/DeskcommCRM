@@ -123,6 +123,7 @@ APP_PULL_POLICY=always
 SUPABASE_DB_URL=postgresql://x/y
 NEXT_PUBLIC_APP_URL=https://crm.exemplo.com.br
 INTERNAL_SECRET=segredo
+WAHA_HMAC_SECRET=0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 NUVEMSHOP_OAUTH_ENCRYPTION_KEY=chave
 ENV
   chmod 600 "$proj/.env"
