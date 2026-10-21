@@ -41,19 +41,18 @@ export async function replyFixture(pool: pg.Pool) {
     "insert into ai_agents(id,organization_id,name,system_prompt,operation_mode) values($1,$2,'Assistente','Ajude com informações confirmadas.','assisted')",
     [agent, org],
   );
+  // A credencial da organização é a ÚNICA chave (ADR-0005): o registro falso
+  // do provedor substitui a chamada, mas o resolvedor continua exigindo uma
+  // credencial ativa e validada DELA — e a versão publicada nasce apontando
+  // para ela (publicada é imutável: nada de update depois).
+  const credential = await cadastrarCredencialDeTeste(pool, org, "anthropic");
   await pool.query(
-    "insert into ai_agent_versions(id,organization_id,agent_id,version_number,system_prompt,provider,model,channel_session_id,status) values($1,$2,$3,1,'Ajude com informações confirmadas.','anthropic','test-model',$4,'published')",
-    [version, org, agent, channel],
+    "insert into ai_agent_versions(id,organization_id,agent_id,version_number,system_prompt,provider,model,credential_id,channel_session_id,status) values($1,$2,$3,1,'Ajude com informações confirmadas.','anthropic','test-model',$4,$5,'published')",
+    [version, org, agent, credential, channel],
   );
   await pool.query(
     "update ai_agents set published_version_id=$1 where organization_id=$2 and id=$3",
     [version, org, agent],
   );
-  // A credencial da organização é a ÚNICA chave (ADR-0005): o registro falso
-  // do provedor substitui a chamada, mas o resolvedor continua exigindo uma
-  // credencial ativa e validada DELA. Cifrada de verdade, com a chave de teste
-  // de `vitest.db.config.ts`.
-  const credential = await cadastrarCredencialDeTeste(pool, org, "anthropic");
-  await pool.query("update ai_agent_versions set credential_id=$1 where id=$2", [credential, version]);
   return { org, contact, agent, version, conversation, channel, boundary, credential };
 }
