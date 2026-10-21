@@ -49,8 +49,17 @@ o caminho é a tela.
    `code` segue a regra `^[a-z][a-z0-9_]{1,62}$` (minúsculas, números e `_`, começando por letra) e
    não pode ser trocado depois. Use a aba **Produtos Green** do modelo só para listar o que vai
    cadastrar.
-3. **Seu papel** na organização é `agent` ou acima (viewer só lê).
-4. **O modelo** baixado deste repositório, ou o CSV modelo que a própria tela de Importar planilha
+3. **Automações pausadas.** Cada oportunidade importada emite o mesmo evento de "negócio criado"
+   (`lead.created`) de um negócio aberto à mão, e o motor de automações (`lib/automation/engine.ts`)
+   roda toda regra **ativa** com esse gatilho, sem distinguir o que veio de planilha. Uma regra que
+   manda WhatsApp ou aciona a IA quando nasce um negócio dispararia para as 500 linhas. Antes de
+   importar Oportunidades: abra **Webhooks › aba Automações**, e em cada regra com gatilho de negócio
+   criado clique em **Pausar** (o estado passa de "Ativa" para "Pausada"). Depois que a importação
+   terminar e o quadro estiver conferido, volte lá e clique em **Ligar**. Os follow-ups do funil
+   (`lib/followup/gatilho-lead.ts`) já ignoram quem veio de planilha; as automações, não. Quem faz
+   isso precisa de papel que edite regras (manager+).
+4. **Seu papel** na organização é `agent` ou acima (viewer só lê).
+5. **O modelo** baixado deste repositório, ou o CSV modelo que a própria tela de Importar planilha
    oferece ("Baixar planilha modelo").
 
 ---
@@ -239,14 +248,16 @@ da issue #54 (o importador escolhe, de propósito, só etapa aberta).
 
 ## 6. Plano para a semana de 29/10
 
-1. Segunda: funil e etapas conferidos; produtos Green cadastrados; papéis conferidos.
+1. Segunda: funil e etapas conferidos; produtos Green cadastrados; papéis conferidos; lista das
+   automações com gatilho de negócio criado anotada (Webhooks › Automações).
 2. Terça: planilha preenchida; exportar as abas Contatos e Oportunidades em CSV; importar **num
    ambiente de teste primeiro** (ou com 10 linhas) e ler o resumo.
-3. Quarta: importar Contatos (todos os arquivos), depois Oportunidades (um arquivo por etapa, se
+3. Quarta: **pausar as automações de negócio criado**; importar Contatos (todos os arquivos),
+   depois Oportunidades (um arquivo por etapa, se
    for seguir a saída da seção 5.1). **Cada arquivo de Oportunidades sobe uma vez só**; o que der
    errado se corrige no card, não reimportando.
 4. Quinta: produto Green pelo dossiê; mover os lotes para a etapa certa (até 50 cards por seleção);
-   conferir auditoria.
+   conferir auditoria; **religar as automações** pausadas na quarta.
 5. Sexta: folga para as linhas recusadas.
 
 ---
