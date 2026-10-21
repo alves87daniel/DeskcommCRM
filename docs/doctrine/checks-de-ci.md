@@ -64,6 +64,14 @@ régua errada.
   no PR (`vigia-de-revisao-de-novo.yml`, só quem tem escrita) ou use "Re-run" no check. Regra e
   formato do selo em `scripts/vigia-de-revisao.mjs`.
 
+  O `/vigia` responde no próprio comentário com uma reação: 🚀 rodou de novo, 👀 já estava
+  rodando, 😕 não havia o que rodar (o motivo fica no resumo do job). O 😕 mais comum é branch
+  anterior ao vigia: um evento de PR usa os workflows da branch do PR, então traga a `main` e faça
+  push. Sessão no Git Bash do Windows que posta `/vigia` com o `gh` tem o texto reescrito como
+  caminho (`C:/Program Files/Git/vigia`). O atalho aceita essa forma, mas prefira
+  `MSYS_NO_PATHCONV=1 gh pr comment <n> --body /vigia`. Regra do comando em
+  `scripts/vigia-de-novo.mjs`.
+
 ## As specs do `e2e`: pergunte ao workflow
 
 Não há número de specs aqui de propósito. O número que o `CLAUDE.md` trazia apodreceu cinco vezes

@@ -77,7 +77,11 @@ const ESCRITA_JUSTIFICADA: Record<string, string> = {
     "e tests/unit/vigia-de-revisao.test.ts",
   "vigia-de-revisao-de-novo.yml::actions: write":
     "pede uma nova execução do vigia-de-revisao quando quem tem escrita comenta `/vigia` (resolver " +
-    "conversa não dispara workflow); o job não faz checkout e só roda `gh` com o número do PR",
+    "conversa não dispara workflow); o job faz checkout esparso só do script, da branch padrão, " +
+    "sem código do PR — ver scripts/vigia-de-novo.mjs",
+  "vigia-de-revisao-de-novo.yml::pull-requests: write":
+    "põe a reação (🚀/👀/😕) no comentário `/vigia`, para quem comentou saber se o vigia rodou " +
+    "de novo — sem ela, um `/vigia` sem efeito ficava só no log (issue #55)",
 };
 
 interface Workflow {
