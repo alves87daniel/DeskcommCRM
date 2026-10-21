@@ -110,23 +110,24 @@ Regras que o importador aplica (`lib/contacts/csv.ts`):
 
 Regras que o importador aplica (`lib/leads/planilha.ts`):
 
-| Coluna            | Outros nomes aceitos                                              | Regra                                                                                                                                                                                                                                      |
-| ----------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `nome`            | `titulo`, `negocio`, `oportunidade`, `empresa`, `assunto`, `lead` | o nome do card; sem ele, o nome do contato vira o título                                                                                                                                                                                   |
-| `nome do contato` | `contato`, `responsavel`, `pessoa`                                | quem é a pessoa                                                                                                                                                                                                                            |
-| `telefone`        | `celular`, `whatsapp`, `fone`, `phone`                            | mesma regra de contatos. Se já existe um contato com esse telefone, a oportunidade é ligada a ele; se não, o contato é criado                                                                                                              |
-| `email`           | `e-mail`                                                          | só entra se tiver `@`; **só é gravado quando o importador cria o contato**. Contato que já existe (achado pelo telefone) não ganha nem corrige e-mail por aqui; a oportunidade não tem campo de e-mail. Para corrigir e-mail, use Contatos |
-| `valor`           | `preco`, `ticket`, `value`                                        | em reais, formato brasileiro: `12.500,00`, `1200`, `R$ 1.200,00`. Valor ilegível recusa a linha; **`1200.50` é lido como 120.050**                                                                                                         |
-| `origem`          | `fonte`, `canal`, `source`                                        | texto livre, sem acento, sempre com a mesma grafia (`indicacao`, `site`, `meta_ads`, `whatsapp`). Vazio vira `importacao_planilha`                                                                                                         |
-| `tags`            | `etiquetas`, `marcadores`                                         | separadas por `,`, `;` ou `\|`, até 20. **Ficam como escritas** (`Quente` e `quente` são duas tags diferentes no filtro do quadro): escreva sempre em minúsculas, como o importador de contatos já faz sozinho                             |
-| `observacao`      | `descricao`, `notas`, `detalhes`                                  | texto livre; vai para a descrição do card                                                                                                                                                                                                  |
+| Coluna            | Outros nomes aceitos                                              | Regra                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ----------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `nome`            | `titulo`, `negocio`, `oportunidade`, `empresa`, `assunto`, `lead` | o nome do card; sem ele, o nome do contato vira o título                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `nome do contato` | `contato`, `responsavel`, `pessoa`                                | quem é a pessoa                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `telefone`        | `celular`, `whatsapp`, `fone`, `phone`                            | mesma regra de contatos. Se já existe um contato com esse telefone, a oportunidade é ligada a ele; se não, o contato é criado                                                                                                                                                                                                                                                                                                                                             |
+| `email`           | `e-mail`                                                          | só entra se tiver `@`; **só é gravado quando o importador cria o contato**. Contato que já existe (achado pelo telefone) não ganha nem corrige e-mail por aqui; a oportunidade não tem campo de e-mail. Para corrigir e-mail, use Contatos                                                                                                                                                                                                                                |
+| `valor`           | `preco`, `ticket`, `value`                                        | **na moeda configurada da organização** (Configurações › Organização): o importador não converte, só grava o número e carimba a moeda da organização. Planilha em reais numa organização em EUR ou USD entra com o número errado. Formatos aceitos: `12.500,00`, `1200`, `R$ 1.200,00`, `1200.50` e `1200,50` (o último separador com 1 ou 2 dígitos depois é o decimal; com 3, é milhar: `1.200` e `1,200` são mil e duzentos, nunca 1,2). Valor ilegível recusa a linha |
+| `origem`          | `fonte`, `canal`, `source`                                        | texto livre, sem acento, sempre com a mesma grafia (`indicacao`, `site`, `meta_ads`, `whatsapp`). Vazio vira `importacao_planilha`                                                                                                                                                                                                                                                                                                                                        |
+| `tags`            | `etiquetas`, `marcadores`                                         | separadas por `,`, `;` ou `\|`, até 20. **Ficam como escritas** (`Quente` e `quente` são duas tags diferentes no filtro do quadro): escreva sempre em minúsculas, como o importador de contatos já faz sozinho                                                                                                                                                                                                                                                            |
+| `observacao`      | `descricao`, `notas`, `detalhes`                                  | texto livre; vai para a descrição do card                                                                                                                                                                                                                                                                                                                                                                                                                                 |
 
 - **Obrigatório:** a planilha precisa ter a coluna `nome` **ou** `nome do contato`; a linha precisa
   ter ao menos 2 caracteres num dos dois.
 - **Telefone ilegível não derruba a linha:** a oportunidade **entra assim mesmo, sem contato**, e o
   resumo avisa. **Não reimporte essa linha:** este importador não reconhece oportunidade repetida, e a
-  linha corrigida viraria um segundo card. Corrija o telefone no card que já entrou (abra o card e
-  ligue o contato), ou apague esse card antes de importar a linha de novo.
+  linha corrigida viraria um segundo card. O card que entrou sem contato **não tem como ganhar um
+  contato pela tela** (o dossiê só mostra "este negócio não tem contato vinculado"). O caminho é:
+  apague esse card no quadro e importe de novo **só essa linha**, com o telefone corrigido.
 - **Reimportar o mesmo arquivo cria tudo de novo.** Diferente do importador de contatos, aqui não há
   "duplicado": cada linha vira uma oportunidade nova, mesmo que igual a uma que já existe. Importe cada
   arquivo uma vez; o que precisar de ajuste, ajuste no card.
@@ -141,7 +142,8 @@ Hoje isto é **pela tela, uma oportunidade por vez**:
 1. Abra o card no quadro (dossiê da oportunidade).
 2. Na seção **Produto Green** (só aparece em funil Green), escolha o produto e salve.
 3. Para a etapa, **arraste o card** até a coluna certa. Alternativa: um arquivo CSV por etapa, e
-   depois de cada importação arraste em bloco os cards recém-criados.
+   depois de cada importação mova em bloco os cards recém-criados. **O mover em lote aceita no máximo
+   50 cards por vez**: um arquivo de 200 linhas é movido em quatro seleções de até 50.
 
 A aba **Contexto Green** do modelo existe para você já reunir produto e etapa de cada oportunidade
 (pelo telefone), mesmo sem importador para ela. É o insumo da seção 5.
@@ -152,6 +154,8 @@ A aba **Contexto Green** do modelo existe para você já reunir produto e etapa 
 - Quadro: a primeira etapa deve ter o número de cards que o resumo disse em `criados`.
 - Audit Log (menu lateral, **só `manager` ou acima**): uma entrada `contacts.imported` e uma
   `lead.imported` por arquivo, com os totais. Se algo deu errado, é por aqui que se prova o que entrou.
+  Exceção: um arquivo de contatos em que **nenhuma linha** passou na validação não gera entrada no Audit
+  Log (a rota devolve o resumo antes de auditar); nesse caso a única prova é o resumo da janela.
   Quem importa como `agent` não alcança essa tela: guarde o resumo que apareceu na janela (print ou
   anotação dos totais e das linhas recusadas) e peça a um `manager` para conferir no Audit Log.
 
@@ -241,7 +245,8 @@ da issue #54 (o importador escolhe, de propósito, só etapa aberta).
 3. Quarta: importar Contatos (todos os arquivos), depois Oportunidades (um arquivo por etapa, se
    for seguir a saída da seção 5.1). **Cada arquivo de Oportunidades sobe uma vez só**; o que der
    errado se corrige no card, não reimportando.
-4. Quinta: produto Green pelo dossiê; arrastar os lotes para a etapa certa; conferir auditoria.
+4. Quinta: produto Green pelo dossiê; mover os lotes para a etapa certa (até 50 cards por seleção);
+   conferir auditoria.
 5. Sexta: folga para as linhas recusadas.
 
 ---
