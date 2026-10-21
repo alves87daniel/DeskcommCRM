@@ -1707,7 +1707,13 @@ SUPABASE_SERVICE_ROLE_KEY='$(mkjwt service_role abcdefghijklmnop)'
 SUPABASE_DB_URL='postgresql://postgres.abcdefghijklmnop:senha@aws-1-sa-east-1.pooler.supabase.com:5432/postgres'
 ANTHROPIC_API_KEY='sk-ant-teste'
 OWNER_EMAIL='eu@exemplo.com.br'
-OWNER_PASSWORD='senha12345'"
+OWNER_PASSWORD='senha12345'
+WAHA_HMAC_SECRET='0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'"
+# WAHA_HMAC_SECRET entra porque toda instalação real o tem (o install.sh gera 64
+# hex e grava) e o update.sh RECUSA seguir sem um que o CRM aceite conferir
+# (`recusar_segredo_hmac_do_waha`, issue #40). Sem ele aqui, todo cenário do
+# update.sh pararia na guarda do começo e leria como "não chegou ao banco / ao
+# up -d" — defeito de fixture, não do produto.
 
 # montar_vps <raiz> <pasta do projeto>   < corpo do dublê de `docker`
 # Define VPS_RAIZ / VPS_PROJ / VPS_LOG para o `rodar` logo abaixo.
