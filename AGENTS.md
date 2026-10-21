@@ -584,6 +584,22 @@ sozinho (lint, prettier, typecheck) fica fora desta lista.
     `lib/env.ts` apenas para scripts locais. Fonte:
     [`docs/adr/0005-ia-paga-por-cada-organizacao.md`](docs/adr/0005-ia-paga-por-cada-organizacao.md).
 
+**Prioridade e merge.** Todo apontamento abre a conversa com a prioridade no começo do primeiro
+comentário: o selo do Codex (`![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)`) ou,
+para quem revisa sem gerar o selo, `**P1**`, `[P1]` ou `P1:`. Selo no meio do texto não conta.
+P0 e P1 bloqueiam o merge: o check `vigia-de-revisao` reprova enquanto houver conversa **não
+resolvida** com P0 ou P1, e avisa no PR. P2 e P3 nunca reprovam. Quem corrige resolve a conversa e
+comenta `/vigia` no PR, porque resolver uma conversa não dispara o check sozinho. Detalhe em
+[`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
+
+**No máximo 2 rodadas de correção por PR.** Na terceira, P1 que só afeta instalações já
+existentes vira item de issue e o merge segue; P1 que afeta instalação nova sempre corrige.
+
+**Quem corrige responde e resolve.** A sessão que corrige um P0/P1 responde na conversa dizendo o
+commit que corrigiu e resolve a conversa ela mesma. P1 levado para issue também é respondido com o
+link da issue e resolvido pela sessão. O `vigia-de-revisao` só lê se a conversa está resolvida:
+conversa aberta segue reprovando, mesmo marcada como Outdated.
+
 ## Critério de conclusão
 
 Vale a **Definition of Done em [`CLAUDE.md`](CLAUDE.md)** — conte lá em vez de confiar num número aqui (`sed -n '/^## Definition of Done/,/^Um staff engineer/p' CLAUDE.md | grep -cE '^[0-9]+\. '`; esta linha já disse 15 quando o DoD tinha 16). A régua tem que DELIMITAR a seção: a primeira versão desta linha oferecia `grep -c '^[0-9]\+\. \*\*' CLAUDE.md`, que devolve **25** — casa toda linha numerada em negrito do arquivo (anti-patterns, packaging, higiene de branches, migrations) e perde os itens 1–10 do próprio DoD, que não são negrito. Trocar o número pelo comando só ajuda se o comando responder à pergunta. Não declare pronto
