@@ -69,6 +69,14 @@ outra chave, e a tela do recurso e a Central dizem que a IA está desligada por 
 apontam IA › Credenciais. É o mesmo desfecho que o produto já dá a quem está "sem chave em lugar
 nenhum", agora como único desfecho. Erro mudo e fallback silencioso são proibidos.
 
+A conversa não fica parada nem gera uma enxurrada de alertas. Decisão do dono em 21/10/2026: quando
+a organização não tem chave, o turno do agente **passa a conversa para a equipe na hora**, sem
+chamar provedor nenhum e **sem novas tentativas**, e a Central mostra **um único aviso** de "IA
+desligada por falta de chave" por organização, não um por conversa. Hoje o erro de chave ausente é
+tratado como passageiro: a fila tenta cinco vezes e depois abre um alerta crítico por conversa
+(`lib/agent-engine/edge/llm/run-model-call.ts` e `workers/agent-worker/main.ts`), sem ninguém
+assumir o lead. Isso deixa de valer.
+
 ### D4 — As envs de IA ficam vazias em produção
 
 `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` e `AI_GATEWAY_API_KEY` continuam
@@ -99,6 +107,13 @@ Há dois caminhos que criam o dono e a organização, e os dois cadastram as cha
 `scripts/bootstrap-owner.ts` e o bloco SQL inline do `hostgator-setup-kit/install.sh`, que é o que a
 VPS de fato roda e não chama o script. A #33 escolhe entre mudar os dois ou fazer o instalador
 chamar o script canônico; mudar só um deles deixaria a instalação nova sem IA.
+
+Rodar o instalador de novo continua idempotente. Decisão do dono em 21/10/2026: se a organização
+do dono já tem credencial ativa e validada de um provedor, o instalador **não pergunta de novo** a
+chave daquele provedor e não grava nada; trocar uma chave é pela tela, em IA › Credenciais. O
+resumo final do instalador lê o banco, não o `.env`, para dizer se a IA está configurada. Isso evita
+tanto a duplicata barrada pela restrição única `(organization_id, provider, label)` de
+`ai_provider_credentials` quanto o aviso falso de "IA pendente" depois que o `.env` foi esvaziado.
 
 ---
 
