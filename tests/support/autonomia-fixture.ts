@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
-import { encryptKey } from "@/lib/crypto/aes_gcm";
+import { cadastrarCredencialDeTeste } from "./credencial-de-teste";
 import { GOV_AGENT_A, GOV_AGENT_B, GOV_VIEWER } from "../invariants/gov-helpers";
 import { criarOrigemDeFollowup } from "../invariants/followup-service-origin";
 export async function replyFixture(pool: pg.Pool) {
@@ -53,10 +53,7 @@ export async function replyFixture(pool: pg.Pool) {
   // do provedor substitui a chamada, mas o resolvedor continua exigindo uma
   // credencial ativa e validada DELA. Cifrada de verdade, com a chave de teste
   // de `vitest.db.config.ts`.
-  const cifrada = encryptKey("chave-de-teste-nunca-enviada");
-  await pool.query(
-    "insert into ai_provider_credentials(organization_id,provider,label,api_key_encrypted,api_key_iv,api_key_tag,api_key_last4,is_active,validated_at) values($1,'anthropic','fixture',$2,$3,$4,$5,true,now())",
-    [org, cifrada.ciphertext, cifrada.iv, cifrada.tag, cifrada.last4],
-  );
-  return { org, contact, agent, version, conversation, channel, boundary };
+  const credential = await cadastrarCredencialDeTeste(pool, org, "anthropic");
+  await pool.query("update ai_agent_versions set credential_id=$1 where id=$2", [credential, version]);
+  return { org, contact, agent, version, conversation, channel, boundary, credential };
 }

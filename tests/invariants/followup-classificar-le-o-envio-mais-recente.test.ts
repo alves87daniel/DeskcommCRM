@@ -2,6 +2,7 @@ import { criarOrigemDeFollowup } from "./followup-service-origin";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import pg from "pg";
+import { cadastrarCredencialDeTeste } from "../support/credencial-de-teste";
 
 import { createFollowupTurnHandler, type FollowupTurnDeps } from "@/lib/agent-engine/agent/followup-turn";
 import { createFakeRegistry } from "@/lib/agent-engine/edge/llm/providers";
@@ -117,7 +118,7 @@ const registry = createFakeRegistry((async (options: { prompt: unknown }) => {
 
 const turnDeps: FollowupTurnDeps = {
   crmCfg: { supabase: {} as never } as never,
-  llmCfg: { anthropicApiKey: "fake" } as never,
+  llmCfg: {} as never, // a chave é a credencial da organização (ADR-0005)
   knobs: {
     historyLimit: 20,
     maxContextTokens: 4000,
@@ -268,6 +269,7 @@ async function cenario(): Promise<Cenario> {
     `insert into organizations (id, slug, legal_name, display_name) values ($1, $2, 'Classificar Recente', 'Classificar Recente')`,
     [org, `classificar-recente-${org}`],
   );
+  await cadastrarCredencialDeTeste(pool, org);
   const { rows: ct } = await pool.query<{ id: string }>(
     `insert into contacts (organization_id, name, phone_number) values ($1, 'Lead', '+5511900001748') returning id`,
     [org],

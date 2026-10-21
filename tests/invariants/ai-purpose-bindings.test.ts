@@ -151,12 +151,13 @@ describe("ai_purpose_bindings — o que acontece quando a chave some", () => {
     // Ele exigia `ON DELETE CASCADE`, com a justificativa de que um binding com
     // credencial nula "falharia em TODA chamada daquele ponto, em silêncio".
     // Essa premissa é FALSA, e o código diz isso:
-    // `lib/agent-engine/edge/llm/credentials.ts:137` — sem `credentialId`, a
+    // `lib/agent-engine/edge/llm/credentials.ts` — sem `credentialId`, a
     // resolução cai na credencial mais recente ATIVA E VALIDADA do provider e,
-    // se não houver nenhuma, na chave da instalação (`cfg.anthropicApiKey` /
-    // `cfg.openaiApiKey`). `credential_id is null` não é órfão: é o valor com
-    // que TODO binding nasce (`app/api/v1/ai/providers/route.ts:183`,
-    // `credential_id` opcional) e o que a tela mostra como "da instalação".
+    // se não houver nenhuma, a IA da organização fica desligada com aviso
+    // (ADR-0005: não existe chave da instalação). `credential_id is null` não
+    // é órfão: é o valor com que TODO binding nasce
+    // (`app/api/v1/ai/providers/route.ts`, `credential_id` opcional) e
+    // significa "a credencial mais recente do provedor".
     //
     // O que o CASCADE fazia de fato era APAGAR A LINHA INTEIRA — provider,
     // model_id, base_url e is_enabled junto. O caminho é banal e recomendado:

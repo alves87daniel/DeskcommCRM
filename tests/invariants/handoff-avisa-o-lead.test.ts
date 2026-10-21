@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import pg from "pg";
+import { cadastrarCredencialDeTeste } from "../support/credencial-de-teste";
 
 import type * as InboundTurn from "@/lib/agent-engine/agent/inbound-turn";
 import type * as Providers from "@/lib/agent-engine/edge/llm/providers";
@@ -114,7 +115,7 @@ function modeloDeControle() {
 function montaHandler() {
   return m.createInboundTurnHandler({
     crmCfg: { supabase: {} as never },
-    llmCfg: { anthropicApiKey: "fake" } as never,
+    llmCfg: {} as never, // a chave é a credencial da organização (ADR-0005)
     knobs: {
       historyLimit: 10,
       maxContextTokens: 1000,
@@ -208,6 +209,7 @@ beforeAll(async () => {
      values ($1,'handoff-avisa','Handoff Avisa','Handoff Avisa') on conflict (id) do nothing`,
     [ORG],
   );
+  await cadastrarCredencialDeTeste(pool, ORG);
   await pool.query(
     `insert into channel_sessions (id, organization_id, waha_session_name, status, webhook_secret_encrypted)
      values ($1,$2,'handoff-avisa-session','WORKING','\\x00'::bytea) on conflict (id) do nothing`,

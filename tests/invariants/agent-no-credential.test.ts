@@ -60,6 +60,10 @@ beforeAll(async () => {
      values ($1, 'nocred-proof', 'NoCred Proof', 'NoCred Proof') on conflict (id) do nothing`,
     [ORG],
   );
+  // O id desta organização é compartilhado com outros invariantes, que
+  // cadastram a credencial de teste nela. Aqui a cena é SEM credencial nenhuma.
+  await pool.query("delete from ai_provider_credentials where organization_id = $1", [ORG]);
+  await pool.query("delete from agent_inbox_items where organization_id = $1", [ORG]);
   await pool.query(
     `insert into contacts (id, organization_id, name, phone_number)
      values ($1, $2, 'Lead Sem Credencial', '+5511900000042') on conflict (id) do nothing`,
@@ -98,15 +102,15 @@ afterAll(async () => {
   await pool.end();
 });
 
-describe("4B — turno sem credencial NENHUMA (nem env, nem BYOK)", () => {
-  it("falha EXPLÍCITA e ISOLADA: dead + inbox critical + fila viva + zero envio", async () => {
+describe("4B — turno sem credencial NENHUMA da organização (a plataforma não custeia IA, ADR-0005)", () => {
+  it("falha EXPLÍCITA e ISOLADA: dead + passagem à equipe + aviso único + fila viva + nenhuma resposta de modelo", async () => {
     const log = m.createLogger();
     const handler = m.createInboundTurnHandler({
       crmCfg: m.crmEdgeConfigFromEnv({
         SUPABASE_URL: "https://placeholder.supabase.co",
         SUPABASE_SERVICE_ROLE_KEY: "placeholder-service",
       }),
-      llmCfg: {}, // SEM anthropicApiKey — e o banco não tem BYOK para a org
+      llmCfg: {}, // não existe chave da instalação: a única chave é a credencial da organização, e ela não tem
       knobs: {
         historyLimit: 10,
         maxContextTokens: 1000,
@@ -166,10 +170,12 @@ describe("4B — turno sem credencial NENHUMA (nem env, nem BYOK)", () => {
       await m.queue.failJob(pool, claimed!.id, workerId, err);
     }
 
-    // 1. erro CLARO e instrutivo (nunca stack críptico)
+    // 1. erro CLARO e instrutivo (nunca stack críptico), e TERMINAL: a fila não
+    //    tenta de novo o que só uma pessoa resolve (cadastrar a chave).
     expect(turnError).not.toBeNull();
-    expect(turnError!.message).toMatch(/credencial LLM/);
-    expect(turnError!.message).toMatch(/ai_provider_credentials|ANTHROPIC_API_KEY/);
+    expect(turnError!.message).toMatch(/chave de IA ativa e validada/);
+    expect(turnError!.message).toMatch(/IA › Credenciais/);
+    expect((turnError as { terminal?: unknown }).terminal).toBe(true);
 
     // 2. job dead (max_attempts=1), com o erro gravado
     const { rows: jobs } = await pool.query(
@@ -177,7 +183,23 @@ describe("4B — turno sem credencial NENHUMA (nem env, nem BYOK)", () => {
       [job.id],
     );
     expect(jobs[0]!.status).toBe("dead");
-    expect(jobs[0]!.last_error).toMatch(/credencial LLM/);
+    expect(jobs[0]!.last_error).toMatch(/chave de IA ativa e validada/);
+
+    // 2b. a conversa NÃO fica no limbo: passagem à equipe com o motivo certo —
+    //     o cliente não pediu uma pessoa, a IA é que está desligada (D3).
+    const { rows: passagens } = await pool.query(
+      "select origem, motivo_codigo from passagens_de_atendimento where organization_id = $1 and conversation_id = $2",
+      [ORG, CONV],
+    );
+    expect(passagens).toEqual([expect.objectContaining({ origem: "ia_sem_chave", motivo_codigo: "ia_sem_chave" })]);
+
+    // 2c. UM aviso por organização na Central, com o título fixo que a tela e
+    //     o worker de voz também gravam (dedup por título).
+    const { rows: avisos } = await pool.query(
+      "select count(*)::int as n from agent_inbox_items where organization_id = $1 and title = 'IA desligada por falta de chave'",
+      [ORG],
+    );
+    expect(avisos[0]!.n).toBe(1);
 
     // 3. trilha humana: inbox item crítico
     const { rows: inbox } = await pool.query(
@@ -187,12 +209,14 @@ describe("4B — turno sem credencial NENHUMA (nem env, nem BYOK)", () => {
     );
     expect(inbox[0]).toMatchObject({ kind: "job_dead", severity: "critical" });
 
-    // 4. NENHUMA mensagem enviada (nem vazia)
+    // 4. NENHUMA resposta de modelo: o único envio possível é o aviso ao lead
+    //    que a escolta manda antes da passagem (a mesma do teto de gasto) —
+    //    nunca uma mensagem gerada, porque modelo nenhum foi chamado.
     const { rows: outbound } = await pool.query(
       "select count(*)::int as n from messages where conversation_id = $1 and direction = 'outbound'",
       [CONV],
     );
-    expect(outbound[0]!.n).toBe(0);
+    expect(outbound[0]!.n).toBeLessThanOrEqual(1);
 
     // 5. a fila SOBREVIVE: claim seguinte funciona sem erro (worker operável)
     const nextClaims = await m.queue.claimJobs(pool, { workerId, maxConcurrency: 1 });

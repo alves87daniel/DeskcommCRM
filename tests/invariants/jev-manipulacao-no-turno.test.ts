@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import pg from "pg";
+import { cadastrarCredencialDeTeste } from "../support/credencial-de-teste";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { loadAgentVersionConfig } from "@/lib/agent-engine/agent/agent-config";
@@ -139,7 +140,7 @@ function capturador(r: Rodada): Logger {
 function deps(nivelDaIa: NivelDaIa, escolhaDoJev: string, r: Rodada, statusDoJev = 200) {
   return {
     crmCfg: { supabase: {} as never },
-    llmCfg: { anthropicApiKey: "fake" } as never,
+    llmCfg: {} as never, // a chave é a credencial da organização (ADR-0005)
     knobs: {
       historyLimit: 10,
       maxContextTokens: 1000,
@@ -205,6 +206,7 @@ async function cenario(settings: unknown, camadaLigada = true, derivado?: string
      values ($1, $2, 'Jev Manipulacao', 'Jev Manipulacao', $3)`,
     [org, `jev-0416-${org}`, JSON.stringify(settings)],
   );
+  await cadastrarCredencialDeTeste(pool, org);
   if (!camadaLigada) {
     await pool.query(
       `insert into org_guardrail_layers (organization_id, layer, enabled) values ($1, 'jailbreak', false)`,
