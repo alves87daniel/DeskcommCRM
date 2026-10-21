@@ -2,7 +2,6 @@ import { listSelectableChannels, type SelectableChannel } from "@/lib/channels/s
 import { createAdminClient } from "@/lib/supabase/admin";
 import { capacidadesPadraoDoOnboarding } from "./capacidades-padrao";
 import { escolherModeloDoProvedor } from "./escolher-modelo";
-import { chaveDePlataforma } from "@/lib/ai/runtime/agent";
 import { publishAgentVersion } from "./publish";
 interface AgenteDoOnboarding {
   id: string;
@@ -171,12 +170,17 @@ export async function publishFirstVersion(
       // uma credencial que o provedor ainda não confirmou não é utilizável no
       // turno — publicar com ela entrega um agente que erra em toda mensagem.
       .not("validated_at", "is", null)
+      // A MAIS RECENTE, como todo resolvedor (ADR-0005 D2): sem ordem, duas
+      // credenciais do provedor davam uma publicação que apontava para uma
+      // chave já trocada.
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
       .limit(1)
       .maybeSingle();
 
     credentialId = (credencialDoProvedor?.id as string | undefined) ?? null;
 
-    if (!credentialId && !chaveDePlataforma(provider)) {
+    if (!credentialId) {
       // Nada utilizável — mas pode haver uma chave colada esperando o provedor
       // confirmar. Nomear isso é o que separa "cole a chave" de "espere um
       // instante": são causas e conselhos diferentes, e sem o nome do provedor
@@ -242,17 +246,17 @@ export async function publishFirstVersion(
     .maybeSingle();
   const pipelineIds = !selection && funil?.id ? [funil.id as string] : [];
 
-  // Sem chave NENHUMA (nem da organização, nem da instalação) não se publica:
-  // o agente responderia erro em toda mensagem e o dono só descobriria com o
-  // primeiro cliente. A chave já foi resolvida lá em cima, no provedor da
-  // ORGANIZAÇÃO — que é o que a decisão do dono manda ler aqui; aqui só resta o
-  // veredito.
+  // Sem chave da ORGANIZAÇÃO não se publica (ADR-0005: não existe chave da
+  // instalação): o agente responderia erro em toda mensagem e o dono só
+  // descobriria com o primeiro cliente. A chave já foi resolvida lá em cima, no
+  // provedor da organização — que é o que a decisão do dono manda ler aqui;
+  // aqui só resta o veredito.
   //
   // E ele continua DEPOIS da escolha do modelo de propósito: catálogo sem
   // nenhum modelo utilizável é defeito de instalação que se resolve antes da
   // chave, e inverter isso mudaria a causa que a tela recebe para quem tem os
   // dois problemas — sem necessidade nenhuma para a #1007.
-  if (!credentialId && !chaveDePlataforma(provider)) {
+  if (!credentialId) {
     return {
       published: false,
       reason: "sem_chave",

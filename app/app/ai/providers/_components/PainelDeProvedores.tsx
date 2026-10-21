@@ -95,7 +95,6 @@ interface Dados {
   provedores: Provedor[];
   credenciais: Credencial[];
   /** Há chave de IA no `.env` da instalação (`lerAmbiente`). */
-  instalacaoTemChave: boolean;
   modelos: Modelo[];
   padrao: { provider: string; defaultModel: string | null };
   podeEditar: boolean;
@@ -195,9 +194,9 @@ export function PainelDeProvedores() {
         <Card className="mb-6 border-amber-500/40 bg-amber-500/5 p-4" data-testid="aviso-sem-chave">
           <p className="text-sm">
             {t("Você ainda não cadastrou a chave da sua IA principal, a que conversa com os clientes.")}{" "}
-            {/* Só é verdade quando a instalação tem chave; sem ela, a frase
-                contradizia o cartão do Jev logo abaixo. */}
-            {dados.instalacaoTemChave && t("Enquanto isso, o atendimento usa a chave que veio na instalação.")}{" "}
+            {/* Sem chave da organização a IA fica DESLIGADA para ela — não
+                existe chave da instalação que responda enquanto isso (ADR-0005). */}
+            {t("Enquanto não houver chave, a IA desta empresa fica desligada: nenhum ponto de IA chama provedor.")}{" "}
             <Link className="underline underline-offset-4" href="/app/ai/credentials">
               {t("Cadastrar uma chave")}
             </Link>

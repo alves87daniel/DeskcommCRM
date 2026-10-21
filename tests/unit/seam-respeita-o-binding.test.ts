@@ -14,6 +14,14 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+// A chave sai da credencial da organização, cifrada (ADR-0005). O que se mede
+// aqui é QUAL chave chega à fábrica, não a criptografia: o dublê devolve o
+// "ciframento" como texto.
+vi.mock("@/lib/crypto/aes_gcm", () => ({
+  byteaToBuffer: (v: unknown) => Buffer.from(String(v)),
+  decryptKey: ({ ciphertext }: { ciphertext: Buffer }) => ciphertext.toString(),
+}));
+
 import { runModelCall } from "@/lib/agent-engine/edge/llm/run-model-call";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -59,7 +67,11 @@ function poolFalso(opts: {
       return { rows: opts.binding ? [opts.binding] : [] };
     }
     if (sql.includes("from ai_provider_credentials")) {
-      return { rows: [] }; // sem BYOK → cai na chave de plataforma
+      // Uma credencial validada por provedor; a chave é "chave-<provedor>".
+      const provider = String(params[1]);
+      return {
+        rows: [{ id: `cred-${provider}`, api_key_encrypted: `chave-${provider}`, api_key_iv: "iv", api_key_tag: "tag" }],
+      };
     }
     if (sql.includes("insert into llm_calls")) {
       inserts.push({ sql, params });
@@ -100,7 +112,7 @@ function registrySpiao() {
   };
 }
 
-const cfg = { anthropicApiKey: "chave-anthropic", openaiApiKey: "chave-openai", cacheTtl: "1h" as const };
+const cfg = { cacheTtl: "1h" as const };
 
 async function rodar(opts: Parameters<typeof poolFalso>[0] & { purpose: string; model?: string }) {
   const { pool, inserts } = poolFalso(opts);

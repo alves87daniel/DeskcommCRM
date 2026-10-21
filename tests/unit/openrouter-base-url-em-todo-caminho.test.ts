@@ -168,16 +168,4 @@ describe("OpenRouter fala chat/completions em todo caminho", () => {
     await destinoDe(r!.model);
     expect(caminhos).toEqual(["/api/v1/chat/completions"]);
   });
-
-  it("chave da instalação (resolveLanguageModel)", async () => {
-    envMock.OPENROUTER_API_KEY = "sk-or-x";
-    try {
-      vi.resetModules();
-      const { resolveLanguageModel } = await import("@/lib/ai/gateway");
-      await destinoDe(resolveLanguageModel("google/gemini-2.5-flash-lite")!);
-      expect(caminhos).toEqual(["/api/v1/chat/completions"]);
-    } finally {
-      delete envMock.OPENROUTER_API_KEY;
-    }
-  });
 });

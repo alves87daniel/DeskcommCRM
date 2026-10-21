@@ -23,7 +23,7 @@
 12. WhatsApp pelo WAHA Plus, engine NOWEB. (Stack canônica)
 13. Filas e eventos por `event_log` e workers; Inngest e Trigger ficam fora do MVP. (Stack canônica)
 14. Rate limit por Upstash Redis com janela deslizante. (Stack canônica)
-15. IA pelo Vercel AI Gateway, com Anthropic como primário, embeddings pela OpenAI ou pelo Google por escolha da organização, e modelo em string `"provedor/modelo"`. (Stack canônica)
+15. IA pela credencial da organização, no provedor que ela escolheu; o Vercel AI Gateway é só mais um provedor possível por credencial da organização, nunca uma chave do ambiente; embeddings pela OpenAI ou pelo Google por escolha da organização, e modelo em string `"provedor/modelo"`. (Stack canônica; ADR-0005)
 16. Zod valida todo input externo: corpo de request, payload de webhook e env. (Stack canônica)
 17. Sentry com `beforeSend` sanitizado. (Stack canônica)
 18. Toda tabela tenant-aware tem `organization_id uuid not null references organizations(id) on delete cascade`. (Multi-tenancy)

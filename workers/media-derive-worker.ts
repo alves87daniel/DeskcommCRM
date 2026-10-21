@@ -129,18 +129,9 @@ export async function deriveMessageMedia(row: EventRow): Promise<HandlerResult> 
     if (dl.error || !dl.data) throw new Error(`storage_download_failed: ${dl.error?.message ?? "no_data"}`);
     const buffer = Buffer.from(await dl.data.arrayBuffer());
 
-    // Credencial BYOK da org p/ visão (imagem).
-    const llmCfg: LlmEdgeConfig = {
-      anthropicApiKey: process.env.ANTHROPIC_API_KEY,
-      openaiApiKey: process.env.OPENAI_API_KEY,
-      // Sem esta linha, a instalação que escolheu OpenRouter no install.sh (a
-      // primeira opção do menu) não tem chave nenhuma que este seam aceite:
-      // toda derivação de mídia lança LlmNotConfiguredError ANTES de chegar ao
-      // aviso, e o desfecho é 5 tentativas, media_derived_status='failed' e
-      // ZERO avisos na Central — só um logger.error no log do contêiner.
-      openrouterApiKey: process.env.OPENROUTER_API_KEY,
-      cacheTtl: "1h",
-    };
+    // Só knobs: a chave de visão sai da credencial da organização, dentro de
+    // `resolveOrgLlmConfig` (ADR-0005 — não existe chave da instalação).
+    const llmCfg: LlmEdgeConfig = { cacheTtl: "1h" };
 
     // ─── O painel de provedores manda AQUI também ────────────────────────────
     //
@@ -216,37 +207,16 @@ export async function deriveMessageMedia(row: EventRow): Promise<HandlerResult> 
         });
         openaiKey = oa.apiKey;
       } catch {
-        openaiKey = null; // sem credencial e sem OPENAI_API_KEY: áudio fica sem transcrição
+        openaiKey = null; // sem credencial OpenAI da organização: o áudio fica sem transcrição, com aviso
       }
     }
 
-    // ─── A chave de QUEM vai para o endereço de QUEM ────────────────────────
-    //
-    // `resolveOrgLlmConfig` cai na chave da INSTALAÇÃO (`.env`) quando a
-    // organização não tem credencial própria ativa e validada — é o último
-    // degrau da escada em `credentials.ts`. O endereço, por outro lado, é
-    // escolhido por quem administra a ORGANIZAÇÃO, no painel de Provedores.
-    // Juntando os dois, a chave que paga a conta de todas as empresas da
-    // instalação sai para um endereço que uma delas escolheu. `motivoDaRecusaDeDestino`
-    // não tem nada a dizer sobre isso: ele recusa destino INTERNO, e este caso é
-    // um destino externo perfeitamente público.
-    //
-    // Decisão 22-a do dono do produto: endereço próprio exige chave própria.
-    // Com endereço da organização e chave da instalação, a leitura é RECUSADA
-    // com aviso na Central, em vez de a chave sair. Quem cadastra a credencial
-    // da própria empresa segue funcionando — que é o caminho que o produto já
-    // oferece na mesma tela. O turno do agente aplica o mesmo corte no seam
-    // (`run-model-call.ts`).
-    //
-    // A origem vem do RESOLVEDOR, que é quem sabe qual degrau da escada
-    // escolheu a chave. Até aqui ela era deduzida comparando o plaintext com as
-    // chaves do `.env` — uma segunda cópia da escada, que o chat não tinha e que
-    // divergiria no primeiro degrau novo.
-    const chaveEhDaInstalacao = llm.origemDaChave === "chave_da_instalacao";
-
     // O 5º argumento é a `base_url` do binding: o factory precisa dela para não
-    // cair no endpoint padrão do provedor (ver o comentário lá em cima).
-    const deps = buildDeriveDeps(llm, openaiKey, row.organization_id, admin, baseUrlDaVisao, chaveEhDaInstalacao);
+    // cair no endpoint padrão do provedor (ver o comentário lá em cima). A chave
+    // que vai com ela é SEMPRE da organização (ADR-0005), então a recusa antiga
+    // "endereço da empresa com chave da instalação" (decisão 22-a) não tem mais
+    // caso: não há chave alheia que possa sair para o endereço escolhido por ela.
+    const deps = buildDeriveDeps(llm, openaiKey, row.organization_id, admin, baseUrlDaVisao);
 
     const text = await deriveMediaText(msg.type, buffer, msg.media_mime ?? "application/octet-stream", deps);
     await admin.from("messages")
@@ -352,7 +322,6 @@ function buildDeriveDeps(
   // Endpoint próprio do binding de visão, quando houver. `null` = usa o padrão
   // do provedor, que é o comportamento do turno do agente sem `baseUrl`.
   baseUrlDaVisao: string | null = null,
-  chaveEhDaInstalacao = false,
 ): DeriveDeps {
   const registry = createDefaultRegistry();
   // Thunk, não consulta: nada vai ao banco até a visão ser de fato perguntada,
@@ -418,17 +387,6 @@ function buildDeriveDeps(
     // compose — recebe credencial da instalação e ainda pode devolver resposta
     // forjada ao agente. Mesma recusa das saídas de webhook, e antes de a
     // chave sair daqui.
-    // Endereço escolhido pela organização + chave da instalação: a recusa vem
-    // ANTES da checagem de destino, porque aqui nem o endereço mais público do
-    // mundo torna a saída aceitável — o que está errado é de quem é a chave.
-    if (baseUrlDaVisao && chaveEhDaInstalacao) {
-      await avisarMidiaNaoLida(
-        orgId,
-        "imagem",
-        "o endereço de IA configurado para esta empresa só é usado com a credencial dela: cadastre a chave da empresa em Agente de IA e Provedores, ou tire o endereço próprio para voltar ao provedor padrão da instalação",
-      );
-      return MARCADOR_NAO_LIDA;
-    }
     if (baseUrlDaVisao) {
       const recusa = await motivoDaRecusaDeDestino(baseUrlDaVisao, "organizacao");
       if (recusa) {
@@ -475,70 +433,22 @@ function buildDeriveDeps(
       return MARCADOR_NAO_LIDA;
     },
   };
-  // Serviço de transcrição: a chave da OpenAI continua sendo o padrão, porque é
-  // o que toda instalação já tem. Mas o ponto "Ouvir o áudio" promete aceitar
-  // outro serviço compatível — o provedor por trás já aceita `baseUrl` e
-  // `model`, e o worker nunca os passava: quem tinha Groq/Whisper próprio
-  // continuava batendo em api.openai.com com `whisper-1`. Sem
-  // `TRANSCRIPTION_API_KEY` o comportamento é exatamente o de antes.
-  //
-  // `TRANSCRIPTION_MODEL` e `TRANSCRIPTION_LANGUAGES` valem TAMBÉM aqui, com a
-  // chave da OpenAI da organização: trocar `whisper-1` por um modelo melhor da
-  // própria OpenAI não pode exigir copiar a chave para o `.env`. O MODELO só
-  // vale aqui com `TRANSCRIPTION_BASE_URL` vazio (ver `modeloDeTranscricaoEmVigor`).
+  // A transcrição é SEMPRE com a chave OpenAI da ORGANIZAÇÃO (ADR-0005). O
+  // "serviço de transcrição compatível" configurado pelo `.env` da instalação
+  // (chave e endereço próprios) saiu junto com a chave da instalação: era a
+  // chave de uma conta transcrevendo o áudio de todas as organizações. Ficam os
+  // dois knobs que não carregam chave — `TRANSCRIPTION_MODEL` e
+  // `TRANSCRIPTION_LANGUAGES` —, aplicados à chave da organização: trocar
+  // `whisper-1` por um modelo melhor da própria OpenAI não pode exigir copiar a
+  // chave para o `.env`.
   const idiomas = idiomasDaTranscricao(env.TRANSCRIPTION_LANGUAGES);
-  const transcricaoPadrao: DeriveDeps["transcriber"] = openaiKey
+  const transcriber: DeriveDeps["transcriber"] = openaiKey
     ? apiTranscriptionProvider({
         apiKey: openaiKey,
-        model: modeloDeTranscricaoEmVigor({
-          model: env.TRANSCRIPTION_MODEL,
-          apiKey: env.TRANSCRIPTION_API_KEY,
-          baseUrl: env.TRANSCRIPTION_BASE_URL,
-        }),
+        model: modeloDeTranscricaoEmVigor({ model: env.TRANSCRIPTION_MODEL }),
         languages: idiomas,
       })
     : semTranscricao;
-  // O endereço do serviço de transcrição vem do .env da instalação e a chamada
-  // leva a chave no cabeçalho: mesma recusa do endereço da visão, e antes de a
-  // chave sair daqui.
-  const transcriberDeServico = (
-    servico: NonNullable<DeriveDeps["transcriber"]>,
-  ): DeriveDeps["transcriber"] => ({
-    transcribe: async (audio, mime) => {
-      const enderecoDoServico = env.TRANSCRIPTION_BASE_URL;
-      const recusa = enderecoDoServico
-        ? await motivoDaRecusaDeDestino(enderecoDoServico, "instalacao")
-        : null;
-      if (recusa) {
-        await avisarMidiaNaoLida(
-          orgId,
-          "áudio",
-          "o endereço configurado para a transcrição não foi aceito como destino, então não enviei o áudio nem a chave para lá — confira TRANSCRIPTION_BASE_URL; se o serviço roda na rede interna, quem administra a instalação libera o endereço em Administração › Destinos internos",
-          undefined,
-          recusa,
-        );
-        return MARCADOR_NAO_LIDA;
-      }
-      return servico.transcribe(audio, mime);
-    },
-  });
-  // As três chaves da transcrição vêm do `env` — a MESMA régua do app
-  // (`lib/env.ts`), não do `process.env` cru: o schema é quem dá o default e
-  // quem recusa valor malformado, e uma leitura paralela aqui divergiria no dia
-  // em que a régua mudasse — sem ninguém ver, porque este arquivo roda no
-  // worker, não no Next. Não é dependência nova: o worker já carrega o módulo
-  // por `lib/supabase/admin`.
-  const chaveDeTranscricao = env.TRANSCRIPTION_API_KEY;
-  const transcriber: DeriveDeps["transcriber"] = chaveDeTranscricao
-    ? transcriberDeServico(
-        apiTranscriptionProvider({
-          apiKey: chaveDeTranscricao,
-          baseUrl: env.TRANSCRIPTION_BASE_URL || undefined,
-          model: env.TRANSCRIPTION_MODEL || undefined,
-          languages: idiomas,
-        }),
-      )
-    : transcricaoPadrao;
   return {
     transcriber,
     describeImage,

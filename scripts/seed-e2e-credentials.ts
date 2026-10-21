@@ -324,8 +324,46 @@ async function garantirTotp(
   return { factor_id: enrolled.id, secret };
 }
 
+/**
+ * Sob `INTERNAL_AGENT_RUN_STUB=true` o provedor é dublado, mas o resolvedor
+ * continua exigindo credencial ATIVA e VALIDADA da organização (ADR-0005: não
+ * há chave da instalação para cair). A credencial é de mentira e nunca sai
+ * para a rede; cifrada com o `AI_CRED_AES_KEY` do ambiente de teste.
+ */
+async function ensureCredencialDoDuble(orgId: string): Promise<void> {
+  if ((process.env.INTERNAL_AGENT_RUN_STUB ?? "").trim() !== "true") return;
+  if (!(process.env.AI_CRED_AES_KEY ?? "").trim()) {
+    console.warn("[seed] INTERNAL_AGENT_RUN_STUB=true sem AI_CRED_AES_KEY — a credencial do dublê não foi cadastrada");
+    return;
+  }
+  const label = "Dublê do provedor controlado";
+  const { data: existente } = await admin
+    .from("ai_provider_credentials")
+    .select("id")
+    .eq("organization_id", orgId)
+    .eq("label", label)
+    .maybeSingle();
+  if (existente) return;
+  const { bufToBytea, encryptKey } = await import("@/lib/crypto/aes_gcm");
+  const cifrada = encryptKey("duble-do-provedor-controlado-nunca-enviada");
+  const { error } = await admin.from("ai_provider_credentials").insert({
+    organization_id: orgId,
+    provider: "anthropic",
+    label,
+    api_key_encrypted: bufToBytea(cifrada.ciphertext),
+    api_key_iv: bufToBytea(cifrada.iv),
+    api_key_tag: bufToBytea(cifrada.tag),
+    api_key_last4: cifrada.last4,
+    is_active: true,
+    validated_at: new Date().toISOString(),
+  } as never);
+  if (error && error.code !== "23505") throw new Error("credencial do dublê: " + error.message);
+  console.info("[seed] credencial do dublê do provedor cadastrada (INTERNAL_AGENT_RUN_STUB)");
+}
+
 async function main(): Promise<void> {
   const orgId = await ensureOrg();
+  await ensureCredencialDoDuble(orgId);
 
   const users: Record<string, { id: string; email: string; role: string }> = {};
   for (const u of USERS) {

@@ -18,6 +18,14 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+// A chave sai da credencial da organização, cifrada (ADR-0005). O que se mede
+// aqui é QUAL chave chega à fábrica, não a criptografia: o dublê devolve o
+// "ciframento" como texto.
+vi.mock("@/lib/crypto/aes_gcm", () => ({
+  byteaToBuffer: (v: unknown) => Buffer.from(String(v)),
+  decryptKey: ({ ciphertext }: { ciphertext: Buffer }) => ciphertext.toString(),
+}));
+
 import { runModelCall } from "@/lib/agent-engine/edge/llm/run-model-call";
 
 const ORG = "22222222-2222-4222-8222-222222222222";
@@ -41,7 +49,8 @@ function poolQueGrava(paramsDaOrg: Record<string, unknown> = {}) {
       };
     }
     if (sql.includes("from ai_purpose_bindings")) return { rows: [] };
-    if (sql.includes("from ai_provider_credentials")) return { rows: [] };
+    if (sql.includes("from ai_provider_credentials"))
+      return { rows: [{ id: "cred-1", api_key_encrypted: CHAVE_SENTINELA, api_key_iv: "iv", api_key_tag: "tag" }] };
     if (sql.includes("insert into llm_calls")) {
       inserts.push({ sql, params });
       return { rows: [{ id: "call-1" }] };
@@ -73,7 +82,7 @@ function registryQueFalha(erro: unknown) {
  * incomodar, que é como uma guarda de segredo morre.
  */
 const CHAVE_SENTINELA = "sk-CHAVE-QUE-NUNCA-PODE-VAZAR-9f3a2b";
-const cfg = { anthropicApiKey: CHAVE_SENTINELA, cacheTtl: "1h" as const };
+const cfg = { cacheTtl: "1h" as const };
 
 async function chamarComErro(erro: unknown) {
   const { pool, inserts } = poolQueGrava();

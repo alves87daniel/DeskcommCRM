@@ -112,16 +112,6 @@ describe("o retrato da instalação", () => {
     expect(r.inteligencia.origemDaChave).not.toBe("org");
   });
 
-  it("sem credencial nenhuma, a chave da instalação vale", async () => {
-    const r = await lerRetratoDaInstalacao({
-      supabase: clientFalso(tabelas([])),
-      orgId: ORG,
-      ambiente: { ...SEM_AMBIENTE, ANTHROPIC_API_KEY: "sk-ant-xxx" },
-    });
-    expect(r.inteligencia.origemDaChave).toBe("instalacao");
-    expect(r.inteligencia.chaveEmVerificacao).toBe(false);
-  });
-
   it("sem chave em lugar nenhum, o retrato admite", async () => {
     const r = await lerRetratoDaInstalacao({
       supabase: clientFalso(tabelas([])),

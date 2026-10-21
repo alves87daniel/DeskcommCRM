@@ -98,18 +98,13 @@ describe("idioma da transcrição", () => {
   });
 
   it("o modelo em vigor é o do ambiente quando definido, senão whisper-1 — o mesmo para worker e tela", () => {
-    const semServico = { apiKey: undefined, baseUrl: undefined };
-    expect(modeloDeTranscricaoEmVigor({ ...semServico, model: undefined })).toBe("whisper-1");
-    expect(modeloDeTranscricaoEmVigor({ ...semServico, model: "  " })).toBe("whisper-1");
-    expect(modeloDeTranscricaoEmVigor({ ...semServico, model: "gpt-transcribe" })).toBe("gpt-transcribe");
+    expect(modeloDeTranscricaoEmVigor({ model: undefined })).toBe("whisper-1");
+    expect(modeloDeTranscricaoEmVigor({ model: "  " })).toBe("whisper-1");
+    expect(modeloDeTranscricaoEmVigor({ model: "gpt-transcribe" })).toBe("gpt-transcribe");
   });
 
-  it("modelo escrito para outro serviço (BASE_URL sem API_KEY) não vai para a OpenAI: vale whisper-1", () => {
-    const groq = "https://api.groq.com/openai/v1";
-    expect(modeloDeTranscricaoEmVigor({ model: "whisper-large-v3", apiKey: "", baseUrl: groq })).toBe("whisper-1");
-    // Com a chave própria, o modelo vai ao serviço dele — e vale.
-    expect(modeloDeTranscricaoEmVigor({ model: "whisper-large-v3", apiKey: "k", baseUrl: groq })).toBe(
-      "whisper-large-v3",
-    );
+  it("a função não aceita chave nem endereço de serviço próprio — a transcrição é sempre com a chave da organização (ADR-0005)", () => {
+    // @ts-expect-error — o serviço compatível com chave do .env saiu junto com a chave da instalação.
+    expect(modeloDeTranscricaoEmVigor({ model: "x", apiKey: "k", baseUrl: "https://api.groq.com/openai/v1" })).toBe("x");
   });
 });

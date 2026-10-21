@@ -75,7 +75,8 @@ SUPABASE_SERVICE_ROLE_KEY=...
 SUPABASE_DB_URL=postgresql://postgres...
 NEXT_PUBLIC_APP_URL=https://cloud.seudominio.com.br
 NEXT_PUBLIC_ADMIN_URL=https://cloud.seudominio.com.br
-OPENROUTER_API_KEY=sk-or-v1-...
+# As chaves de IA ficam VAZIAS no .env (ADR-0005): cadastre a sua em IA › Credenciais.
+OPENROUTER_API_KEY=
 OWNER_EMAIL=voce@seudominio.com.br
 OWNER_PASSWORD=senha-forte-aqui
 ```

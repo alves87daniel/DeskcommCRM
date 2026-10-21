@@ -13,7 +13,7 @@ import { generateText } from "ai";
 
 import { audit } from "@/lib/audit";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { buildModel, chaveDePlataforma } from "@/lib/ai/runtime/agent";
+import { buildModel } from "@/lib/ai/runtime/agent";
 import { loadCredential } from "@/lib/ai/credentials";
 import { slugDeNome } from "@/lib/leads/stage-editing";
 import {
@@ -69,21 +69,15 @@ async function cerebroDoFuncionario(
   const model = String(versao.model ?? "");
   if (!provider || !model) return { erro: "seu funcionário está sem modelo definido" };
 
-  // Mesma ordem do turno de produção e do ensaio: a credencial cadastrada vence,
-  // e na falta dela vale a chave que veio na instalação.
+  // A única chave é a credencial da organização escolhida na versão (ADR-0005).
   const credentialId = versao.credential_id as string | null;
-  if (credentialId) {
-    try {
-      const cred = await loadCredential(credentialId, orgId);
-      return { provider, model, apiKey: cred.apiKey };
-    } catch {
-      return { erro: "não consegui usar a chave cadastrada" };
-    }
+  if (!credentialId) return { erro: `esta empresa não tem chave de ${provider} cadastrada em IA › Credenciais` };
+  try {
+    const cred = await loadCredential(credentialId, orgId);
+    return { provider, model, apiKey: cred.apiKey };
+  } catch {
+    return { erro: "não consegui usar a chave cadastrada" };
   }
-
-  const daInstalacao = chaveDePlataforma(provider);
-  if (!daInstalacao) return { erro: `esta instalação não tem chave de ${provider}` };
-  return { provider, model, apiKey: daInstalacao };
 }
 
 async function carregarQuadroAtual(

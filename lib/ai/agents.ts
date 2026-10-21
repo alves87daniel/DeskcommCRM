@@ -5,7 +5,7 @@
 
 import { createAdminClient } from "@/lib/supabase/admin";
 import { AGENT_CONFIG_DEFAULTS, agentConfigSchema } from "@/lib/ai/guardrails-schema";
-import { byteaToBuffer, decryptKey } from "@/lib/crypto/aes_gcm";
+import { credencialMaisRecente } from "@/lib/ai/credenciais/mais-recente";
 
 export interface VoiceAgentConfig {
   id: string;
@@ -20,49 +20,26 @@ export interface VoiceAgentConfig {
   voiceModel: string;
   /**
    * Chave da OpenAI pra abrir a sessão Realtime (WebSocket cru, não passa
-   * pelo AI Gateway). Vem, em ordem: credencial cadastrada em IA >
-   * Credenciais pra esta org, ou env OPENAI_API_KEY do servidor.
+   * pelo AI Gateway). Vem SÓ da credencial cadastrada em IA > Credenciais pra
+   * esta org (ADR-0005: não existe chave da instalação). `null` = a org não
+   * tem credencial OpenAI ativa e validada, e a ligação NÃO abre
+   * (`workers/voice-agent/index.ts` avisa e encerra).
    */
-  apiKey: string;
+  apiKey: string | null;
 }
 
 /**
- * A chave OpenAI ativa e validada desta org, cadastrada em IA > Credenciais --
- * mesma tabela/decrypt que o resto do produto usa (ver lib/ai/embeddings/chave.ts,
- * que resolve o mesmo tipo de chave pra embeddings). Sem credencial de org, cai
- * na chave do .env do servidor -- nunca deixa a ligação sem chave nenhuma.
+ * A chave OpenAI ativa e validada desta org, cadastrada em IA > Credenciais —
+ * a MAIS RECENTE, pelo resolvedor único (`credencialMaisRecente`, ADR-0005 D2).
  *
- * Desempate determinístico pela mais antiga (não "a mais recente"): com duas
- * chaves cadastradas e nenhuma escolha explícita, variar sozinho no dia em que
- * alguém cadastra uma segunda é pior que sempre usar a mesma.
+ * Era "a mais antiga", e caía na chave do `.env` quando não havia nenhuma. Os
+ * dois degraus saíram: a antiga revogada no provedor seguia sendo escolhida
+ * depois de uma troca de chave, e o `.env` fazia a conta de outra pessoa pagar
+ * a sessão Realtime desta organização.
  */
-async function resolverChaveOpenAiDaVoz(organizationId: string): Promise<string> {
-  try {
-    const admin = createAdminClient();
-    const { data } = await admin
-      .from("ai_provider_credentials")
-      .select("api_key_encrypted, api_key_iv, api_key_tag")
-      .eq("organization_id", organizationId)
-      .eq("provider", "openai")
-      .eq("is_active", true)
-      .not("validated_at", "is", null)
-      .order("created_at", { ascending: true })
-      .limit(1)
-      .maybeSingle();
-
-    if (data) {
-      return decryptKey({
-        ciphertext: byteaToBuffer(data.api_key_encrypted),
-        iv: byteaToBuffer(data.api_key_iv),
-        tag: byteaToBuffer(data.api_key_tag),
-      });
-    }
-  } catch {
-    // Decrypt falhou ou a query deu erro -- cai pro .env abaixo, log já
-    // aconteceu no INFO deste arquivo se aplicável; não vale a pena arriscar
-    // ecoar detalhe de credencial no log do worker.
-  }
-  return process.env.OPENAI_API_KEY ?? "";
+async function resolverChaveOpenAiDaVoz(organizationId: string): Promise<string | null> {
+  const credencial = await credencialMaisRecente(createAdminClient(), organizationId, "openai");
+  return credencial?.apiKey ?? null;
 }
 
 export async function getActiveVoiceAgent(organizationId: string): Promise<VoiceAgentConfig | null> {

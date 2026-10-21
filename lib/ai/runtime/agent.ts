@@ -153,21 +153,6 @@ function buildSentinelRegex(keywords: string[]): RegExp | null {
  * `case "..."` no texto do arquivo, que passa com um switch que compila e não
  * executa.
  */
-/**
- * A chave de plataforma do provedor — as mesmas variáveis que
- * `llmEdgeConfigFromEnv` lê no turno de produção. Google não tem: o runtime
- * real também não tem ramo de fallback para ele, e prometer aqui um caminho que
- * lá não existe faria o ensaio passar e a mensagem real falhar.
- */
-export function chaveDePlataforma(provider: string): string | null {
-  const nome = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", openrouter: "OPENROUTER_API_KEY" }[
-    provider
-  ];
-  if (!nome) return null;
-  const v = (process.env[nome] ?? "").trim();
-  return v === "" ? null : v;
-}
-
 export function buildModel(
   provider: string,
   apiKey: string,
@@ -323,39 +308,29 @@ export async function runAgent(input: RunAgentInput): Promise<RunAgentResult> {
 
     // 4) Load credential. Plaintext lives only in this scope.
     //
-    // Duas origens, na MESMA ordem que `resolveOrgLlmConfig` aplica no turno de
-    // produção: a credencial cadastrada pela tela vence, e na falta dela vale a
-    // chave de plataforma que veio na instalação.
-    //
-    // Sem o segundo caminho, o ensaio recusava com "version has no credential"
-    // justamente na instalação mais comum — a que rodou o `install.sh`, colou a
-    // chave no `.env` e nunca abriu a tela de Credenciais. O agente atendia um
-    // cliente de verdade normalmente, e o botão de testar dizia que não dava.
-    // Ensaio mais rígido que a produção não é cautela: é dizer que está
-    // quebrado o que está funcionando.
+    // UMA origem: a credencial da organização escolhida na versão (ADR-0005 —
+    // não existe chave da instalação). Versão sem `credential_id` não é
+    // publicável desde a migration 0511, que fez `fn_publish_ai_agent_version`
+    // recusar `null`; se uma linha antiga chegar aqui, o ensaio diz o que
+    // falta em vez de cair numa chave que não é dela.
+    if (!version.credential_id) {
+      return await failRun(
+        run,
+        "credential_missing",
+        `sem chave de ${version.provider} para esta organização: cadastre em IA › Credenciais e escolha-a na versão do agente`,
+        startedAt,
+      );
+    }
     let credentialApiKey: string;
     /** O endereço do provedor personalizado (#1642) — nasce junto da credencial. */
     let credentialBaseUrl: string | null = null;
-    if (version.credential_id) {
-      try {
-        const credential = await loadCredential(version.credential_id, run.organization_id);
-        credentialApiKey = credential.apiKey;
-        credentialBaseUrl = credential.baseUrl;
-      } catch (err) {
-        const reason = err instanceof CredentialUnavailableError ? err.reason : "decrypt_failed";
-        return await failRun(run, `credential_${reason}`, "credential unavailable", startedAt);
-      }
-    } else {
-      const daInstalacao = chaveDePlataforma(version.provider);
-      if (!daInstalacao) {
-        return await failRun(
-          run,
-          "credential_invalid",
-          `sem chave para ${version.provider}: cadastre em IA › Credenciais ou configure a chave desta instalação`,
-          startedAt,
-        );
-      }
-      credentialApiKey = daInstalacao;
+    try {
+      const credential = await loadCredential(version.credential_id, run.organization_id);
+      credentialApiKey = credential.apiKey;
+      credentialBaseUrl = credential.baseUrl;
+    } catch (err) {
+      const reason = err instanceof CredentialUnavailableError ? err.reason : "decrypt_failed";
+      return await failRun(run, `credential_${reason}`, "credential unavailable", startedAt);
     }
 
     // 5) Resolve inbound text + dispatch context.

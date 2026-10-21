@@ -35,6 +35,13 @@
  * chega à FÁBRICA de modelo (onde a escolha vira chamada de verdade).
  */
 import { describe, expect, it, vi } from "vitest";
+
+// A única chave é a credencial da organização (ADR-0005): o pool devolve a
+// linha e este dublê a "decifra" — o que está sob teste é o seam, não a cifra.
+vi.mock("@/lib/crypto/aes_gcm", () => ({
+  byteaToBuffer: (v: unknown) => v,
+  decryptKey: () => "chave-openai",
+}));
 import ts from "typescript";
 
 import {
@@ -152,7 +159,10 @@ function poolFalso() {
       return { rows: [{ llm: { provider: "anthropic", default_model: "claude-sonnet-4-5" } }] };
     }
     if (sql.includes("from ai_purpose_bindings")) return { rows: [] };
-    if (sql.includes("from ai_provider_credentials")) return { rows: [] };
+    // A credencial da organização é a única chave (ADR-0005): a linha é
+    // decifrada pelo dublê de `aes_gcm` abaixo.
+    if (sql.includes("from ai_provider_credentials"))
+      return { rows: [{ id: "cred-openai", api_key_encrypted: "x", api_key_iv: "y", api_key_tag: "z" }] };
     if (sql.includes("insert into llm_calls")) return { rows: [{ id: "call-1" }] };
     return { rows: [] };
   });
@@ -187,7 +197,7 @@ describe("o seam instancia o modelo do agente, não o do padrão da org", () => 
 
     const r = await runModelCall(
       poolFalso(),
-      { anthropicApiKey: "chave-anthropic", openaiApiKey: "chave-openai", cacheTtl: "1h" as const },
+      { cacheTtl: "1h" as const },
       {
         tenantId: "11111111-1111-4111-8111-111111111111",
         purpose,

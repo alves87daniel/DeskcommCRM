@@ -58,12 +58,10 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-// As três chaves juntas, sempre: um `.env.local` com TRANSCRIPTION_BASE_URL
-// mudaria o que a tela anuncia e o caso mediria a máquina, não o código.
-function comTranscricaoNoEnv(t: { model: string; apiKey?: string; baseUrl?: string }): void {
+// Só o modelo: o serviço de transcrição com chave e endereço próprios do `.env`
+// saiu com a ADR-0005 (a transcrição é sempre com a chave da organização).
+function comTranscricaoNoEnv(t: { model: string }): void {
   vi.stubEnv("TRANSCRIPTION_MODEL", t.model);
-  vi.stubEnv("TRANSCRIPTION_API_KEY", t.apiKey ?? "");
-  vi.stubEnv("TRANSCRIPTION_BASE_URL", t.baseUrl ?? "");
 }
 
 describe("GET /api/v1/ai/providers — modelo de transcrição em vigor", () => {
@@ -81,8 +79,4 @@ describe("GET /api/v1/ai/providers — modelo de transcrição em vigor", () => 
     expect(outros.map((p) => p.efetivo.modelId)).not.toContain("gpt-transcribe");
   });
 
-  it("modelo de outro serviço (BASE_URL sem API_KEY) não é o que roda: anuncia whisper-1", async () => {
-    comTranscricaoNoEnv({ model: "whisper-large-v3", baseUrl: "https://api.groq.com/openai/v1" });
-    expect(modeloDo(await pontos(), "transcricao_de_audio")).toBe("whisper-1");
-  });
 });

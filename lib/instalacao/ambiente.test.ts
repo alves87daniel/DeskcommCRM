@@ -5,6 +5,11 @@
  * perguntou. Errar para o lado otimista aqui é caro: dizer "chave configurada"
  * quando não há chave produz a frase mais perigosa do produto — a que tranquiliza
  * enquanto o funcionário está mudo.
+ *
+ * Desde a ADR-0005 ele não responde NADA sobre chave de IA: a chave é credencial
+ * da organização, no banco, e um leitor síncrono do `.env` não tem como
+ * responder por ela. Os casos sobre `chavesDeProvedor`/`gateway` saíram junto
+ * com os campos.
  */
 import { describe, expect, it } from "vitest";
 
@@ -15,37 +20,21 @@ import {
 } from "@/lib/instalacao/ambiente";
 
 describe("lerAmbiente", () => {
-  it("enxerga a chave de cada provedor que TEM chave de plataforma", () => {
+  it("não responde sobre chave de IA — nem quando o .env tem uma (ADR-0005)", () => {
     const a = lerAmbiente({
       ANTHROPIC_API_KEY: "sk-ant-x",
       OPENAI_API_KEY: "sk-proj-x",
       OPENROUTER_API_KEY: "sk-or-x",
+      AI_GATEWAY_API_KEY: "gw-x",
     });
-    expect(a.chavesDeProvedor.anthropic).toBe(true);
-    expect(a.chavesDeProvedor.openai).toBe(true);
-    expect(a.chavesDeProvedor.openrouter).toBe(true);
-  });
-
-  it("o Google nunca aparece como configurado por ambiente", () => {
-    // Não é esquecimento: `resolveOrgLlmConfig` não tem ramo de fallback para
-    // google, e não existe variável dele em lugar nenhum do repo. Prometer aqui
-    // um caminho que o runtime recusa seria pior que não responder.
-    const a = lerAmbiente({ GOOGLE_API_KEY: "qualquer-coisa" });
-    expect(a.chavesDeProvedor.google).toBe(false);
-  });
-
-  it("variável VAZIA é ausente — é o contrato do .env do projeto", () => {
-    // O template gera `CHAVE=` e o README promete "deixe vazio e cadastre
-    // depois". Tratar isso como configurado inverteria a promessa.
-    const a = lerAmbiente({ ANTHROPIC_API_KEY: "", OPENROUTER_API_KEY: "   " });
-    expect(a.chavesDeProvedor.anthropic).toBe(false);
-    expect(a.chavesDeProvedor.openrouter).toBe(false);
+    // A forma do retrato é fechada: campo novo sobre chave de IA aqui seria a
+    // volta da "chave da instalação" por outro nome.
+    expect(Object.keys(a).sort()).toEqual(["email", "transporteDeWhatsapp"]);
+    expect(JSON.stringify(a)).not.toMatch(/sk-|gw-x|API_KEY/);
   });
 
   it("ambiente vazio não inventa nada", () => {
     const a = lerAmbiente({});
-    expect(Object.values(a.chavesDeProvedor).some(Boolean)).toBe(false);
-    expect(a.gateway).toBe(false);
     expect(a.email).toBe(false);
     expect(a.transporteDeWhatsapp).toEqual({ apontado: false, comChave: false });
   });
@@ -63,6 +52,10 @@ describe("lerAmbiente", () => {
     // O outro transporte conta igual: quem preencheu só o SMTP tem e-mail, e
     // ler apenas a chave do serviço externo o chamaria de não configurado.
     expect(lerAmbiente({ SMTP_HOST: "smtp.revenda.com.br" }).email).toBe(true);
+  });
+
+  it("variável VAZIA é ausente — é o contrato do .env do projeto", () => {
+    expect(lerAmbiente({ RESEND_API_KEY: "   " }).email).toBe(false);
   });
 });
 

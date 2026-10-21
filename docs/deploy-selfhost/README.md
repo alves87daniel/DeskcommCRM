@@ -62,8 +62,10 @@ Edite o `.env` e preencha (mínimo):
   `WAHA_BYO_ENCRYPTION_KEY`, `IMPERSONATE_COOKIE_SECRET`, `LGPD_SIGNING_KEY`, `SRH_TOKEN`
 - **WAHA**: `WAHA_API_KEY` (invente uma), `WAHA_API_KEY_SHA512`
   (`echo -n "$WAHA_API_KEY" | shasum -a 512 | awk '{print $1}'`), `WAHA_HMAC_SECRET`
-- **IA**: `ANTHROPIC_API_KEY` (ou deixe vazio e cadastre a chave depois em
-  `/app/ai/credentials` — fica cifrada no banco)
+- **IA**: deixe `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` e
+  `AI_GATEWAY_API_KEY` **vazias** — o CRM não lê chave de IA do `.env` (ADR-0005). Cadastre a
+  chave de cada empresa em `/app/ai/credentials` (fica cifrada no banco); sem ela a IA
+  daquela empresa fica desligada, com aviso na tela
 
 ## 2. Aplicar o schema no Supabase
 

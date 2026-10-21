@@ -87,13 +87,9 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // As DUAS origens são testáveis, e a da org precisa ser: quem cola a chave no
-  // wizard é exatamente quem mais precisa saber se ela funciona — antes era o
-  // único caso que respondia "o teste cobre a chave da instalação", ou seja, a
-  // pessoa cadastrava a chave e não recebia confirmação nenhuma.
-  //
-  // A cadastrada vive cifrada e é decifrada aqui, em memória, pelo mesmo caminho
-  // que o runtime usa; a da instalação o próprio processo já tem em mãos.
+  // A chave testável é a da ORGANIZAÇÃO (ADR-0005): quem cola a chave no wizard
+  // é exatamente quem mais precisa saber se ela funciona. Ela vive cifrada e é
+  // decifrada aqui, em memória, pelo mesmo caminho que o runtime usa.
   let apiKey = "";
   const daOrg = retrato.inteligencia.chaveDaOrg;
   if (daOrg) {
@@ -116,8 +112,6 @@ export async function GET(req: NextRequest) {
             : { feita: false, motivo: "Não consegui abrir a chave cadastrada para testá-la." },
       });
     }
-  } else {
-    apiKey = process.env[chaveDoAmbiente(provedor)] ?? "";
   }
 
   if (!apiKey) {
@@ -129,12 +123,4 @@ export async function GET(req: NextRequest) {
 
   const r = await provarSaldo(provedor, apiKey, modeloCurado);
   return ok({ ...retrato, prova: { feita: true, ...r } });
-}
-
-function chaveDoAmbiente(provider: string): string {
-  return (
-    { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY", openrouter: "OPENROUTER_API_KEY" }[
-      provider
-    ] ?? "__inexistente__"
-  );
 }

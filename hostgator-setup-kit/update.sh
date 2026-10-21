@@ -578,6 +578,15 @@ fi
 [ -z "$BANCO_RESTANTE" ] || die "O banco NÃO terminou limpo e os erros acima repetir não cura: a migration NÃO chegou. A atualização PARA aqui."
 [ -n "${DESKCOMM_AGENT_REPORT:-}" ] && eval "${DESKCOMM_AGENT_REPORT_CMD}" banco
 
+# ── 4.6 As chaves de IA do .env ficam vazias quando já são credencial (ADR-0005, D4) ──
+# O CRM não lê mais chave de IA do .env para atender organização nenhuma. Cada
+# variável preenchida só é esvaziada depois de conferir que a organização do
+# dono tem credencial ativa e validada DAQUELE provedor; a que não tem fica, e o
+# aviso diz qual falta. Idempotente — e ANTES de recriar o app, para os
+# contêineres novos subirem com o .env já limpo. Ninguém edita o .env à mão.
+step "Conferindo as chaves de IA do .env"
+esvaziar_chaves_de_ia_migradas .env
+
 # ── 4.5 E-mails de acesso, para quem já estava instalado ────────────────────
 # Só COM o token no ambiente, e por isso duas coisas:
 #

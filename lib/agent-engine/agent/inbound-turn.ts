@@ -57,6 +57,7 @@ import { WahaChannelAdapter } from '../edge/channel/waha-adapter';
 import { applySendOutcome } from '../edge/crm/send-message';
 import {
   LlmBudgetExceededError,
+  LlmNotConfiguredError,
   runModelCall,
   tool,
   type LlmEdgeConfig,
@@ -65,6 +66,12 @@ import {
 } from '../edge/llm/run-model-call';
 import type { ProviderRegistry } from '../edge/llm/providers';
 import { HANDOFF_REASON_ORCAMENTO } from '../edge/llm/orcamento';
+import { avisarIaDesligadaPorFaltaDeChave } from '@/lib/ai/ia-sem-chave/aviso';
+import {
+  HANDOFF_REASON_SEM_CHAVE,
+  RESUMO_DO_HANDOFF_POR_FALTA_DE_CHAVE,
+  TITULO_DO_HANDOFF_POR_FALTA_DE_CHAVE,
+} from '@/lib/ai/ia-sem-chave/motivo';
 import { abreAvisoDoEspelhoRecusado, mirrorLeadStageToCrm } from '../edge/crm/move-lead-stage';
 import { insertInboxItem } from '../db/repository';
 import { createAdminClient } from '@/lib/supabase/admin';
@@ -590,6 +597,19 @@ export type { CheckpointContent, LeadCheckpointRow };
  * arquivo. Fica visível aqui porque é daqui que o engine a grava.
  */
 export { HANDOFF_REASON_ORCAMENTO };
+export {
+  HANDOFF_REASON_SEM_CHAVE,
+  RESUMO_DO_HANDOFF_POR_FALTA_DE_CHAVE,
+  TITULO_DO_HANDOFF_POR_FALTA_DE_CHAVE,
+};
+
+/**
+ * Os dois motivos pelos quais a escolta devolve a conversa à equipe: o teto de
+ * gasto (`LlmBudgetExceededError`) e a falta de chave da organização
+ * (`LlmNotConfiguredError`, ADR-0005 D3). Os dois são TERMINAIS para a fila e
+ * os dois param a IA sem o lead ter pedido uma pessoa.
+ */
+export type MotivoDaEscolta = 'orcamento_de_ia' | 'ia_sem_chave';
 
 /**
  * Primeira linha do resumo que vai ao humano quando o orçamento interrompe o
@@ -659,7 +679,7 @@ export const TITULO_DO_HANDOFF_POR_ORCAMENTO = 'Teto de gasto com IA atingido �
  * sido lido — e ler o checkpoint no caminho feliz seria uma query a mais por
  * turno para um texto que quase nunca é usado.
  */
-export async function comHandoffSeOrcamentoAcabar<T>(
+export async function comHandoffSeIaNaoResponder<T>(
   ctx: {
     pool: pg.Pool;
     tenantId: string;
@@ -672,7 +692,7 @@ export async function comHandoffSeOrcamentoAcabar<T>(
      * guarda as quatro colunas que ele carrega. Um campo, um significado: "o
      * contexto que vai para quem assume".
      */
-    briefingDoCheckpoint: () => Promise<BriefingDaPassagem>;
+    briefingDoCheckpoint: (motivo: MotivoDaEscolta) => Promise<BriefingDaPassagem>;
     /**
      * Avisa o lead de que uma pessoa vai assumir, ANTES do handoff.
      *
@@ -681,7 +701,7 @@ export async function comHandoffSeOrcamentoAcabar<T>(
      * então não gasta um token — o que aqui não é detalhe, é o único jeito de
      * ele existir: o motivo do desvio é justamente não haver mais orçamento.
      */
-    avisarLead: () => Promise<DesfechoDoAviso>;
+    avisarLead: (motivo: MotivoDaEscolta) => Promise<DesfechoDoAviso>;
     log: Logger;
   },
   chamada: () => Promise<T>,
@@ -689,8 +709,15 @@ export async function comHandoffSeOrcamentoAcabar<T>(
   try {
     return await chamada();
   } catch (err) {
-    if (!(err instanceof LlmBudgetExceededError)) throw err;
-    const doCheckpoint = await ctx.briefingDoCheckpoint();
+    const motivo: MotivoDaEscolta | null =
+      err instanceof LlmBudgetExceededError
+        ? 'orcamento_de_ia'
+        : err instanceof LlmNotConfiguredError
+          ? 'ia_sem_chave'
+          : null;
+    if (motivo === null) throw err;
+    const semChave = motivo === 'ia_sem_chave';
+    const doCheckpoint = await ctx.briefingDoCheckpoint(motivo);
     // AVISA antes de silenciar — ver a nota de ORDEM no gatilho determinístico:
     // `performHumanHandoff` arma a trava que o gate de envio lê, então a única
     // janela em que o aviso passa é ANTES dela.
@@ -703,7 +730,7 @@ export async function comHandoffSeOrcamentoAcabar<T>(
     // passagem"), que reprovava a versão anterior desta linha.
     let aviso: DesfechoDoAviso;
     try {
-      aviso = await ctx.avisarLead();
+      aviso = await ctx.avisarLead(motivo);
     } catch (erroDoAviso) {
       ctx.log.warn('aviso ao lead falhou antes da passagem por orçamento', {
         error:
@@ -717,23 +744,39 @@ export async function comHandoffSeOrcamentoAcabar<T>(
     // aqui, e é o ponto: o motivo do desvio é justamente não haver orçamento.
     const briefing: BriefingDaPassagem = {
       ...doCheckpoint,
-      body: `${RESUMO_DO_HANDOFF_POR_ORCAMENTO}\n\n${doCheckpoint.body}`,
+      body: `${semChave ? RESUMO_DO_HANDOFF_POR_FALTA_DE_CHAVE : RESUMO_DO_HANDOFF_POR_ORCAMENTO}\n\n${doCheckpoint.body}`,
     };
     await performHumanHandoff(
       ctx.pool,
       { tenantId: ctx.tenantId, leadId: ctx.leadId, conversationId: ctx.conversationId },
       {
-        reason: HANDOFF_REASON_ORCAMENTO,
+        reason: semChave ? HANDOFF_REASON_SEM_CHAVE : HANDOFF_REASON_ORCAMENTO,
         conversationSummary: briefing.body,
-        inboxTitle: TITULO_DO_HANDOFF_POR_ORCAMENTO,
-        passagem: { origem: 'teto_de_gasto', motivoCodigo: 'orcamento_de_ia', briefing },
+        inboxTitle: semChave ? TITULO_DO_HANDOFF_POR_FALTA_DE_CHAVE : TITULO_DO_HANDOFF_POR_ORCAMENTO,
+        passagem: semChave
+          ? { origem: 'ia_sem_chave', motivoCodigo: 'ia_sem_chave', briefing }
+          : { origem: 'teto_de_gasto', motivoCodigo: 'orcamento_de_ia', briefing },
         avisoAoLead: aviso,
         log: ctx.log,
       },
     );
-    ctx.log.warn('turno interrompido pelo teto de gasto — conversa devolvida à fila humana', {
-      lead_avisado: aviso.avisado,
-    });
+    if (semChave) {
+      // UM aviso por organização, com dedup por título — nunca um por conversa
+      // (ADR-0005, D3). Falhar ao avisar não desfaz a passagem, que já aconteceu.
+      try {
+        await avisarIaDesligadaPorFaltaDeChave(ctx.pool, ctx.tenantId);
+      } catch (erroDoAviso) {
+        ctx.log.warn('aviso de IA sem chave não entrou na Central', {
+          error: erroDoAviso instanceof Error ? erroDoAviso.message.slice(0, 200) : 'erro desconhecido',
+        });
+      }
+    }
+    ctx.log.warn(
+      semChave
+        ? 'turno interrompido por falta de chave de IA — conversa devolvida à fila humana'
+        : 'turno interrompido pelo teto de gasto — conversa devolvida à fila humana',
+      { lead_avisado: aviso.avisado },
+    );
     throw err;
   }
 }
@@ -748,9 +791,10 @@ async function briefingDoCheckpointDuravel(
   tenantId: string,
   leadId: string,
   log: Logger,
+  motivo: MotivoDaEscolta,
 ): Promise<BriefingDaPassagem> {
   const montar = (checkpoint: Awaited<ReturnType<typeof latestCheckpoint>>) =>
-    montarBriefingDaPassagem({ checkpoint, motivo: { codigo: 'orcamento_de_ia' } });
+    montarBriefingDaPassagem({ checkpoint, motivo: { codigo: motivo } });
   try {
     return montar(await latestCheckpoint(pool, tenantId, leadId));
   } catch (err) {
@@ -1741,19 +1785,19 @@ export async function runAgentTurn(
     tenant_id: job.organization_id,
     lead_id: leadIdDoJob,
   });
-  await comHandoffSeOrcamentoAcabar(
+  await comHandoffSeIaNaoResponder(
     {
       pool,
       tenantId: job.organization_id,
       leadId: leadIdDoJob,
       conversationId: input.conversationId,
-      briefingDoCheckpoint: () =>
-        briefingDoCheckpointDuravel(pool, job.organization_id, leadIdDoJob, logDaEscolta),
+      briefingDoCheckpoint: (motivo) =>
+        briefingDoCheckpointDuravel(pool, job.organization_id, leadIdDoJob, logDaEscolta, motivo),
       // O canal nasce DENTRO da closure: instanciá-lo aqui faria todo turno feliz
       // pagar por um adapter que só o caminho de erro usa. Sem `agentActorId` de
       // propósito — quando o teto estoura antes da primeira chamada, não houve
       // agente resolvido para creditar.
-      avisarLead: () =>
+      avisarLead: (motivo) =>
         avisarLeadLendoOContato(
           pool,
           {
@@ -1764,7 +1808,7 @@ export async function runAgentTurn(
             jobId: job.id,
           },
           {
-            motivo: 'orcamento_de_ia',
+            motivo,
             channel: (deps.channel ?? ((p: pg.Pool) => new WahaChannelAdapter(p, deps.crmCfg)))(
               pool,
             ),

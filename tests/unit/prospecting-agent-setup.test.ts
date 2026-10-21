@@ -5,12 +5,10 @@ const mocks = vi.hoisted(() => ({
   publish: vi.fn(),
   create: vi.fn(),
   audit: vi.fn(),
-  platform: vi.fn(),
 }));
 vi.mock("@/lib/ai/agents/publish", () => ({ publishAgentVersion: mocks.publish }));
 vi.mock("@/lib/ai/agents/create-draft", () => ({ createMcpAgentDraft: mocks.create }));
 vi.mock("@/lib/audit", () => ({ audit: mocks.audit }));
-vi.mock("@/lib/ai/runtime/agent", () => ({ chaveDePlataforma: mocks.platform }));
 vi.mock("@/lib/ai/agents/capacidades-padrao", () => ({
   capacidadesPadraoDoOnboarding: () => [
     "crm_get_lead",
@@ -67,6 +65,8 @@ type State = {
   failAppend: boolean;
   members: string[];
 };
+/** A credencial validada da organização; uuid porque atravessa `versionCreateSchema`. */
+const CRED_OPENAI = "66666666-6666-4666-8666-666666666666";
 function database() {
   const state: State = {
     agent: null,
@@ -106,13 +106,17 @@ function database() {
         return { rows: state.router ? [state.router] : [] };
       if (sql.startsWith("select a.id from ai_agents"))
         return { rows: state.incumbent ? [{ id: "incumbent" }] : [] };
+      if (sql.startsWith("select id,provider from ai_provider_credentials"))
+        return { rows: [{ id: CRED_OPENAI, provider: "openai" }] };
       if (sql.startsWith("select v.provider"))
         return {
           rows: [
             {
               provider: "openai",
               model: "model-tools",
-              credential_id: null,
+              // Toda versão publicada aponta para uma credencial da organização
+              // (ADR-0005); a consulta já filtra por credencial ativa e validada.
+              credential_id: CRED_OPENAI,
               display_name: "Modelo configurado",
             },
           ],
@@ -160,7 +164,6 @@ function database() {
 }
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.platform.mockReturnValue("configured");
   mocks.audit.mockResolvedValue(undefined);
 });
 const admin = {} as SupabaseClient;
@@ -330,8 +333,7 @@ describe("inline prospecting agent setup", () => {
 });
 
 describe("model and router prerequisites", () => {
-  it("fails closed when there is no usable credential or platform key", async () => {
-    mocks.platform.mockReturnValue(null);
+  it("fails closed when there is no usable credential — there is no platform key to fall back to (ADR-0005)", async () => {
     const db = { query: vi.fn().mockResolvedValue({ rows: [] }) } as unknown as pg.PoolClient;
     await expect(resolveSetupModel(db, org)).rejects.toThrow("Configure uma chave");
   });

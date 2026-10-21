@@ -2,9 +2,24 @@
  * Config LLM por org, pós-fusão (PORT-NOTES): a credencial BYOK vive em
  * `ai_provider_credentials` do CRM (AES-256-GCM via lib/crypto/aes_gcm — colunas
  * api_key_encrypted/api_key_iv/api_key_tag) e os knobs de modelo/params vivem em
- * `organizations.settings->'llm'`. Sem BYOK, o fallback é a chave de plataforma
- * do env (ANTHROPIC_API_KEY ou OPENAI_API_KEY, conforme o provider). O plaintext da chave
- * existe apenas em memória do processo no instante da chamada; nunca em log.
+ * `organizations.settings->'llm'`. O plaintext da chave existe apenas em memória
+ * do processo no instante da chamada; nunca em log.
+ *
+ * ═══ NÃO EXISTE CHAVE DA INSTALAÇÃO (ADR-0005) ═══
+ *
+ * Até 2026-10 este resolvedor tinha três degraus abaixo da credencial da
+ * organização: as chaves da Anthropic, da OpenAI e da OpenRouter lidas do
+ * `.env`, rotuladas como chave da instalação. Numa instalação que serve várias
+ * organizações, isso fazia a chave de UMA conta pagar a IA de todas — sem teto
+ * por organização, sem fatura própria e sem a organização saber. A decisão do
+ * dono do produto (`docs/adr/0005-ia-paga-por-cada-organizacao.md`) acabou com o
+ * conceito: a única fonte de chave é `ai_provider_credentials` da organização,
+ * ativa e validada; sem ela, `LlmNotConfiguredError`, que é TERMINAL — o turno
+ * passa a conversa para a equipe e a fila não tenta de novo (D3).
+ *
+ * `LlmEdgeConfig` ficou só com os knobs sem chave. A cerca
+ * `tests/unit/ia-sem-chave-da-plataforma.test.ts` reprova a volta de qualquer
+ * leitura de chave de IA do ambiente neste arquivo.
  *
  * O TETO **não** mora mais no jsonb: desde a migration 0159 ele é
  * `ai_budgets` (teto, modo, carência, limiar), lido aqui pelo mesmo round-trip
@@ -29,27 +44,13 @@ import {
 import type { RaciocinioDeepseek } from './providers';
 import type { CacheTtl } from './stable-prefix';
 
-/** Config da camada LLM montada do env validado (padrão crmEdgeConfigFromEnv). */
+/**
+ * Config da camada LLM montada do env validado (padrão crmEdgeConfigFromEnv).
+ *
+ * Só KNOBS. Nenhum campo aqui carrega chave de provedor: a chave sai da
+ * credencial da organização, dentro de `resolveOrgLlmConfig` (ADR-0005).
+ */
 export interface LlmEdgeConfig {
-  /** chave de plataforma (fallback quando a org não tem BYOK). Opcional no boot. */
-  anthropicApiKey?: string;
-  /**
-   * Mesma ideia para OpenAI. Existia só a da Anthropic, e isso quebrava a
-   * transcrição de áudio: o Whisper é da OpenAI, mas a org que usa Anthropic
-   * como provedor de chat não tem credencial OpenAI cadastrada — e o
-   * instalador coleta OPENAI_API_KEY justamente para isso. Sem este fallback
-   * a chave do instalador não chegava a lugar nenhum.
-   */
-  openaiApiKey?: string;
-  /**
-   * Mesma ideia para a OpenRouter — e o buraco era pior, porque o instalador
-   * passou a OFERECER OpenRouter como primeira opção. Quem escolhia e não
-   * cadastrava chave da Anthropic tinha `LlmNotConfiguredError` em tudo que
-   * passa por este seam, com a mensagem de erro mandando cadastrar justamente
-   * as duas chaves que ele decidiu não usar. Na derivação de mídia o desfecho
-   * era mudo: 5 tentativas, `media_derived_status='failed'`, zero avisos.
-   */
-  openrouterApiKey?: string;
   /**
    * TTL do prefixo estável de cache (knob LLM_CACHE_TTL). Opcional para quem
    * monta a config na mão (testes) — o seam aplica a doutrina '1h' quando ausente.
@@ -77,19 +78,11 @@ export interface LlmEdgeConfig {
 }
 
 /**
- * ⚠️ `OPENAI_API_KEY` entra aqui, e não entrava antes — o campo `openaiApiKey`
- * existia no tipo e era lido em `resolveOrgLlmConfig`, mas NENHUM caminho do
- * agente o preenchia (só o worker de transcrição de áudio montava a config na
- * mão). O efeito: numa instalação com a chave da OpenAI no `.env`, um agente com
- * modelo OpenAI caía em `LlmNotConfiguredError` — a chave estava lá, coletada
- * pelo instalador, e o turno morria como se não estivesse. Um campo declarado que
- * ninguém preenche é pior que um campo ausente: faz quem lê o código concluir que
- * o caminho existe.
+ * Monta os knobs da camada LLM a partir do env validado. Deixou de ler chave
+ * de provedor de propósito (ADR-0005): o parâmetro não declara chave nenhuma,
+ * e um chamador que tentar passá-las recebe erro de tipo.
  */
 export function llmEdgeConfigFromEnv(env: {
-  ANTHROPIC_API_KEY?: string;
-  OPENAI_API_KEY?: string;
-  OPENROUTER_API_KEY?: string;
   LLM_CACHE_TTL?: string;
   AI_BUDGET_ENFORCEMENT?: string;
   DEEPSEEK_THINKING?: string;
@@ -103,25 +96,35 @@ export function llmEdgeConfigFromEnv(env: {
     throw new Error("DEEPSEEK_THINKING inválido — use 'provider' ou 'disabled' (default provider)");
   }
   return {
-    ...(env.ANTHROPIC_API_KEY ? { anthropicApiKey: env.ANTHROPIC_API_KEY } : {}),
-    ...(env.OPENAI_API_KEY ? { openaiApiKey: env.OPENAI_API_KEY } : {}),
-    ...(env.OPENROUTER_API_KEY ? { openrouterApiKey: env.OPENROUTER_API_KEY } : {}),
     cacheTtl: ttl,
     deepseekThinking: raciocinio,
-    // Sem `if` de valor vazio, ao contrário das chaves acima: aqui o ausente
-    // TEM um significado ('on'), e o normalizador é quem o dá. Um campo
-    // opcional que some faria o seam ter de repetir o default, e dois defaults
-    // é como um dos dois fica para trás.
+    // Sem `if` de valor vazio: aqui o ausente TEM um significado ('on'), e o
+    // normalizador é quem o dá. Um campo opcional que some faria o seam ter de
+    // repetir o default, e dois defaults é como um dos dois fica para trás.
     budgetEnforcement: normalizarChaveDeOrcamento(env.AI_BUDGET_ENFORCEMENT),
   };
 }
 
-/** Org sem credencial LLM utilizável — erro tipado, mensagem sem valores (credencial fora). */
+/**
+ * Org sem credencial LLM utilizável — erro tipado, mensagem sem valores
+ * (credencial fora).
+ *
+ * É TERMINAL, e isso é a decisão D3 da ADR-0005 (dono do produto, 21/10/2026):
+ * sem chave da organização não há chave nenhuma, e tentar de novo daqui a um
+ * minuto dá o mesmo resultado. A fila lê a propriedade `terminal`
+ * (`workers/agent-worker/main.ts`) e CANCELA o job em vez de reagendar cinco
+ * vezes e abrir um `job_dead` crítico por conversa. O que torna o cancelamento
+ * seguro é a escolta do turno (`comHandoffSeIaNaoResponder`, em
+ * `lib/agent-engine/agent/inbound-turn.ts`): a conversa é passada à equipe
+ * ANTES de o erro chegar à fila, e a Central recebe UM aviso por organização.
+ */
 export class LlmNotConfiguredError extends Error {
   override readonly name = 'llm_not_configured';
+  /** Lido pela fila: veto de configuração, não incidente — sem retry. */
+  readonly terminal = true as const;
   constructor() {
     super(
-      'org sem credencial LLM utilizável — cadastre uma chave BYOK ativa/validada em ai_provider_credentials ou defina ANTHROPIC_API_KEY / OPENAI_API_KEY (fallback de plataforma, conforme o provider do modelo)',
+      'esta organização não tem chave de IA ativa e validada para o provedor do ponto — a IA fica desligada para ela até alguém cadastrar a chave em IA › Credenciais (a plataforma não custeia IA, ADR-0005)',
     );
   }
 }
@@ -146,26 +149,18 @@ export interface OrcamentoDaOrg {
 }
 
 /**
- * De QUEM é a chave que o resolvedor devolveu. Mesmo vocabulário de
- * `lib/ai/embeddings/chave.ts`, que responde a mesma pergunta para embedding.
+ * De QUEM é a chave que o resolvedor devolveu. Desde a ADR-0005 há UMA resposta
+ * possível, e o campo continua existindo por ela: é o que impede o próximo
+ * degrau de entrar sem mudar um tipo que o compilador vigia. Mesmo vocabulário
+ * de `lib/ai/embeddings/chave.ts`, que responde a mesma pergunta para embedding.
  */
-export type OrigemDaChaveLlm = 'credencial_da_organizacao' | 'chave_da_instalacao';
+export type OrigemDaChaveLlm = 'credencial_da_organizacao';
 
 export interface OrgLlmConfig {
   provider: string;
   /** plaintext decifrado — existe só em memória, jamais logado/persistido */
   apiKey: string;
-  /**
-   * `chave_da_instalacao` = a organização não tinha credencial ativa e validada
-   * para o provedor (ou a escolhida foi revogada) e a escada caiu no `.env` —
-   * a chave que paga a conta de TODAS as empresas desta instalação.
-   *
-   * Existe para quem decide PARA ONDE a chave pode ir. O endereço de um ponto
-   * (`ai_purpose_bindings.base_url`) é escolhido por quem administra a
-   * organização; a chave da instalação não pode acompanhá-lo (decisão 22-a do
-   * dono do produto). Antes deste campo, o único jeito de saber era comparar o
-   * plaintext com as chaves do `.env`, e cada caminho fazia a sua comparação.
-   */
+  /** Sempre `credencial_da_organizacao` (ADR-0005). */
   origemDaChave: OrigemDaChaveLlm;
   defaultModel: string | null;
   params: Record<string, unknown>;
@@ -269,12 +264,6 @@ function causaDoBanco(err: unknown): string {
 }
 
 /**
- * Resolve a config LLM da org: knobs de organizations.settings->'llm' + credencial
- * BYOK mais recente ativa/validada de ai_provider_credentials (decifrada com
- * aes_gcm). Sem BYOK → fallback cfg.anthropicApiKey (só anthropic). Sem nada →
- * LlmNotConfiguredError. Chamada a cada run — troca de config vale no run seguinte.
- */
-/**
  * Override por-turno vindo da versão PUBLICADA do agente (Fase 2B): a tela
  * escolhe provider e credencial ESPECÍFICA; sem override, vale a config da org
  * (settings.llm + credencial mais recente do provider).
@@ -284,12 +273,23 @@ export interface LlmResolveOverride {
   credentialId?: string | null;
 }
 
+/**
+ * Resolve a config LLM da org: knobs de organizations.settings->'llm' + a
+ * credencial da organização (decifrada com aes_gcm) — a ESCOLHIDA na versão
+ * publicada quando houver, senão a MAIS RECENTE ativa e validada do provider
+ * (ordem única de todo resolvedor do produto, ADR-0005 D2). Sem credencial →
+ * `LlmNotConfiguredError`, sem outro degrau. Chamada a cada run — troca de
+ * config vale no run seguinte.
+ */
 export async function resolveOrgLlmConfig(
   db: pg.Pool,
   cfg: LlmEdgeConfig,
   organizationId: string,
   override?: LlmResolveOverride,
 ): Promise<OrgLlmConfig> {
+  // `cfg` segue na assinatura por ser o contrato de todo chamador do seam — e
+  // por não carregar chave nenhuma, o resolvedor não tem o que ler dele.
+  void cfg;
   // ⚠️ O RESOLVEDOR NUNCA LANÇA POR SCHEMA DESATUALIZADO.
   //
   // `hostgator-setup-kit/update.sh` aplica o baseline com `|| true` e SEM
@@ -335,6 +335,10 @@ export async function resolveOrgLlmConfig(
   // Credencial: a ESCOLHIDA na versão publicada quando houver (ainda exigindo
   // ativa+validada — publish valida, mas a credencial pode ser revogada depois);
   // senão a mais recente ativa/validada do provider. Sempre escopada pela org.
+  //
+  // `order by created_at desc, id desc`: duas credenciais criadas no mesmo
+  // instante não podem alternar entre chamadas — é a mesma ordem de
+  // `lib/ai/credenciais/mais-recente.ts`, o resolvedor dos caminhos Supabase.
   const { rows: credRows } = override?.credentialId
     ? await db.query<{
         id: string;
@@ -359,35 +363,24 @@ export async function resolveOrgLlmConfig(
          from ai_provider_credentials
          where organization_id = $1 and provider = $2
            and is_active and validated_at is not null
-         order by created_at desc
+         order by created_at desc, id desc
          limit 1`,
         [organizationId, provider],
       );
 
-  let apiKey: string;
-  // Atribuída junto com a chave, em cada degrau: a origem é um fato de QUAL
-  // ramo escolheu a chave, e só este ponto sabe isso sem adivinhar.
-  let origemDaChave: OrigemDaChaveLlm;
   const cred = credRows[0];
-  if (cred !== undefined) {
-    apiKey = decryptKey({
-      ciphertext: byteaToBuffer(cred.api_key_encrypted),
-      iv: byteaToBuffer(cred.api_key_iv),
-      tag: byteaToBuffer(cred.api_key_tag),
-    });
-    origemDaChave = 'credencial_da_organizacao';
-  } else if (provider === 'anthropic' && cfg.anthropicApiKey) {
-    apiKey = cfg.anthropicApiKey;
-    origemDaChave = 'chave_da_instalacao';
-  } else if (provider === 'openai' && cfg.openaiApiKey) {
-    apiKey = cfg.openaiApiKey;
-    origemDaChave = 'chave_da_instalacao';
-  } else if (provider === 'openrouter' && cfg.openrouterApiKey) {
-    apiKey = cfg.openrouterApiKey;
-    origemDaChave = 'chave_da_instalacao';
-  } else {
+  if (cred === undefined) {
+    // SEM DEGRAU ABAIXO. Aqui existiam três ramos que faziam a chave do `.env`
+    // responder pela organização sem chave — a ADR-0005 os apagou, e a cerca
+    // `tests/unit/ia-sem-chave-da-plataforma.test.ts` reprova a volta deles.
     throw new LlmNotConfiguredError();
   }
+  const apiKey = decryptKey({
+    ciphertext: byteaToBuffer(cred.api_key_encrypted),
+    iv: byteaToBuffer(cred.api_key_iv),
+    tag: byteaToBuffer(cred.api_key_tag),
+  });
+  const origemDaChave: OrigemDaChaveLlm = 'credencial_da_organizacao';
 
   // O ENDEREÇO do provedor personalizado (#1642), na mesma linha da chave que
   // acima. Query separada e condicionada ao provider: se o clone ainda não
@@ -395,7 +388,7 @@ export async function resolveOrgLlmConfig(
   // registry recusa a chamada com a frase certa) — os quatro nativos seguem sem
   // tocar numa coluna que ainda não existe.
   let baseUrl: string | null = null;
-  if (provider === "custom" && cred !== undefined) {
+  if (provider === "custom") {
     try {
       const { rows: urlRows } = await db.query<{ base_url: string | null }>(
         `select base_url from ai_provider_credentials where id = $1 and organization_id = $2 limit 1`,

@@ -35,14 +35,18 @@ import { describe, expect, it, vi } from "vitest";
 import ts from "typescript";
 
 import {
-  comHandoffSeOrcamentoAcabar,
+  comHandoffSeIaNaoResponder,
   HANDOFF_REASON_ORCAMENTO,
+  HANDOFF_REASON_SEM_CHAVE,
+  RESUMO_DO_HANDOFF_POR_FALTA_DE_CHAVE,
   RESUMO_DO_HANDOFF_POR_ORCAMENTO,
+  TITULO_DO_HANDOFF_POR_FALTA_DE_CHAVE,
   TITULO_DO_HANDOFF_POR_ORCAMENTO,
 } from "@/lib/agent-engine/agent/inbound-turn";
+import { TITULO_DO_AVISO_DE_IA_SEM_CHAVE } from "@/lib/ai/ia-sem-chave/motivo";
 import type { DesfechoDoAviso } from "@/lib/agent-engine/agent/aviso-de-escalacao";
 import { corpoDoBloqueio } from "@/lib/agent-engine/edge/llm/orcamento";
-import { LlmBudgetExceededError } from "@/lib/agent-engine/edge/llm/run-model-call";
+import { LlmBudgetExceededError, LlmNotConfiguredError } from "@/lib/agent-engine/edge/llm/run-model-call";
 import { montarBriefingDaPassagem } from "@/lib/escalacao/briefing-da-passagem";
 
 const RAIZ = process.cwd();
@@ -125,7 +129,7 @@ describe("a escolta do orçamento", () => {
     const { pool, chamadas } = poolFalso();
     const log = logFalso();
 
-    const devolvido = await comHandoffSeOrcamentoAcabar(contexto(pool, log), async () => "turno ok");
+    const devolvido = await comHandoffSeIaNaoResponder(contexto(pool, log), async () => "turno ok");
 
     expect(devolvido).toBe("turno ok");
     expect(chamadas, "handoff disparado num turno que deu certo").toEqual([]);
@@ -136,7 +140,7 @@ describe("a escolta do orçamento", () => {
     const outro = new Error("provedor fora do ar");
 
     await expect(
-      comHandoffSeOrcamentoAcabar(contexto(pool, logFalso()), async () => {
+      comHandoffSeIaNaoResponder(contexto(pool, logFalso()), async () => {
         throw outro;
       }),
     ).rejects.toBe(outro);
@@ -152,7 +156,7 @@ describe("a escolta do orçamento", () => {
     const erro = new LlmBudgetExceededError();
 
     await expect(
-      comHandoffSeOrcamentoAcabar(contexto(pool, logFalso()), async () => {
+      comHandoffSeIaNaoResponder(contexto(pool, logFalso()), async () => {
         throw erro;
       }),
     ).rejects.toBe(erro);
@@ -194,7 +198,7 @@ describe("a escolta do orçamento", () => {
       throw new LlmBudgetExceededError();
     });
 
-    await expect(comHandoffSeOrcamentoAcabar(contexto(pool, logFalso()), chamada)).rejects.toThrow();
+    await expect(comHandoffSeIaNaoResponder(contexto(pool, logFalso()), chamada)).rejects.toThrow();
 
     // A callback é a ÚNICA porta para o modelo nesta função, e ela rodou uma vez
     // (a que falhou). Gerar o resumo por LLM seria gastar exatamente o que acabou
@@ -237,7 +241,7 @@ describe("a escolta do orçamento", () => {
     });
 
     await expect(
-      comHandoffSeOrcamentoAcabar(contexto(pool, logFalso(), avisar), async () => {
+      comHandoffSeIaNaoResponder(contexto(pool, logFalso(), avisar), async () => {
         throw new LlmBudgetExceededError();
       }),
     ).rejects.toThrow();
@@ -266,7 +270,7 @@ describe("a escolta do orçamento", () => {
     );
 
     await expect(
-      comHandoffSeOrcamentoAcabar(contexto(pool, logFalso(), avisar), async () => {
+      comHandoffSeIaNaoResponder(contexto(pool, logFalso(), avisar), async () => {
         throw new LlmBudgetExceededError();
       }),
     ).rejects.toThrow();
@@ -294,7 +298,7 @@ describe("a escolta do orçamento", () => {
     });
 
     await expect(
-      comHandoffSeOrcamentoAcabar(contexto(pool, logFalso(), avisar as never), async () => {
+      comHandoffSeIaNaoResponder(contexto(pool, logFalso(), avisar as never), async () => {
         throw new LlmBudgetExceededError();
       }),
     ).rejects.toThrow();
@@ -312,7 +316,7 @@ describe("a escolta do orçamento", () => {
     const { pool } = poolFalso({ falhaEm: "set force_human = true" });
 
     await expect(
-      comHandoffSeOrcamentoAcabar(contexto(pool, logFalso()), async () => {
+      comHandoffSeIaNaoResponder(contexto(pool, logFalso()), async () => {
         throw new LlmBudgetExceededError();
       }),
     ).rejects.toThrow("banco fora");
@@ -345,7 +349,7 @@ function chamadasDoNucleo(texto: string) {
       const ancestors: ts.Node[] = [];
       for (let p = node.parent; p; p = p.parent) ancestors.push(p);
       const owner = ancestors.find(ts.isFunctionDeclaration)?.name?.text;
-      const escoltado = ancestors.some(p => ts.isCallExpression(p) && ts.isIdentifier(p.expression) && p.expression.text === "comHandoffSeOrcamentoAcabar");
+      const escoltado = ancestors.some(p => ts.isCallExpression(p) && ts.isIdentifier(p.expression) && p.expression.text === "comHandoffSeIaNaoResponder");
       const preview = owner === "runAgentPreview" && node.arguments.length === 6 &&
         node.arguments[1]?.kind === ts.SyntaxKind.NullKeyword && node.arguments[5]?.getText(ast) === "preview";
       chamadas.push({ tipo: owner === "runAgentTurn" && escoltado ? "operacional" : preview ? "preview" : "sem_escolta", texto: node.getText(ast) });
@@ -355,6 +359,91 @@ function chamadasDoNucleo(texto: string) {
   visit(ast);
   return chamadas;
 }
+
+/**
+ * A ORGANIZAÇÃO SEM CHAVE NÃO DEIXA O LEAD NO VÁCUO — nem afoga a Central.
+ *
+ * ADR-0005, D3 (dono do produto, 21/10/2026): `LlmNotConfiguredError` deixou de
+ * ser erro passageiro. A mesma escolta do orçamento passa a conversa para a
+ * equipe NA HORA, sem chamar provedor nenhum; o erro é terminal (a fila cancela,
+ * sem retry); e a Central recebe UM aviso por organização, com dedup por título
+ * — não um `job_dead` crítico por conversa.
+ */
+describe("a escolta sem chave de IA (ADR-0005, D3)", () => {
+  it("sem chave: handoff imediato com o motivo ia_sem_chave, sem chamar provedor", async () => {
+    const { pool, chamadas } = poolFalso();
+    const erro = new LlmNotConfiguredError();
+    const chamada = vi.fn(async () => {
+      throw erro;
+    });
+
+    await expect(comHandoffSeIaNaoResponder(contexto(pool, logFalso()), chamada)).rejects.toBe(erro);
+
+    // A callback é a única porta para o modelo, e ela rodou UMA vez — a que
+    // recusou antes de sair byte. Nenhuma nova tentativa aqui dentro.
+    expect(chamada).toHaveBeenCalledTimes(1);
+
+    const conversa = chamadas.find((c) => c.sql.includes("update conversations"));
+    expect(conversa?.params).toContain(HANDOFF_REASON_SEM_CHAVE);
+    const inbox = chamadas.find((c) => c.sql.includes("agent_inbox_items") && c.params?.includes(TITULO_DO_HANDOFF_POR_FALTA_DE_CHAVE));
+    expect(inbox, "handoff sem item na Central é passagem que ninguém vê").toBeDefined();
+    const passagem = chamadas.find((c) => c.sql.includes("insert into passagens_de_atendimento"));
+    expect(passagem?.params).toContain("ia_sem_chave");
+    const corpo = String(passagem?.params?.find((p) => typeof p === "string" && p.includes(RESUMO_DO_HANDOFF_POR_FALTA_DE_CHAVE)) ?? "");
+    expect(corpo).toContain(RESUMO_DO_CHECKPOINT);
+    expect(RESUMO_DO_HANDOFF_POR_FALTA_DE_CHAVE).toMatch(/não pediu atendimento humano/iu);
+    expect(RESUMO_DO_HANDOFF_POR_FALTA_DE_CHAVE).toMatch(/IA › Credenciais/u);
+  });
+
+  it("a Central recebe UM aviso por organização: N conversas, a mesma chave de dedup", async () => {
+    const avisos: Array<{ sql: string; params: unknown[] }> = [];
+    for (const conversa of ["conv-1", "conv-2", "conv-3"]) {
+      const { pool, chamadas } = poolFalso();
+      await expect(
+        comHandoffSeIaNaoResponder({ ...contexto(pool, logFalso()), conversationId: conversa }, async () => {
+          throw new LlmNotConfiguredError();
+        }),
+      ).rejects.toBeInstanceOf(LlmNotConfiguredError);
+      const aviso = chamadas.find((c) => c.sql.includes("agent_inbox_items") && c.params?.includes(TITULO_DO_AVISO_DE_IA_SEM_CHAVE));
+      expect(aviso, "o aviso da organização não foi aberto").toBeDefined();
+      avisos.push(aviso!);
+    }
+    // O INSERT carrega a cláusula de dedup e as três conversas usam o MESMO
+    // título: no banco, a segunda e a terceira não criam linha enquanto a
+    // primeira estiver aberta.
+    for (const a of avisos) {
+      expect(a.sql.replace(/\s+/gu, " ")).toMatch(/where not exists/u);
+      expect(a.params).toContain(ORG);
+    }
+    expect(new Set(avisos.map((a) => a.params.find((p) => p === TITULO_DO_AVISO_DE_IA_SEM_CHAVE))).size).toBe(1);
+  });
+
+  it("o erro de chave ausente se declara terminal — a fila cancela em vez de tentar cinco vezes", () => {
+    const erro = new LlmNotConfiguredError() as unknown as { terminal?: unknown };
+    expect(erro.terminal).toBe(true);
+  });
+
+  it("o aviso que falha não desfaz a passagem", async () => {
+    // A passagem já aconteceu; o aviso é informação. Falhar nele vira log.
+    // Só o INSERT do aviso (o que leva o título dele) falha; a passagem passa.
+    const chamadas: Array<{ sql: string; params: unknown[] }> = [];
+    const pool = {
+      query: vi.fn(async (sql: string, params: unknown[] = []) => {
+        chamadas.push({ sql, params });
+        if (params.includes(TITULO_DO_AVISO_DE_IA_SEM_CHAVE)) throw new Error("banco fora");
+        return { rows: [], rowCount: 0 };
+      }),
+    } as never;
+    const log = logFalso() as unknown as { warn: ReturnType<typeof vi.fn> };
+    await expect(
+      comHandoffSeIaNaoResponder(contexto(pool, log as never), async () => {
+        throw new LlmNotConfiguredError();
+      }),
+    ).rejects.toBeInstanceOf(LlmNotConfiguredError);
+    expect(chamadas.find((c) => c.sql.includes("insert into passagens_de_atendimento"))).toBeDefined();
+    expect(log.warn).toHaveBeenCalledWith("aviso de IA sem chave não entrou na Central", expect.anything());
+  });
+});
 
 describe("o call site — AST separa prévia sem job do turno operacional escoltado", () => {
   const fonteInbound = readFileSync(INBOUND, "utf8");

@@ -17,7 +17,8 @@ export interface RetratoDaInstalacao {
   inteligencia: {
     provedor: string;
     rotulo: string;
-    origemDaChave: "org" | "instalacao" | "nenhuma";
+    /** `org` = credencial validada da organização; `nenhuma` = sem chave (ADR-0005: não há chave da instalação). */
+    origemDaChave: "org" | "nenhuma";
     /**
      * Há chave cadastrada que o provedor ainda não confirmou. NÃO é `origemDaChave`
      * — o turno não consegue usá-la ainda —, mas também não é "nenhuma": dizer
@@ -69,8 +70,8 @@ export async function lerRetratoDaInstalacao(
 
   const provider = provedorDaOrg(orgRow?.settings);
 
-  // Credencial cadastrada pela tela vence a chave da instalação — mesma
-  // precedência que `resolveOrgLlmConfig` aplica no turno.
+  // A ÚNICA chave é a credencial da organização (ADR-0005) — a mesma leitura
+  // que `resolveOrgLlmConfig` faz no turno.
   //
   // ⚠️ VALIDADA E EM VERIFICAÇÃO SÃO ESTADOS DIFERENTES, e o filtro
   // `.not("validated_at","is",null)` na consulta colapsava os dois em "nenhuma".
@@ -116,9 +117,7 @@ export async function lerRetratoDaInstalacao(
 
   const origemDaChave: RetratoDaInstalacao["inteligencia"]["origemDaChave"] = credencial
     ? "org"
-    : ambiente.chavesDeProvedor[provider] === true
-      ? "instalacao"
-      : "nenhuma";
+    : "nenhuma";
 
   const modeloCurado = (modelo?.model_id as string | undefined) ?? null;
 

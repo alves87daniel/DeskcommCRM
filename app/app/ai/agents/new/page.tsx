@@ -6,7 +6,6 @@ import { listSelectableChannels } from "@/lib/channels/selectable";
 import { createClient } from "@/lib/supabase/server";
 import type { CredentialRow } from "@/hooks/ai/useCredentials";
 
-import { lerAmbiente } from "@/lib/instalacao/ambiente";
 import { fusoUtilizavel } from "@/lib/tempo/fusos";
 
 import { AgentForm } from "../[id]/_components/AgentForm";
@@ -15,21 +14,6 @@ export const dynamic = "force-dynamic";
 
 const CREDENTIAL_COLUMNS =
   "id, organization_id, provider, label, api_key_last4, validated_at, validation_error, models_available, is_active, created_by, created_at, updated_at";
-
-/**
- * Os provedores cuja chave veio na INSTALAÇÃO (`.env`), não da tela de
- * Credenciais.
- *
- * Sai de `lerAmbiente`, a mesma leitura que o retrato da instalação usa — uma
- * segunda lista de nomes de variável divergiria no dia em que um provedor novo
- * entrasse.
- */
-function provedoresDaInstalacao(): string[] {
-  const a = lerAmbiente();
-  return Object.entries(a.chavesDeProvedor)
-    .filter(([, tem]) => tem)
-    .map(([id]) => id);
-}
 
 export default async function NewAgentPage() {
   const user = await requireAuth();
@@ -62,7 +46,6 @@ export default async function NewAgentPage() {
       <AgentForm
         mode="create"
         credentials={credentials}
-        provedoresDaInstalacao={provedoresDaInstalacao()}
         provedorPadrao={llmDaOrg?.provider}
         channelSessions={channelSessions}
         organizationTimezone={fusoUtilizavel(activeOrg.timezone)}

@@ -58,6 +58,7 @@ import {
 import { fusoDaOrganizacao } from "@/lib/agent-engine/agent/fuso-da-org";
 import { loadOrgMemory, renderOrgMemory } from "@/lib/agent-engine/agent/org-memory";
 import { requestTurnDeps } from "@/lib/agent-engine/agent/request-deps";
+import { ehProvedorSuportado } from "@/lib/ai/pontos/provedores";
 import { getRequestPool } from "@/lib/agent-engine/db/request-pool";
 import { parseServiceBoundary, assertCurrentServiceBoundary } from "@/lib/atendimento/fronteira";
 import { readCurrentServiceBoundary } from "@/lib/atendimento/fronteira-server";
@@ -234,7 +235,13 @@ export async function GET(req: NextRequest, ctx: Ctx): Promise<Response> {
         `select is_blocked, is_anonymized from contacts where organization_id = $1 and id = $2`,
         [c.orgId, caso.contact_id],
       );
-      const cfg = requestTurnDeps().llmCfg;
+      // A pergunta é POR ORGANIZAÇÃO (ADR-0005): tem credencial ativa e validada
+      // de um provedor que conversa? A chave do ambiente não conta — não existe.
+      const { rows: chaves } = await pool.query<{ provider: string }>(
+        `select provider from ai_provider_credentials
+          where organization_id = $1 and is_active and validated_at is not null`,
+        [c.orgId],
+      );
       estado = {
         caso_obsoleto: await casoEstaObsoleto(pool, c.orgId, caso.context_snapshot),
         contato_bloqueado: contato[0]?.is_blocked ?? null,
@@ -243,7 +250,7 @@ export async function GET(req: NextRequest, ctx: Ctx): Promise<Response> {
         // Sem chave de IA a tela não oferece o clique: numa instalação fresca,
         // um botão que sempre falha é pior que um botão ausente com a frase que
         // diz onde configurar.
-        ia_configurada: Boolean(cfg.anthropicApiKey || cfg.openaiApiKey || cfg.openrouterApiKey),
+        ia_configurada: chaves.some((ch) => ehProvedorSuportado(ch.provider)),
       };
     }
   } catch (erro) {

@@ -26,11 +26,6 @@ interface Props {
    * (`page.tsx`). Qual chave ele usa sai da lista viva, aqui — ver `doJev`.
    */
   jev?: { tarefas: readonly string[]; temIaPrincipal: boolean } | null;
-  /**
-   * A instalação trouxe chave de IA no `.env` (a do provedor ou a do gateway)?
-   * É o caso mais comum do kit, e essa chave não é linha desta lista.
-   */
-  instalacaoTemIa?: boolean;
 }
 
 // Rótulo e ordem saem das listas — provedor novo aparece na tela sem que
@@ -47,7 +42,6 @@ export function CredentialsList({
   canWrite,
   usageMap,
   jev = null,
-  instalacaoTemIa = false,
 }: Props) {
   const t = useT();
   const { data } = useCredentialsList({ initialData });
@@ -79,11 +73,9 @@ export function CredentialsList({
         });
 
   // Só a chave do Jev não faz o atendimento funcionar: ele decide, não conversa.
-  // Sem este aviso a tela sairia do estado vazio e pareceria pronta. Mas quem
-  // atende com a chave que veio na instalação JÁ tem a IA principal: avisar ali
-  // seria alarme falso sobre o que está funcionando.
+  // Sem este aviso a tela sairia do estado vazio e pareceria pronta. E não há
+  // chave da instalação que atenda enquanto isso (ADR-0005).
   const soDecisao =
-    !instalacaoTemIa &&
     credentials.some((c) => ehProvedorDeDecisao(c.provider)) &&
     // A chave de conversa RECUSADA não atende ninguém. A que ainda está em
     // teste conta: sem isso o aviso piscaria nos segundos depois de colar.

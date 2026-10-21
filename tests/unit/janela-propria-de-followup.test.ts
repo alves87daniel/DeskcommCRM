@@ -99,7 +99,7 @@ describe("contrato versionado do agente", () => {
     system_prompt: "Você é um atendente de teste.",
     provider: "openai" as const,
     model: "gpt-test",
-    credential_id: null,
+    credential_id: "55555555-5555-4555-8555-555555555555",
     channel_session_id: null,
   };
 

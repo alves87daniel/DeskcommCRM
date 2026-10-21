@@ -223,7 +223,7 @@ beforeEach(() => {
   vi.mocked(resolverModeloDoPonto).mockResolvedValue({
     model: {} as never,
     modelId: "anthropic/claude-haiku-4-5",
-    origem: "padrao",
+    origem: "credencial_da_organizacao",
   });
   vi.mocked(haQuemAtendaAOrganizacao).mockResolvedValue(true);
 });

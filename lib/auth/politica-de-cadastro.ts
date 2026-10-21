@@ -17,7 +17,7 @@
  * aceitando cadastro como hoje até alguém escolher o contrário.
  *
  * Quem quer outro padrão declara em `SIGNUP_MODE` no `.env` — ver
- * `padraoDaInstalacao()` abaixo. O banco continua acima do `.env`: havendo linha
+ * `modoDeCadastroDaInstalacao()` abaixo. O banco continua acima do `.env`: havendo linha
  * em `platform_settings`, é ela que vale.
  *
  * ─── A leitura é PEGAJOSA, e este é o ponto de segurança do módulo ──────────
@@ -105,7 +105,7 @@ export const MODOS_DE_CADASTRO: readonly ModoDeCadastro[] = [
  * que nunca pediu para ser fechada. Quem exige o fechamento tem o mecanismo
  * primário — a linha no banco — e este piso é a segunda camada, não a primeira.
  */
-export function padraoDaInstalacao(): ModoDeCadastro {
+export function modoDeCadastroDaInstalacao(): ModoDeCadastro {
   const declarado = (env.SIGNUP_MODE ?? "").trim();
   if (declarado === "") return "aberto";
   if (ehModoDeCadastro(declarado)) return declarado;
@@ -187,7 +187,7 @@ export async function modoDeCadastro(): Promise<ModoDeCadastro> {
   if (lido !== null) {
     globalThis.__ultimoModoDeCadastroConhecido = lido;
   }
-  const valor = lido ?? globalThis.__ultimoModoDeCadastroConhecido ?? padraoDaInstalacao();
+  const valor = lido ?? globalThis.__ultimoModoDeCadastroConhecido ?? modoDeCadastroDaInstalacao();
 
   if ((globalThis.__geracaoDoModoDeCadastro ?? 0) === geracao) {
     globalThis.__memoDoModoDeCadastro = { modo: valor, expiraEm: Date.now() + TTL_MS };
@@ -213,7 +213,7 @@ async function lerModo(): Promise<ModoDeCadastro | null> {
     }
     // Sem linha = instalação que nunca configurou nada. É uma resposta, não uma
     // falha: vale o default, e ele fica sendo o "último conhecido".
-    if (!data) return padraoDaInstalacao();
+    if (!data) return modoDeCadastroDaInstalacao();
 
     const bruto = (data as { signup_mode?: unknown }).signup_mode;
     // O CHECK do banco já garante o vocabulário. Um valor fora dele só aparece

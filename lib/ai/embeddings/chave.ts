@@ -3,7 +3,7 @@
  *
  * ## O defeito que este arquivo existe para acabar
  *
- * `lib/ai/embed.ts` lia `AI_GATEWAY_API_KEY`/`OPENAI_API_KEY` do `process.env` e
+ * `lib/ai/embed.ts` lia a chave do gateway e a da OpenAI do `process.env` e
  * mais nada. Ou seja: **cadastrar a chave da OpenAI pela tela não habilitava a
  * base de conhecimento.** Só editar o `.env` da instalação habilitava.
  *
@@ -26,27 +26,31 @@
  *     no painel de provedores. É a superfície que o operador enxerga, então ela
  *     vence.
  *  2. **Credencial OpenAI da organização** (`ai_provider_credentials`, ativa e
- *     validada). É o degrau que faz "cadastrei a chave na tela e funcionou"
- *     virar verdade sem exigir que ninguém entenda o que é um binding.
- *  3. **Gateway da Vercel** (`AI_GATEWAY_API_KEY`) — quando a instalação roteia
- *     tudo por ele.
- *  4. **Chave OpenAI da instalação** (`OPENAI_API_KEY`).
- *  5. **Credencial OpenRouter da organização.** Vem DEPOIS da OpenAI e do
- *     gateway de propósito: a chave OpenRouter costuma estar cadastrada para a
- *     CONVERSA, e subi-la acima da OpenAI trocaria em silêncio o fornecedor (e
- *     a conta que paga) de quem já indexava com a OpenAI na atualização.
- *  6. **Chave OpenRouter da instalação** (`OPENROUTER_API_KEY`).
- *  7. **Credencial Google da organização** — por último, pelo mesmo motivo da
+ *     validada, a mais recente). É o degrau que faz "cadastrei a chave na tela
+ *     e funcionou" virar verdade sem exigir que ninguém entenda o que é um
+ *     binding.
+ *  3. **Credencial OpenRouter da organização.** Vem DEPOIS da OpenAI de
+ *     propósito: a chave OpenRouter costuma estar cadastrada para a CONVERSA, e
+ *     subi-la acima da OpenAI trocaria em silêncio o fornecedor (e a conta que
+ *     paga) de quem já indexava com a OpenAI na atualização.
+ *  4. **Credencial Google da organização** — por último, pelo mesmo motivo da
  *     OpenRouter: quem só tem a chave do Google passa a ter base, e quem já
  *     indexava com a OpenAI não troca de fornecedor numa atualização.
- *  8. Nada. E "nada" é uma resposta legítima que o chamador precisa saber
+ *  5. Nada. E "nada" é uma resposta legítima que o chamador precisa saber
  *     mostrar, não um erro para engolir.
+ *
+ * Até 2026-10 havia três degraus a mais, todos do `.env` da INSTALAÇÃO: o
+ * gateway da Vercel, a chave da OpenAI e a da OpenRouter. A decisão do dono do
+ * produto (`docs/adr/0005-ia-paga-por-cada-organizacao.md`) os apagou: a chave
+ * que indexa o material de uma organização é dela, e sem ela a base fica
+ * desligada para ela, com a tela dizendo isso. A cerca
+ * `tests/unit/ia-sem-chave-da-plataforma.test.ts` reprova a volta.
  *
  * ## A escada só percorre os degraus da FAMÍLIA da base
  *
  * A família (OpenAI ou Google) decide o modelo, e o modelo decide se a busca
  * acha alguma coisa. Por isso ela NÃO pode sair da credencial que aparece
- * primeiro: uma organização só com a chave do Google indexava pelo degrau 7, e
+ * primeiro: uma organização só com a chave do Google indexava pelo degrau 4, e
  * no dia em que alguém cadastrava uma chave da OpenAI o degrau 2 passava a
  * valer — a pergunta saía com o outro modelo, a busca filtrava por ele e
  * devolvia zero trechos, sem erro e sem nada na fila (revisão do #1864).
@@ -76,9 +80,9 @@
  *
  * ## O modelo NÃO é escolha solta — é consequência do provedor
  *
- * OpenAI (direta, gateway ou OpenRouter) indexa com `text-embedding-3-small`;
- * Google indexa com `gemini-embedding-001`. Os dois em 1536 dimensões — o Google
- * a pedido (`outputDimensionality`, `lib/ai/embed.ts`) —, então a coluna
+ * OpenAI (direta ou OpenRouter) indexa com `text-embedding-3-small`; Google
+ * indexa com `gemini-embedding-001`. Os dois em 1536 dimensões — o Google a
+ * pedido (`outputDimensionality`, `lib/ai/embed.ts`) —, então a coluna
  * `ai_chunks.embedding vector(1536)` serve aos dois sem migration.
  *
  * Indexação e busca são coordenadas de um mesmo mapa: trocar só um lado não dá
@@ -88,8 +92,8 @@
  * provedor (`PUT /api/v1/ai/knowledge/provedor`) refaz a base inteira.
  */
 import { byteaToBuffer, decryptKey } from "@/lib/crypto/aes_gcm";
+import { credencialMaisRecente } from "@/lib/ai/credenciais/mais-recente";
 import { OPENROUTER_BASE_URL } from "@/lib/ai/gateway";
-import { env } from "@/lib/env";
 import { logger } from "@/lib/logger";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -104,7 +108,7 @@ export const DIMENSOES_DO_EMBEDDING = 1536;
 /** Quem prepara a base, do ponto de vista de quem escolhe na tela. */
 export type ProvedorDaBase = "openai" | "google";
 
-/** O modelo é função do provedor: OpenAI direta, gateway e OpenRouter dão o mesmo vetor. */
+/** O modelo é função do provedor: OpenAI direta e OpenRouter dão o mesmo vetor. */
 export function modeloDeEmbedding(provedor: ChaveDeEmbedding["provedor"]): string {
   return provedor === "google" ? MODELO_DE_EMBEDDING_DO_GOOGLE : MODELO_DE_EMBEDDING;
 }
@@ -172,30 +176,26 @@ export async function familiaDaBase(organizationId: string): Promise<FamiliaDaBa
 
 const NOME_DA_FAMILIA: Record<ProvedorDaBase, string> = { openai: "OpenAI", google: "Google" };
 
-export type OrigemDaChave =
-  | "binding_do_ponto"
-  | "credencial_da_organizacao"
-  | "gateway_da_instalacao"
-  | "chave_da_instalacao";
+/**
+ * De QUEM é a chave. Duas origens, e as duas são da organização: desde a
+ * ADR-0005 não existe `chave_da_instalacao` nem `gateway_da_instalacao`.
+ */
+export type OrigemDaChave = "binding_do_ponto" | "credencial_da_organizacao";
 
 export const EXPLICACAO_DA_ORIGEM: Record<OrigemDaChave, string> = {
   binding_do_ponto: "Escolhida por você no painel de Provedores.",
   credencial_da_organizacao: "Usando uma chave da organização cadastrada em Credenciais.",
-  gateway_da_instalacao: "Usando o gateway de IA configurado nesta instalação.",
-  chave_da_instalacao: "Usando a chave que veio na instalação.",
 };
 
 export interface ChaveDeEmbedding {
   /** Plaintext. Vive só no escopo de quem chamou — nunca logada nem persistida. */
-  apiKey: string | null;
-  /** `null` = falar direto com a OpenAI, quando não houver gateway. */
+  apiKey: string;
+  /** `null` = falar direto com o provedor. */
   baseUrl: string | null;
-  provedor: "openai" | "openrouter" | "gateway" | "google";
-  /** Quando true, a chamada vai pelo gateway (o SDK lê a chave do process.env). */
-  viaGateway: boolean;
+  provedor: "openai" | "openrouter" | "google";
   origem: OrigemDaChave;
-  /** Rótulo da credencial, quando houver — a tela mostra qual chave está valendo. */
-  rotulo: string | null;
+  /** Rótulo da credencial — a tela mostra qual chave está valendo. */
+  rotulo: string;
   /** Incoerências que não impedem a chamada mas alguém precisa ver. */
   avisos: string[];
 }
@@ -251,7 +251,6 @@ export async function resolverChaveDeEmbedding(
             : (binding.base_url ??
               (credencial.provedor === "openrouter" ? OPENROUTER_BASE_URL : null)),
         provedor: credencial.provedor,
-        viaGateway: false,
         origem: "binding_do_ponto",
         rotulo: credencial.rotulo,
         avisos,
@@ -259,7 +258,7 @@ export async function resolverChaveDeEmbedding(
     } else {
       avisos.push(
         "A chave escolhida no painel de Provedores para este ponto não está utilizável " +
-          "(desativada, apagada ou ainda não validada). Seguindo com a próxima chave disponível.",
+          "(desativada, apagada ou ainda não validada). Seguindo com a próxima chave da organização.",
       );
     }
   }
@@ -270,14 +269,13 @@ export async function resolverChaveDeEmbedding(
     if (credencial.quantas > 1) {
       avisos.push(
         `Esta organização tem ${credencial.quantas} chaves ${credencial.provedor} cadastradas e nenhuma escolhida para ` +
-          `a base de conhecimento. Usando "${credencial.rotulo}" — desative as excedentes em Credenciais para não depender da ordem.`,
+          `a base de conhecimento. Usando "${credencial.rotulo}", a mais recente — desative as excedentes em Credenciais para não depender da ordem.`,
       );
     }
     return {
       apiKey: credencial.apiKey,
       baseUrl: credencial.provedor === "openrouter" ? OPENROUTER_BASE_URL : null,
       provedor: credencial.provedor,
-      viaGateway: false,
       origem: "credencial_da_organizacao",
       rotulo: credencial.rotulo,
       avisos,
@@ -289,52 +287,13 @@ export async function resolverChaveDeEmbedding(
     const openAiDaOrg = await credencialDaOrganizacao(organizationId, "openai");
     if (openAiDaOrg) return daOrganizacao(openAiDaOrg);
 
-    // 3 · O gateway da instalação. A chave não sai daqui: o SDK a lê do process.env.
-    if (env.AI_GATEWAY_API_KEY) {
-      return {
-        apiKey: null,
-        baseUrl: env.AI_GATEWAY_BASE_URL || null,
-        provedor: "gateway",
-        viaGateway: true,
-        origem: "gateway_da_instalacao",
-        rotulo: null,
-        avisos,
-      };
-    }
-
-    // 4 · Chave OpenAI da instalação.
-    if (env.OPENAI_API_KEY) {
-      return {
-        apiKey: env.OPENAI_API_KEY,
-        baseUrl: null,
-        provedor: "openai",
-        viaGateway: false,
-        origem: "chave_da_instalacao",
-        rotulo: null,
-        avisos,
-      };
-    }
-
-    // 5 · Credencial OpenRouter da organização — só depois de toda OpenAI e do
-    // gateway, para a atualização não trocar o fornecedor de quem já indexava.
+    // 3 · Credencial OpenRouter da organização — só depois da OpenAI, para a
+    // atualização não trocar o fornecedor de quem já indexava.
     const openRouterDaOrg = await credencialDaOrganizacao(organizationId, "openrouter");
     if (openRouterDaOrg) return daOrganizacao(openRouterDaOrg);
-
-    // 6 · Chave OpenRouter da instalação.
-    if (env.OPENROUTER_API_KEY) {
-      return {
-        apiKey: env.OPENROUTER_API_KEY,
-        baseUrl: OPENROUTER_BASE_URL,
-        provedor: "openrouter",
-        viaGateway: false,
-        origem: "chave_da_instalacao",
-        rotulo: null,
-        avisos,
-      };
-    }
   }
 
-  // 7 · Credencial Google da organização — só quando não há nenhuma via OpenAI.
+  // 4 · Credencial Google da organização — só quando não há nenhuma via OpenAI.
   if (familia !== "openai") {
     const googleDaOrg = await credencialDaOrganizacao(organizationId, "google");
     if (googleDaOrg) return daOrganizacao(googleDaOrg);
@@ -346,9 +305,10 @@ export async function resolverChaveDeEmbedding(
 /**
  * Existe chave utilizável para esta organização?
  *
- * Substitui `isEmbeddingProviderConfigured()`, cuja assinatura SEM organização
- * é a raiz do defeito: ela respondia "não" para toda organização que tivesse
- * cadastrado a chave pela tela.
+ * A pergunta é POR ORGANIZAÇÃO, e é o que separa esta função da antiga
+ * `isEmbeddingProviderConfigured()`, cuja assinatura SEM organização respondia
+ * pelo `.env` da instalação — "não" para toda organização que tivesse
+ * cadastrado a chave pela tela, "sim" para toda organização que nunca cadastrou.
  */
 export async function temChaveDeEmbedding(organizationId: string): Promise<boolean> {
   try {
@@ -441,12 +401,13 @@ async function decifrarCredencial(
 }
 
 /**
- * A credencial ativa e validada da organização, OpenAI, OpenRouter ou Google.
+ * A credencial ativa e validada da organização, OpenAI, OpenRouter ou Google —
+ * a MAIS RECENTE, pelo resolvedor único (`credencialMaisRecente`, ADR-0005 D2).
  *
- * Desempate DETERMINÍSTICO pela mais antiga: com duas chaves e nenhuma escolha,
- * "a mais recente" faria o comportamento mudar sozinho no dia em que alguém
- * cadastrasse outra. A tela de Credenciais deixa desativar as excedentes; aqui o que
- * importa é não variar.
+ * Era "a mais antiga", com o argumento de que a escolha não devia variar no dia
+ * em que alguém cadastrasse outra. O argumento ignorava a troca de chave: a
+ * antiga revogada no provedor, ainda ativa e validada no banco, seguia sendo a
+ * escolhida e a base parava de indexar com a chave nova já cadastrada.
  */
 async function credencialDaOrganizacao(
   organizationId: string,
@@ -457,38 +418,12 @@ async function credencialDaOrganizacao(
   quantas: number;
   provedor: ProvedorDeCredencial;
 } | null> {
-  try {
-    const admin = createAdminClient();
-    const { data } = await admin
-      .from("ai_provider_credentials")
-      .select("id, label, api_key_encrypted, api_key_iv, api_key_tag")
-      .eq("organization_id", organizationId)
-      .eq("provider", provedor)
-      .eq("is_active", true)
-      .not("validated_at", "is", null)
-      .order("created_at", { ascending: true });
-
-    const linhas = (data ?? []) as Array<{
-      id: string;
-      label: string;
-      api_key_encrypted: unknown;
-      api_key_iv: unknown;
-      api_key_tag: unknown;
-    }>;
-    const primeira = linhas[0];
-    if (!primeira) return null;
-
-    return {
-      apiKey: decryptKey({
-        ciphertext: byteaToBuffer(primeira.api_key_encrypted),
-        iv: byteaToBuffer(primeira.api_key_iv),
-        tag: byteaToBuffer(primeira.api_key_tag),
-      }),
-      rotulo: primeira.label,
-      quantas: linhas.length,
-      provedor,
-    };
-  } catch {
-    return null;
-  }
+  const credencial = await credencialMaisRecente(createAdminClient(), organizationId, provedor);
+  if (credencial === null) return null;
+  return {
+    apiKey: credencial.apiKey,
+    rotulo: credencial.label,
+    quantas: credencial.quantas,
+    provedor,
+  };
 }

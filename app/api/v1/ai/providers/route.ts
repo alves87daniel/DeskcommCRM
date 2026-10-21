@@ -30,7 +30,6 @@ import {
 import { PAPEIS, PONTOS_DE_IA, PONTO_POR_ID } from "@/lib/ai/pontos/registro";
 import { PROVEDORES, ehProvedorSuportado } from "@/lib/ai/pontos/provedores";
 import { validarBinding } from "@/lib/ai/pontos/validar-binding";
-import { lerAmbiente } from "@/lib/instalacao/ambiente";
 import { modeloDeTranscricaoEmVigor } from "@/lib/messaging/media/transcription";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -173,11 +172,7 @@ export async function GET(): Promise<Response> {
         // roda, pela mesma função que o worker usa.
         modelId:
           ponto.id === "transcricao_de_audio"
-            ? modeloDeTranscricaoEmVigor({
-                model: process.env.TRANSCRIPTION_MODEL,
-                apiKey: process.env.TRANSCRIPTION_API_KEY,
-                baseUrl: process.env.TRANSCRIPTION_BASE_URL,
-              })
+            ? modeloDeTranscricaoEmVigor({ model: process.env.TRANSCRIPTION_MODEL })
             : decisao.modelId,
         credentialId: decisao.credentialId,
         baseUrl: decisao.baseUrl,
@@ -210,10 +205,6 @@ export async function GET(): Promise<Response> {
     // ainda não cadastrou nenhuma chave" com a empresa sem IA para atender, e
     // nenhum ponto desta tela sabe usá-la.
     credenciais: (credsRes.data ?? []).filter((c) => ehProvedorSuportado(c.provider)),
-    // Sem chave cadastrada, o aviso só pode dizer "o atendimento usa a chave que
-    // veio na instalação" quando ela existe. A mesma conta de
-    // `app/app/ai/credentials/page.tsx`.
-    instalacaoTemChave: instalacaoTemChaveDeIa(),
     modelos,
     podeEditar: roleAtLeast(org.role, "admin"),
   });
@@ -508,9 +499,4 @@ export async function PATCH(req: NextRequest): Promise<Response> {
     padrao: { provider: corpo.provider, defaultModel: corpo.default_model },
     avisos,
   });
-}
-
-function instalacaoTemChaveDeIa(): boolean {
-  const ambiente = lerAmbiente();
-  return ambiente.gateway || Object.values(ambiente.chavesDeProvedor).some(Boolean);
 }

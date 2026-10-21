@@ -26,6 +26,13 @@
  */
 import { describe, expect, it, vi } from "vitest";
 
+// A única chave é a credencial da organização (ADR-0005): o pool devolve a
+// linha e este dublê a "decifra" — o que está sob teste é o seam, não a cifra.
+vi.mock("@/lib/crypto/aes_gcm", () => ({
+  byteaToBuffer: (v: unknown) => v,
+  decryptKey: () => "chave-da-organizacao",
+}));
+
 import { decidirOrcamento } from "@/lib/agent-engine/edge/llm/orcamento";
 import {
   runModelCall,
@@ -99,7 +106,10 @@ function poolFalso(estado: Estado) {
       return { rows: [{ llm: { provider: "anthropic", default_model: "claude-padrao" } }] };
     }
     if (sql.includes("ai_purpose_bindings")) return { rows: [] };
-    if (sql.includes("ai_provider_credentials")) return { rows: [] };
+    // A credencial da organização é a única chave (ADR-0005); decifrada pelo
+    // dublê de `aes_gcm`.
+    if (sql.includes("ai_provider_credentials"))
+      return { rows: [{ id: "cred-1", api_key_encrypted: "x", api_key_iv: "y", api_key_tag: "z" }] };
     if (sql.includes("insert into agent_inbox_items")) {
       inboxInserts.push(params);
       return { rows: [] };
@@ -153,7 +163,7 @@ async function chamar(
   try {
     await runModelCall(
       p.pool,
-      { anthropicApiKey: "sk-ant-x", cacheTtl: "1h", ...cfg },
+      { cacheTtl: "1h", ...cfg },
       { tenantId: ORG, messages: [{ role: "user", content: "oi" }], ...input } as never,
       { registry: r.registry as never, log: l.log },
     );

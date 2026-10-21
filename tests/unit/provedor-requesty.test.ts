@@ -48,7 +48,7 @@ describe("Requesty é aceita na ESCRITA", () => {
       system_prompt: "Você é um atendente útil e cordial.",
       provider: "requesty",
       model: "openai/gpt-4o-mini",
-      credential_id: null,
+      credential_id: "55555555-5555-4555-8555-555555555555",
       channel_session_id: null,
     });
     expect(r.success, r.success ? "" : JSON.stringify(r.error.issues)).toBe(true);

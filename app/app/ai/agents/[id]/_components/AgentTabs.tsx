@@ -74,7 +74,6 @@ export function AgentTabs(props: Props) {
           base={props.base}
           draftObsoleto={props.draftObsoleto}
           credentials={props.credentials}
-          provedoresDaInstalacao={props.provedoresDaInstalacao}
           channelSessions={props.channelSessions}
           funis={props.funis}
           cobertura={props.cobertura}

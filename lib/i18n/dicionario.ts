@@ -12148,6 +12148,17 @@ export const DICIONARIO: Traducoes = {
     { es: "El cliente parece haber pedido no recibir más mensajes" },
   "O limite de gasto com IA foi atingido — o cliente não pediu uma pessoa":
     { es: "Se alcanzó el límite de gasto en IA — el cliente no pidió hablar con una persona" },
+  // ADR-0005, D3: a IA desligada por falta de chave da organização.
+  "A IA está desligada por falta de chave — o cliente não pediu uma pessoa":
+    { es: "La IA está apagada por falta de clave — el cliente no pidió hablar con una persona" },
+  "IA desligada por falta de chave": { es: "IA apagada por falta de clave" },
+  "Esta organização não tem chave de IA ativa e validada, então nenhum ponto de IA chama provedor: as conversas que chegam vão direto para a equipe. A plataforma não custeia IA. Para religar, cadastre a chave em IA › Credenciais.":
+    { es: "Esta organización no tiene una clave de IA activa y validada, así que ningún punto de IA llama al proveedor: las conversaciones que llegan van directo al equipo. La plataforma no paga la IA. Para reactivarla, registra la clave en IA › Credenciales." },
+  "Esta empresa não tem chave de IA ativa e validada. Sem ela nenhum ponto de IA chama provedor: as conversas vão direto para a equipe. A plataforma não custeia IA — a chave é da sua empresa.":
+    { es: "Esta empresa no tiene una clave de IA activa y validada. Sin ella ningún punto de IA llama al proveedor: las conversaciones van directo al equipo. La plataforma no paga la IA: la clave es de tu empresa." },
+  "Cadastrar a chave em IA › Credenciais": { es: "Registrar la clave en IA › Credenciales" },
+  "Enquanto não houver chave, a IA desta empresa fica desligada: nenhum ponto de IA chama provedor.":
+    { es: "Mientras no haya clave, la IA de esta empresa queda apagada: ningún punto de IA llama al proveedor." },
   "O cliente demonstrou irritação na conversa":
     { es: "El cliente mostró molestia en la conversación" },
   // D11: só na passagem e no aviso da equipe (`MARCA_DO_JEV`), nunca ao cliente.

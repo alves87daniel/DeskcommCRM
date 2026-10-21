@@ -37,8 +37,8 @@ Stack canônica (major; a versão exata é o `package.json`):
 
 Next.js 16 (App Router, Turbopack) · React 19 · TypeScript 6 estrito · Tailwind 4 (config em CSS) ·
 shadcn/ui (`new-york`) · Supabase (Postgres + Auth + Realtime + Storage) · Zod 4 · Vitest 4 ·
-Playwright 1 · Sentry 11 · WAHA 2026.7.2 (engine NOWEB) · Upstash Redis · Vercel AI Gateway
-(`@ai-sdk/anthropic|openai|google`).
+Playwright 1 · Sentry 11 · WAHA 2026.7.2 (engine NOWEB) · Upstash Redis · IA por credencial de cada
+organização (`@ai-sdk/anthropic|openai|google`; o Vercel AI Gateway é só mais um provedor possível).
 
 > As majors acima são verificadas contra o `package.json` por
 > [`tests/unit/agents-md-versoes.test.ts`](tests/unit/agents-md-versoes.test.ts) — declare **só a
@@ -63,8 +63,10 @@ Playwright 1 · Sentry 11 · WAHA 2026.7.2 (engine NOWEB) · Upstash Redis · Ve
   `lib/auth/politica-mfa.ts`. Quem tem fator prova sempre: [`docs/doctrine/auth-e-mfa.md`](docs/doctrine/auth-e-mfa.md).
 - **Filas** — event sourcing leve: `event_log` + workers drenados por cron. Trigger Postgres
   **nunca** faz HTTP.
-- **IA** — Vercel AI Gateway (Anthropic primário; embeddings pela OpenAI ou pelo Google, escolha da organização), RAG por tenant,
-  guardrails before-send.
+- **IA** — a chave é da organização (`ai_provider_credentials`, ativa e validada), no provedor que ela
+  escolheu; o Vercel AI Gateway é só mais um provedor possível por credencial da organização, nunca uma
+  chave do ambiente (ADR-0005 — *IA paga por cada organização* — que entra em `docs/adr/` com o PR #34). Embeddings pela OpenAI ou
+  pelo Google, escolha da organização; RAG por tenant, guardrails before-send.
 - **Tempo real** — Supabase Realtime (`postgres_changes` para inbox/kanban, `broadcast` para
   sinais leves). **Storage** — bucket privado `whatsapp-media`, URL assinada.
 

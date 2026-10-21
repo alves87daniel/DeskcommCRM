@@ -152,9 +152,10 @@ interface Estado {
 
 interface Mundo {
   /**
-   * A credencial VALIDADA da organização para o provedor escolhido. `null` =
-   * não tem nenhuma, e aí a versão nasce com `credential_id: null`, que
-   * significa "usa a chave da instalação".
+   * A credencial VALIDADA da organização para o provedor escolhido. Ausente =
+   * uma credencial padrão (o retrato de quem instalou pelo kit, que cadastra a
+   * chave como credencial da organização do dono); `null` = não tem nenhuma, e
+   * aí NÃO se publica (ADR-0005: não existe chave da instalação).
    */
   credencial?: { id: string } | null;
   /**
@@ -173,11 +174,6 @@ interface Mundo {
     is_active?: boolean;
     created_at?: string;
   }[];
-  /**
-   * A instalação tem chave deste provedor no ambiente? É o caso mais comum do
-   * kit — a pessoa cola a chave no `.env` e nunca abre a tela de Credenciais.
-   */
-  chaveDaInstalacao?: boolean;
   /** O que a consulta de canais responde — é aqui que mora o defeito. */
   canais?: Resposta;
   /** Erro na gravação da versão (o `return` mudo de antes). */
@@ -267,15 +263,10 @@ function montarBanco(mundo: Mundo = {}): Estado {
     };
   };
 
-  // A chave da instalação é lida do `process.env` por `chaveDePlataforma`. O
-  // default é TER a chave, que é o retrato de quem instalou pelo kit — e é a
-  // precondição dos casos que exercitam OUTRA coisa. Um teste que rodasse sem
-  // ela mediria "publicação sem chave" achando que mede o canal.
-  const temChave = mundo.chaveDaInstalacao !== false;
-  for (const v of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY"]) {
-    if (temChave) process.env[v] = "sk-de-teste";
-    else delete process.env[v];
-  }
+  // A chave da instalação deixou de existir (ADR-0005). O default do mundo é
+  // TER uma credencial validada da organização (`credencial` ausente), que é
+  // o retrato de quem instalou pelo kit — e a precondição dos casos que
+  // exercitam OUTRA coisa.
 
   responder = (c) => {
     if (c.table === "channel_sessions") return canais;
@@ -407,9 +398,9 @@ function montarBanco(mundo: Mundo = {}): Estado {
       const QUALQUER_PROVEDOR = "qualquer-provedor-perguntado";
       const linhas = (
         mundo.credenciais ??
-        (mundo.credencial
-          ? [{ id: mundo.credencial.id, provider: QUALQUER_PROVEDOR, validated_at: "2026-09-10T00:00:00.000Z" }]
-          : [])
+        (mundo.credencial === null
+          ? []
+          : [{ id: mundo.credencial?.id ?? "cred-padrao", provider: QUALQUER_PROVEDOR, validated_at: "2026-09-10T00:00:00.000Z" }])
       ).map((l) => ({
         id: l.id,
         provider: l.provider ?? QUALQUER_PROVEDOR,
@@ -569,7 +560,9 @@ describe("onboarding: publicação impossível não pode terminar em silêncio",
         provisioning_origin: "onboarding",
         status: "draft",
         provider: "anthropic",
-        credential_id: null,
+        // Desde a ADR-0005 o onboarding só grava versão com credencial da
+        // organização: um retry encontra o rascunho já apontando para ela.
+        credential_id: "cred-padrao",
       }],
     });
 
@@ -831,31 +824,21 @@ describe("onboarding: o que o funcionário sabe sobre o negócio", () => {
 });
 
 describe("onboarding: qual chave o funcionário usa", () => {
-  it("sem credencial cadastrada, a versão usa a chave da INSTALAÇÃO", () => {
-    // `credential_id: null` é o contrato de "usa a do `.env`" — o caso mais
-    // comum do kit, e o que fazia o editor novo recusar o formulário antes.
-    const estado = montarBanco({ credencial: null, chaveDaInstalacao: true });
-    return clicar().then(() => {
-      expect(estado.versoes).toHaveLength(1);
-      expect(estado.versoes[0]!.credential_id).toBeNull();
-    });
-  });
-
   it("com credencial validada da organização, é ELA que a versão aponta", async () => {
     // Quem colou a chave no wizard tem credencial e pode NÃO ter chave no
     // ambiente: apontar para a instalação publicaria um agente que morre em
     // toda mensagem.
-    const estado = montarBanco({ credencial: { id: "cred-9" }, chaveDaInstalacao: false });
+    const estado = montarBanco({ credencial: { id: "cred-9" } });
     await clicar();
     expect(estado.versoes).toHaveLength(1);
     expect(estado.versoes[0]!.credential_id).toBe("cred-9");
   });
 
-  it("sem NENHUMA das duas, não publica — e a tela recebe a causa certa", async () => {
+  it("sem credencial da organização, não publica — e a tela recebe a causa certa", async () => {
     // Falha fechada na ação, aberta na informação. Publicar aqui entregaria um
     // funcionário "no ar" que erra em toda mensagem, e o dono só descobriria com
-    // o primeiro cliente de verdade.
-    const estado = montarBanco({ credencial: null, chaveDaInstalacao: false });
+    // o primeiro cliente de verdade. Não há chave da instalação para cair.
+    const estado = montarBanco({ credencial: null });
     const r = await clicar();
     expect(r).not.toBe("redirecionou");
     const res = r as Exclude<CreateAgentResult, { ok: false }>;
@@ -878,7 +861,6 @@ describe("onboarding: qual chave o funcionário usa", () => {
     // credencial que existir") e é esta a guarda da decisão — no dia em que
     // alguém "consertar" isso voltando a adotar, o caso reprova e diz por quê.
     const estado = montarBanco({
-      chaveDaInstalacao: false,
       credenciais: [
         { id: "cred-openai", provider: "openai", validated_at: "2026-09-15T10:00:00.000Z" },
       ],
@@ -901,14 +883,14 @@ describe("onboarding: qual chave o funcionário usa", () => {
     expect(redirects).toEqual([]);
   });
 
-  it("#1007 (controle): com chave da INSTALAÇÃO o provedor dela segue vencendo", async () => {
-    // A adoção não pode roubar o caminho que já funcionava: quem instalou pelo
-    // kit tem chave no ambiente, e uma credencial colada para OUTRO provedor não
-    // é motivo para trocar o provedor do atendente.
+  it("#1007 (controle): com credencial validada DO provedor da empresa, publica nele — a chave de outro provedor não o troca", async () => {
+    // A adoção não pode roubar o caminho que já funcionava: a empresa tem a
+    // credencial do SEU provedor, e uma credencial colada para OUTRO provedor
+    // não é motivo para trocar o provedor do atendente.
     const estado = montarBanco({
-      chaveDaInstalacao: true,
       credenciais: [
         { id: "cred-openai", provider: "openai", validated_at: "2026-09-15T10:00:00.000Z" },
+        { id: "cred-anthropic", provider: "anthropic", validated_at: "2026-09-15T10:00:00.000Z" },
       ],
       modelosPorProvedor: { anthropic: "claude-sonnet-9", openai: "gpt-5-mini" },
     });
@@ -918,7 +900,7 @@ describe("onboarding: qual chave o funcionário usa", () => {
     expect(estado.versoes).toHaveLength(1);
     expect(estado.versoes[0]!.provider).toBe("anthropic");
     expect(estado.versoes[0]!.model).toBe("claude-sonnet-9");
-    expect(estado.versoes[0]!.credential_id).toBeNull();
+    expect(estado.versoes[0]!.credential_id).toBe("cred-anthropic");
   });
 
   it("#1007: chave colada e ainda NÃO confirmada — o aviso nomeia o provedor DA ORGANIZAÇÃO", async () => {
@@ -930,7 +912,6 @@ describe("onboarding: qual chave o funcionário usa", () => {
     // anthropic) e nomeá-la era o defeito antigo. Se a busca voltar a ser "de
     // qualquer provedor", o campo reaparece como "openai" e este caso reprova.
     const outroProvedor = montarBanco({
-      chaveDaInstalacao: false,
       credenciais: [{ id: "cred-openai", provider: "openai", validated_at: null }],
       modelosPorProvedor: { anthropic: "claude-sonnet-9" },
     });
@@ -948,7 +929,6 @@ describe("onboarding: qual chave o funcionário usa", () => {
     // verdade no passo da chave, que grava `settings.llm` e cria a credencial
     // sem `validated_at`) continua nomeada — senão a tela perde o aviso certo.
     const provedorDaEmpresa = montarBanco({
-      chaveDaInstalacao: false,
       credenciais: [{ id: "cred-anthropic", provider: "anthropic", validated_at: null }],
       modelosPorProvedor: { anthropic: "claude-sonnet-9" },
     });
@@ -967,7 +947,7 @@ describe("onboarding: qual chave o funcionário usa", () => {
     // tinha o formato antigo. Nascendo assim, o agente abria no editor legado
     // (Temperature, Top K, Similarity threshold) e as capacidades que ele
     // recebeu ligadas ficavam INVISÍVEIS para o dono.
-    const estado = montarBanco({ credencial: null, chaveDaInstalacao: true });
+    const estado = montarBanco({});
     await clicar();
     expect(estado.agentes).toHaveLength(1);
     expect(estado.agentes[0]!.kind).toBe("mcp_agent");

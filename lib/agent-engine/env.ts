@@ -35,25 +35,14 @@ const envSchema = z.object({
   // aviso, no resolvedor.
   SUPABASE_SERVER_URL: z.string().optional(),
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
-  // Chave LLM de plataforma (fallback quando a org não tem BYOK em
-  // ai_provider_credentials). Opcional no boot: sem ela e sem BYOK, o turno
-  // falha com erro instrutivo — nunca silêncio.
+  // ═══ CHAVES DE IA DO AMBIENTE: DECLARADAS, NUNCA LIDAS PELO PRODUTO ═══
+  // Seguem no schema só para scripts locais (`scripts/smoke-llm.ts`,
+  // `scripts/provoke-agent-turn.ts`) e ficam VAZIAS em produção. O worker não
+  // as lê para atender organização: a chave sai de `ai_provider_credentials`
+  // da organização (ADR-0005). A cerca `tests/unit/ia-sem-chave-da-plataforma.test.ts`
+  // reprova leitura delas fora deste arquivo e de `lib/env.ts`.
   ANTHROPIC_API_KEY: z.string().min(1).optional(),
-  // A irmã da de cima, e ela faltava aqui. O instalador coleta OPENAI_API_KEY, mas
-  // sem esta linha ela nunca chegava ao turno do agente: uma organização com agente
-  // OpenAI e a chave no `.env` continuava sem credencial utilizável, e a única
-  // saída era cadastrar BYOK pela tela — sem nada dizendo isso.
   OPENAI_API_KEY: z.string().min(1).optional(),
-  // A TERCEIRA irmã, e a que mais doía faltar: OpenRouter é a opção **[1]** do
-  // menu do instalador, a que ele chama de caminho mais simples. O ramo
-  // `provider === 'openrouter'` existe em `resolveOrgLlmConfig` e
-  // `llmEdgeConfigFromEnv` já lia `env.OPENROUTER_API_KEY` — mas o parâmetro
-  // declara a chave como opcional (typecheck passa sem ela) e `loadEnv` devolve
-  // `parsed.data`, e o Zod remove o que o schema não declara. A chave estava no
-  // `.env`, sumia no boot do worker, e TODO turno morria em
-  // `LlmNotConfiguredError` mandando cadastrar credencial pela tela.
-  // Consertar a irmã da OpenAI e deixar esta é o modo de falha desta família:
-  // ao mexer aqui, confira as três de uma vez.
   OPENROUTER_API_KEY: z.string().min(1).optional(),
   // Modelo default do agente quando a org não define o dela (knob, nunca constante).
   AGENT_DEFAULT_MODEL: z.string().min(1).default('claude-sonnet-4-5'),

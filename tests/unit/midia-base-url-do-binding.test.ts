@@ -116,7 +116,7 @@ vi.mock("@/lib/messaging/media/derive", () => ({
 // resolvedor escolheu (provado em `lib/agent-engine/edge/llm/credentials.test.ts`)
 // e cada caso a escolhe aqui; o padrão é a credencial da própria organização.
 const credencial = vi.hoisted(() => ({
-  origemDaChave: "credencial_da_organizacao" as "credencial_da_organizacao" | "chave_da_instalacao",
+  origemDaChave: "credencial_da_organizacao" as const,
 }));
 vi.mock("@/lib/agent-engine/edge/llm/credentials", () => ({
   resolveOrgLlmConfig: vi.fn(async () => ({
@@ -159,6 +159,11 @@ vi.mock("@/lib/messaging/media/transcription", async (importOriginal) => ({
   ...(await importOriginal<typeof ModuloDeTranscricao>()),
   // A referência é resolvida na CHAMADA, não na fábrica: `vi.mock` é içado para
   // o topo do arquivo e um `const` de módulo ainda não existe nesse momento.
+  //
+  // Os casos do "serviço de transcrição do .env" (chave e endereço próprios) e
+  // da "chave da INSTALAÇÃO" saíram com a ADR-0005: a transcrição é sempre com
+  // a chave OpenAI da organização, e não há chave alheia que possa sair para o
+  // endereço escolhido por uma empresa.
   apiTranscriptionProvider: (cfg: unknown) => provedorDeTranscricaoMock(cfg),
 }));
 
@@ -305,29 +310,6 @@ describe("worker de mídia: base_url do binding de visão (#855)", () => {
     expect(factoryMock).toHaveBeenCalledWith("chave-do-binding", "acme/visao-1", undefined);
   });
 
-  it("usa o serviço de transcrição do .env, quando ele está configurado", async () => {
-    comTranscricaoNoEnv({
-      apiKey: "chave-do-servico",
-      baseUrl: "https://api.groq.com/openai/v1",
-      model: "whisper-large-v3",
-    });
-    linhaDaMensagem = {
-      ...linhaDaMensagem,
-      type: "audio",
-      media_mime: "audio/ogg",
-      media_storage_path: "org1/conv1/msg1.ogg",
-    };
-
-    await deriveMessageMedia(eventRow());
-
-    expect(provedorDeTranscricaoMock).toHaveBeenCalledWith({
-      apiKey: "chave-do-servico",
-      baseUrl: "https://api.groq.com/openai/v1",
-      model: "whisper-large-v3",
-      languages: [],
-    });
-  });
-
   // Trocar `whisper-1` por um modelo melhor da própria OpenAI não pode exigir
   // copiar a chave da organização para o `.env`: modelo e idioma do ambiente
   // valem também no caminho de sempre (sem TRANSCRIPTION_API_KEY).
@@ -353,23 +335,6 @@ describe("worker de mídia: base_url do binding de visão (#855)", () => {
   // Um `.env` antigo com o modelo do Groq e sem a chave própria transcrevia com
   // whisper-1 pela OpenAI. O update não pode passar a pedir `whisper-large-v3`
   // à OpenAI: o modelo do `.env` só vale nesse caminho sem BASE_URL.
-  it("modelo e BASE_URL de outro serviço sem a chave própria: segue whisper-1 na OpenAI", async () => {
-    comTranscricaoNoEnv({ model: "whisper-large-v3", baseUrl: "https://api.groq.com/openai/v1" });
-    linhaDaMensagem = {
-      ...linhaDaMensagem,
-      type: "audio",
-      media_mime: "audio/ogg",
-      media_storage_path: "org1/conv1/msg1.ogg",
-    };
-
-    await deriveMessageMedia(eventRow());
-
-    expect(provedorDeTranscricaoMock).toHaveBeenCalledWith(expect.objectContaining({ model: "whisper-1" }));
-    expect(provedorDeTranscricaoMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ baseUrl: expect.anything() }),
-    );
-  });
-
   it("sem nada no .env, a transcrição segue com whisper-1 e sem idioma — o comportamento de sempre", async () => {
     comTranscricaoNoEnv();
     linhaDaMensagem = {
@@ -398,33 +363,6 @@ describe("worker de mídia: base_url do binding de visão (#855)", () => {
       String((c[0] as { body?: string } | undefined)?.body ?? ""),
     );
     expect(corpos.some((b) => b.includes("unsafe_url:private_host"))).toBe(true);
-  });
-
-  it("com endereço da organização e chave da INSTALAÇÃO, recusa antes de a chave sair", async () => {
-    // O degrau real da escada de credenciais: a organização não tem credencial
-    // própria e o resolvedor cai na chave da INSTALAÇÃO — enquanto o endereço
-    // continua sendo o que a organização escolheu no painel. É a combinação que
-    // manda a chave que paga a conta de todas as empresas para um endereço
-    // escolhido por uma delas.
-    //
-    // Até a decisão 22-a entrar no chat, este caso igualava a chave do `.env`
-    // ao plaintext e o worker deduzia a origem por comparação. Agora quem
-    // responde é o resolvedor (`origemDaChave`), a mesma fonte do seam.
-    credencial.origemDaChave = "chave_da_instalacao";
-    bindingDaVez = { ...BINDING_COM_ENDPOINT, base_url: "https://gateway.publico.exemplo/v1" };
-    dns.resposta = [{ address: "93.184.216.34", family: 4 }];
-
-    await deriveMessageMedia(eventRow());
-    const texto = await depsDaChamada().describeImage(Buffer.from("jpeg"), "image/jpeg");
-
-    // O endereço é público e passa no guarda de destino: quem recusa aqui é a
-    // regra de credencial, não a de SSRF.
-    expect(factoryMock).not.toHaveBeenCalled();
-    expect(texto).toBeTruthy();
-    const corpos = inboxInsertMock.mock.calls.map((c) =>
-      String((c[0] as { body?: string } | undefined)?.body ?? ""),
-    );
-    expect(corpos.some((b) => b.includes("cadastre a chave da empresa"))).toBe(true);
   });
 
   it("com endereço da organização e credencial DELA, segue enviando", async () => {
@@ -461,61 +399,6 @@ describe("worker de mídia: base_url do binding de visão (#855)", () => {
     expect(corpos.some((b) => b.includes("unsafe_url:private_ip"))).toBe(true);
   });
 
-  it("não manda a chave do serviço de transcrição para endereço interno", async () => {
-    comTranscricaoNoEnv({
-      apiKey: "chave-do-servico",
-      baseUrl: "http://169.254.169.254/v1",
-    });
-
-    await deriveMessageMedia(eventRow());
-    const texto = await depsDaChamada().transcriber.transcribe(Buffer.from("ogg"), "audio/ogg");
-
-    expect(transcribeDoSvcMock).not.toHaveBeenCalled();
-    expect(texto).not.toContain("transcrição de mentira");
-    const corpos = inboxInsertMock.mock.calls.map((c) =>
-      String((c[0] as { body?: string } | undefined)?.body ?? ""),
-    );
-    expect(corpos.some((b) => b.includes("unsafe_url:private_host"))).toBe(true);
-  });
-
-  it("segue transcrevendo no serviço quando o endereço é aceito", async () => {
-    comTranscricaoNoEnv({
-      apiKey: "chave-do-servico",
-      baseUrl: "https://api.groq.com/openai/v1",
-    });
-
-    await deriveMessageMedia(eventRow());
-    const texto = await depsDaChamada().transcriber.transcribe(Buffer.from("ogg"), "audio/ogg");
-
-    expect(transcribeDoSvcMock).toHaveBeenCalledTimes(1);
-    expect(texto).toBe("transcrição de mentira");
-  });
-
-  it("a chave só no ambiente não liga mais o serviço: a régua é o `env` (#964)", async () => {
-    // Sabotagem: o `process.env` tem o trio inteiro, e é ele que a leitura ANTES
-    // desta correção consultava — o serviço seria chamado com a chave e o
-    // endereço crus. Agora quem responde é o `env` (o schema do app), e o
-    // default dele é vazio: a transcrição segue pelo caminho de sempre.
-    vi.stubEnv("TRANSCRIPTION_API_KEY", "chave-só-no-ambiente");
-    vi.stubEnv("TRANSCRIPTION_BASE_URL", "https://api.groq.com/openai/v1");
-    vi.stubEnv("TRANSCRIPTION_MODEL", "whisper-large-v3");
-    comTranscricaoNoEnv();
-    linhaDaMensagem = {
-      ...linhaDaMensagem,
-      type: "audio",
-      media_mime: "audio/ogg",
-      media_storage_path: "org1/conv1/msg1.ogg",
-    };
-
-    await deriveMessageMedia(eventRow());
-
-    expect(provedorDeTranscricaoMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ apiKey: "chave-só-no-ambiente" }),
-    );
-    expect(provedorDeTranscricaoMock).not.toHaveBeenCalledWith(
-      expect.objectContaining({ baseUrl: "https://api.groq.com/openai/v1" }),
-    );
-  });
   /**
    * A decisão 22-d entrega a alavanca a quem PAGA a máquina — e o escopo
    * corrigido de 17/09 diz exatamente até onde ela vai. Os seis casos abaixo
@@ -544,34 +427,6 @@ describe("worker de mídia: base_url do binding de visão (#855)", () => {
    * a limitação está escrita no comentário do dono na #1004 e segue ABERTA.
    */
   describe("#1004: destinos internos autorizados pela INSTALAÇÃO", () => {
-    it("1. interno que ninguém listou é recusado, e o aviso diz ONDE se libera", async () => {
-      comDestinosAutorizados();
-      comTranscricaoNoEnv({ apiKey: "chave-do-servico", baseUrl: "http://10.1.2.7:8080/v1" });
-
-      await deriveMessageMedia(eventRow());
-      const texto = await depsDaChamada().transcriber.transcribe(Buffer.from("ogg"), "audio/ogg");
-
-      expect(transcribeDoSvcMock, "a chave saiu para um endereço interno").not.toHaveBeenCalled();
-      expect(texto).not.toContain("transcrição de mentira");
-      const corpos = corposDaCentral();
-      expect(corpos.some((b) => b.includes("unsafe_url:private_host"))).toBe(true);
-      // Sem a porta escrita no aviso, quem pôs a IA na própria rede descobre a
-      // tela por tentativa e erro — que é o defeito de primeira impressão que a
-      // decisão manda fechar ("visível e fácil de acessar").
-      expect(corpos.some((b) => b.includes("Destinos internos"))).toBe(true);
-    });
-
-    it("2. interno listado, e configurado pela INSTALAÇÃO, passa", async () => {
-      comDestinosAutorizados("10.1.0.0/16");
-      comTranscricaoNoEnv({ apiKey: "chave-do-servico", baseUrl: "http://10.1.2.7:8080/v1" });
-
-      await deriveMessageMedia(eventRow());
-      const texto = await depsDaChamada().transcriber.transcribe(Buffer.from("ogg"), "audio/ogg");
-
-      expect(transcribeDoSvcMock).toHaveBeenCalledTimes(1);
-      expect(texto).toBe("transcrição de mentira");
-    });
-
     it("3. o MESMO endereço listado, escolhido por uma ORGANIZAÇÃO, é recusado", async () => {
       // O endereço do caso 2, palavra por palavra, no lugar onde quem escolhe é
       // o admin da empresa. A decisão 22-d: "a empresa continua sem poder
@@ -592,69 +447,5 @@ describe("worker de mídia: base_url do binding de visão (#855)", () => {
       expect(corpos.some((b) => b.includes("escolhido pela empresa"))).toBe(true);
     });
 
-    it("4. listado, mas com protocolo que as guardas recusam, continua recusado", async () => {
-      // Lista larga o bastante para cobrir tudo o que é IPv4 — e ainda assim o
-      // literal IPv6 não passa: a lista dispensa a recusa por endereço interno,
-      // e SÓ ela.
-      comDestinosAutorizados("0.0.0.0/0");
-      comTranscricaoNoEnv({ apiKey: "chave-do-servico", baseUrl: "http://[::1]:8080/v1" });
-
-      await deriveMessageMedia(eventRow());
-      const texto = await depsDaChamada().transcriber.transcribe(Buffer.from("ogg"), "audio/ogg");
-
-      expect(transcribeDoSvcMock).not.toHaveBeenCalled();
-      expect(texto).not.toContain("transcrição de mentira");
-      expect(corposDaCentral().some((b) => b.includes("unsafe_url:ipv6_literal"))).toBe(true);
-    });
-
-    it("5. nome que resolve para endereço FORA da lista é recusado", async () => {
-      comDestinosAutorizados("10.1.0.0/16");
-      comTranscricaoNoEnv({
-        apiKey: "chave-do-servico",
-        baseUrl: "https://coletor.interno.exemplo/v1",
-      });
-      dns.resposta = [{ address: "10.9.9.9", family: 4 }];
-
-      await deriveMessageMedia(eventRow());
-      const texto = await depsDaChamada().transcriber.transcribe(Buffer.from("ogg"), "audio/ogg");
-
-      expect(transcribeDoSvcMock, "decidiu pelo nome, sem olhar o endereço").not.toHaveBeenCalled();
-      expect(texto).not.toContain("transcrição de mentira");
-      expect(corposDaCentral().some((b) => b.includes("unsafe_url:private_ip"))).toBe(true);
-    });
-
-    it("6. interno listado, com a chave da INSTALAÇÃO numa organização, continua recusando", async () => {
-      // A lista autoriza ENDEREÇO, nunca credencial. O degrau que impede a
-      // chave que paga a conta de todas as empresas de sair para um endereço
-      // escolhido por uma delas (decisão 22-a) é independente desta lista.
-      //
-      // A origem da chave vem do resolvedor (`origemDaChave`), não mais da
-      // comparação com o `.env`. Com a origem padrão ("da organização") este
-      // caso vira uma cópia do 3 — quem recusa é a guarda de endereço — e a
-      // regra de credencial fica sem vigia.
-      comDestinosAutorizados("10.1.0.0/16");
-      credencial.origemDaChave = "chave_da_instalacao";
-      bindingDaVez = { ...BINDING_COM_ENDPOINT, base_url: "http://10.1.2.7:8080/v1" };
-
-      await deriveMessageMedia(eventRow());
-      const texto = await depsDaChamada().describeImage(Buffer.from("jpeg"), "image/jpeg");
-
-      expect(factoryMock).not.toHaveBeenCalled();
-      expect(texto).toBeTruthy();
-      expect(corposDaCentral().some((b) => b.includes("cadastre a chave da empresa"))).toBe(true);
-    });
-
-    it("CONTROLE: a lista não engole o caminho que já funcionava", async () => {
-      // Sem ele, uma implementação que recusasse TUDO deixaria os seis casos
-      // acima verdes — cinco deles esperam recusa.
-      comDestinosAutorizados("10.1.0.0/16");
-      comTranscricaoNoEnv({ apiKey: "chave-do-servico", baseUrl: "https://api.groq.com/openai/v1" });
-
-      await deriveMessageMedia(eventRow());
-      const texto = await depsDaChamada().transcriber.transcribe(Buffer.from("ogg"), "audio/ogg");
-
-      expect(transcribeDoSvcMock).toHaveBeenCalledTimes(1);
-      expect(texto).toBe("transcrição de mentira");
-    });
   });
 });

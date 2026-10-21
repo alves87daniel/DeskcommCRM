@@ -3,18 +3,13 @@
  *
  * ─── Os dois defeitos que tiraram esta regra de dentro do componente ────────
  *
- * **1. Quem usa a chave da instalação nunca conseguia publicar.** A regra morava
- * no `AgentForm` e perguntava por uma LINHA em `ai_provider_credentials`
- * (`findCredential(props.credentials, form.credential_id)`). Só que a escolha
- * mais comum do produto é "a chave desta instalação" — quem instala pelo kit
- * cola a chave no `.env` e nunca abre a tela de Credenciais —, e essa escolha
- * não é uma linha: é o token `__instalacao__`, que o formulário traduz em
- * `credential_id: null`. `findCredential` devolvia `null`, a régua lia isso como
- * "não escolheu chave", e o botão ficava desabilitado para sempre, com a dica
- * mandando escolher a chave que a pessoa ACABOU de escolher. O caminho de
- * publicação do servidor sempre aceitou o caso (`publishAgentVersion` confere
- * `chaveDePlataforma(provider)` e avisa o Postgres com
- * `p_platform_credential_verified`); era só a tela que não deixava chegar lá.
+ * **1. A régua morava no componente, sem teste.** Ela perguntava por uma LINHA em
+ * `ai_provider_credentials` (`findCredential(props.credentials, form.credential_id)`)
+ * e, na época em que existia "a chave desta instalação" (um token que virava
+ * `credential_id: null`), lia a ausência de linha como "não escolheu chave" e
+ * travava o botão para sempre. A chave da instalação acabou (ADR-0005: toda
+ * versão aponta para uma credencial da organização), mas a lição ficou: a régua
+ * do botão é função pura, testada, e a tela só traduz o código em frase.
  *
  * **2. Faltar número não é o mesmo que faltar configuração.** Antes, o editor
  * tratava "nenhum número de WhatsApp escolhido" como erro de formulário, então
@@ -37,14 +32,11 @@ export type EstadoDaCredencial =
   "validated" | "validating" | "unvalidated" | "invalid" | "inactive";
 
 export interface ChaveDaVersao {
-  /** A pessoa escolheu "a chave desta instalação" (a do `.env`)? */
-  daInstalacao: boolean;
-  /** Esta instalação tem chave DESTE provedor no ambiente? */
-  instalacaoTemChaveDoProvedor: boolean;
   /**
    * O estado da credencial da organização escolhida. `null` = nenhuma linha
-   * casou com a escolha — o que, fora do caso `daInstalacao`, significa que não
-   * há chave escolhida.
+   * casou com a escolha, ou seja, não há chave escolhida. Desde a ADR-0005 é a
+   * ÚNICA origem possível: a opção "a chave desta instalação" saiu da tela
+   * junto com a chave da instalação.
    */
   estadoDaCredencialDaOrg: EstadoDaCredencial | null;
 }
@@ -73,7 +65,6 @@ export type MotivoDeBloqueio =
   | { codigo: "sem_rascunho" }
   | { codigo: "formulario_invalido" }
   | { codigo: "alteracoes_nao_salvas" }
-  | { codigo: "instalacao_sem_chave_do_provedor"; provedor: string }
   | { codigo: "sem_chave"; provedor: string }
   | { codigo: "chave_nao_utilizavel"; provedor: string; estado: EstadoDaCredencial }
   | { codigo: "sem_numero" }
@@ -101,20 +92,10 @@ export function bloqueioDePublicacao(e: EntradaDoBloqueio): MotivoDeBloqueio | n
   if (!e.formularioValido) return { codigo: "formulario_invalido" };
   if (e.alteracoesNaoSalvas) return { codigo: "alteracoes_nao_salvas" };
 
-  if (e.chave.daInstalacao) {
-    // A escolha é legítima, mas só se a chave EXISTIR no ambiente. Publicar sem
-    // ela entrega um agente que morre em toda mensagem — a mesma recusa que a
-    // rota de versões faz com `lerAmbiente()`, e que o `publishAgentVersion`
-    // repete com `chaveDePlataforma`.
-    if (!e.chave.instalacaoTemChaveDoProvedor) {
-      return { codigo: "instalacao_sem_chave_do_provedor", provedor: e.provedor };
-    }
-  } else {
-    const estado = e.chave.estadoDaCredencialDaOrg;
-    if (estado === null) return { codigo: "sem_chave", provedor: e.provedor };
-    if (estado !== "validated") {
-      return { codigo: "chave_nao_utilizavel", provedor: e.provedor, estado };
-    }
+  const estado = e.chave.estadoDaCredencialDaOrg;
+  if (estado === null) return { codigo: "sem_chave", provedor: e.provedor };
+  if (estado !== "validated") {
+    return { codigo: "chave_nao_utilizavel", provedor: e.provedor, estado };
   }
 
   if (e.numero.estado === null) return { codigo: "sem_numero" };

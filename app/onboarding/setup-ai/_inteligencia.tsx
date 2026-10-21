@@ -34,7 +34,7 @@ import { explicacaoParaQuemInstala } from "@/lib/instalacao/explicacao-da-falha"
  * produto quebrado.
  */
 export interface EstadoDaChave {
-  origem: "org" | "instalacao" | "nenhuma";
+  origem: "org" | "nenhuma";
   provedor: string;
   rotulo: string;
   /** Só os últimos dígitos — o resto nunca sai do banco cifrado. */

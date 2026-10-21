@@ -20,7 +20,7 @@ import type { ServiceBoundary } from "@/lib/atendimento/fronteira";
 
 import { generateText, type LanguageModel } from "ai";
 
-import { DEFAULT_BOT_MODEL, gatewayConfig, gatewayHeaders } from "@/lib/ai/gateway";
+import { DEFAULT_BOT_MODEL } from "@/lib/ai/gateway";
 import { embedText } from "@/lib/ai/embed";
 import { MODELO_DE_EMBEDDING_DO_GOOGLE } from "@/lib/ai/embeddings/chave";
 import { getBudgetStatus, type BudgetStatus } from "@/lib/ai/budget/check";
@@ -1000,8 +1000,6 @@ async function retrieveContext(input: RetrieveInput): Promise<RagHit[]> {
 // o custo e para a auditoria em ai_invocations; o que executa é o provider.
 async function invokeBot(ctx: BotContext, model: LanguageModel): Promise<BotResponse> {
   const renderedSystem = renderSystemPrompt(ctx.agent.system_prompt, ctx);
-  const cfg = gatewayConfig();
-  const headers = cfg ? gatewayHeaders({ organizationId: ctx.organization_id }) : undefined;
 
   // Build a chronological multi-turn message history. The most recent inbound
   // is the implicit final user turn; we also include it explicitly to be safe.
@@ -1021,7 +1019,6 @@ async function invokeBot(ctx: BotContext, model: LanguageModel): Promise<BotResp
     model,
     system: renderedSystem,
     messages,
-    headers,
   });
   const latency = Date.now() - start;
 

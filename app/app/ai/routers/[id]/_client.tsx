@@ -328,7 +328,6 @@ export function RouterEditorClient({
                   {classifierModels.map((m) => (
                     <SelectItem key={`${m.provider}::${m.model_id}`} value={`${m.provider}::${m.model_id}`}>
                       {m.display_name} · {m.provider}
-                      {m.origem === "plataforma" ? ` (${t("chave desta instalação")})` : ""}
                     </SelectItem>
                   ))}
                 </SelectContent>

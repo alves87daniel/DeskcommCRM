@@ -97,7 +97,8 @@ import { runVoiceCallsBridgeLoop } from "@/lib/wacalls/events-bridge";
 import { runSessionWatchdogLoop } from "@/lib/agent-engine/edge/crm/session-reconciler";
 import { runHealthLoop } from "@/lib/agent-engine/health/circuit";
 import { runFlywheelLoop } from "@/lib/agent-engine/flywheel/live";
-import { llmEdgeConfigFromEnv } from "@/lib/agent-engine/edge/llm/run-model-call";
+import { llmEdgeConfigFromEnv, LlmNotConfiguredError } from "@/lib/agent-engine/edge/llm/run-model-call";
+import { avisarIaDesligadaPorFaltaDeChave } from "@/lib/ai/ia-sem-chave/aviso";
 import { loadEnv, type Env } from "@/lib/agent-engine/env";
 import { urlDoSupabaseNoServidor } from "@/lib/supabase/url-do-servidor";
 import { createLogger, type Logger } from "@/lib/agent-engine/obs/logger";
@@ -542,6 +543,18 @@ export async function startWorker(
           Sentry.captureException(adiarErr);
         }
         return;
+      }
+      // Organização sem chave de IA (ADR-0005, D3): o job é terminal (abaixo) e a
+      // Central ganha UM aviso por organização. Os turnos de conversa já abrem o
+      // mesmo aviso dentro da escolta; aqui ele cobre os jobs sem escolta
+      // (`operator_turn`, follow-up de classificação) — a dedup por título faz
+      // os dois caminhos contarem como um.
+      if (err instanceof LlmNotConfiguredError) {
+        try {
+          await avisarIaDesligadaPorFaltaDeChave(pool, job.organization_id);
+        } catch (avisoErr) {
+          log.error("aviso de IA sem chave não entrou na Central", { job_id: job.id, error: errMsg(avisoErr) });
+        }
       }
       const terminal = err instanceof StaleServiceBoundaryError || ehVetoPermanenteDeNegocio(err);
       // `warn`, não `error`: veto de negócio é o sistema funcionando como

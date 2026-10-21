@@ -300,17 +300,6 @@ const DO_SERVIDOR: RecursoOpcional[] = [
     comoLigar: "No arquivo de ambiente, o par VAPID_PUBLIC_KEY e VAPID_PRIVATE_KEY.",
     ler: peloServidor("web_push"),
   },
-  {
-    id: "transcricao",
-    nome: "Transcrição de áudio por outro serviço",
-    oQueFaz: "Manda a transcrição dos áudios para um serviço compatível que você escolher.",
-    nivel: "servidor",
-    padrao: "desligado",
-    quemDecide: "dono_do_servidor",
-    href: null,
-    comoLigar: "No arquivo de ambiente, TRANSCRIPTION_BASE_URL.",
-    ler: peloServidor("transcricao"),
-  },
 ];
 
 const DA_EMPRESA: RecursoOpcional[] = [

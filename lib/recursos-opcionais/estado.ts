@@ -17,7 +17,6 @@ import { googleEstaConfigurado } from "@/lib/agenda/google/config";
 import { canalGraphParceiroLigado } from "@/lib/channels/graph-parceiro/credentials";
 import { appDaMeta } from "@/lib/channels/meta/app";
 import { emailConfigurado } from "@/lib/email/roteador";
-import { env } from "@/lib/env";
 import { modulosLigados } from "@/lib/instalacao/modulos";
 import { logger } from "@/lib/logger";
 import { vapidPronto } from "@/lib/notifications/vapid";
@@ -53,7 +52,6 @@ export async function detectarServidor(): Promise<Record<string, boolean | null>
     detectar("nuvemshop", nuvemshopConfigurada),
     detectar("google_ads", () => googleAdsEstaConfigurado()),
     detectar("web_push", vapidPronto),
-    detectar("transcricao", () => env.TRANSCRIPTION_BASE_URL.trim().length > 0),
   ]);
   return Object.fromEntries(pares);
 }

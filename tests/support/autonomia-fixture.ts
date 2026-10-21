@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type pg from "pg";
+import { encryptKey } from "@/lib/crypto/aes_gcm";
 import { GOV_AGENT_A, GOV_AGENT_B, GOV_VIEWER } from "../invariants/gov-helpers";
 import { criarOrigemDeFollowup } from "../invariants/followup-service-origin";
 export async function replyFixture(pool: pg.Pool) {
@@ -47,6 +48,15 @@ export async function replyFixture(pool: pg.Pool) {
   await pool.query(
     "update ai_agents set published_version_id=$1 where organization_id=$2 and id=$3",
     [version, org, agent],
+  );
+  // A credencial da organização é a ÚNICA chave (ADR-0005): o registro falso
+  // do provedor substitui a chamada, mas o resolvedor continua exigindo uma
+  // credencial ativa e validada DELA. Cifrada de verdade, com a chave de teste
+  // de `vitest.db.config.ts`.
+  const cifrada = encryptKey("chave-de-teste-nunca-enviada");
+  await pool.query(
+    "insert into ai_provider_credentials(organization_id,provider,label,api_key_encrypted,api_key_iv,api_key_tag,api_key_last4,is_active,validated_at) values($1,'anthropic','fixture',$2,$3,$4,$5,true,now())",
+    [org, cifrada.ciphertext, cifrada.iv, cifrada.tag, cifrada.last4],
   );
   return { org, contact, agent, version, conversation, channel, boundary };
 }

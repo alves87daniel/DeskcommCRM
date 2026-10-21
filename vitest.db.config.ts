@@ -36,6 +36,10 @@ export default defineConfig({
       NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
       SUPABASE_SERVICE_ROLE_KEY:
         "test-service-role-key-not-a-placeholder-1234567890-1234567890",
+      // Fixtures cadastram credencial de IA CIFRADA para as organizações de
+      // teste (ADR-0005: não há chave da instalação para o turno cair). 32 bytes
+      // em base64, só de teste.
+      AI_CRED_AES_KEY: "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=",
     },
   },
   resolve: { alias: { "@": path.resolve(__dirname, ".") } },
