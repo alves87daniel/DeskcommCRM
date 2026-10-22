@@ -150,6 +150,7 @@ acessibilidade).
 | [`runbooks/waha-hostgator.md`](runbooks/waha-hostgator.md) | Runbook do WAHA em produção |
 | [`runbooks/cloudpanel.md`](runbooks/cloudpanel.md) | **VPS que já tem CloudPanel/Nginx nas portas 80/443** — o modo proxy externo do kit, o endereço fixo para o Nginx do host e o 403 do webhook global |
 | [`runbooks/ai-credentials-rotation.md`](runbooks/ai-credentials-rotation.md) | Rotação de credenciais de IA |
+| [`runbooks/importar-dados-por-planilha.md`](runbooks/importar-dados-por-planilha.md) | **Subir contatos, oportunidades e contexto Green por planilha** — o modelo `.xlsx` ([`modelo-importacao-de-dados.xlsx`](runbooks/modelo-importacao-de-dados.xlsx)), o passo a passo pela tela e o que o importador não cobre |
 | [`../SECURITY.md`](../SECURITY.md) | Política de reporte de vulnerabilidade |
 
 ## 7. Testes e QA
