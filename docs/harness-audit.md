@@ -50,7 +50,7 @@ verificados por leitura de arquivo, config e workflow.
 |---|---|---|
 | H0 — Não documentado | superado | 119 docs em `docs/`, README de 302 linhas em 3 idiomas, PRDs, specs, `CHANGELOG.md` |
 | H1 — Documentado | ✅ | `README.md`, `ARCHITECTURE.md`, `VISION.md`, `CLAUDE.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CHANGELOG.md` (Keep a Changelog + SemVer) |
-| H2 — Reproduzível | ✅ | Quickstart no README, `docs/SETUP.md`, `.nvmrc` (22), `packageManager` fixo, `pnpm-lock.yaml`, `docker-compose.yml`, `install.sh` do kit self-host, `baseline.sql` |
+| H2 — Reproduzível | ✅ | Quickstart no README, `docs/SETUP.md`, `.nvmrc` (patch fixado da linha 22), `packageManager` fixo, `pnpm-lock.yaml`, `docker-compose.yml`, `install.sh` do kit self-host, `baseline.sql` |
 | H3 — Verificável | ✅ | `lint` + `typecheck` + `test:unit` + `build`; CI roda os 3 primeiros em PR |
 | H4 — Preparado para agentes | ✅ | `CLAUDE.md` doutrinal forte; `AGENTS.md` **criado nesta auditoria**; documentação técnica extensa; **e o CI roda o gate de isolamento RLS** (job `invariants` → `pnpm test:db`) |
 | H5 — Automação avançada | ⚠️ **parcial** | CI confiável e ambiente isolado ✅ (Postgres efêmero pg15, worktrees, gov-loop com maker≠checker e hash-check). Falta: **1 das 46 specs E2E fora do CI** (45 rodam via `e2e.yml`, **obrigatório desde 2026-08-08**; a de fora é `vps-fresh-onboarding`, que é justamente a P0), `format:check` fora do CI, e o comando único local (`gov:verify`) não cobre `test:db`/`test:e2e`. *(Números recontados em 2026-08-14 @ `741c4ec8`; a redação anterior — "4 das 32, não-obrigatório" — apodreceu.)* *(Nota de 2026-09-19: a `vps-fresh-onboarding` deixou de estar fora — desde o PR #983 roda na `SPECS_PARTE_4`. O que fica fora hoje: ver a nota logo abaixo de "O que separa de H5".)* |
@@ -94,7 +94,7 @@ Legenda: ✅ existente e funcional · ⚠️ existente mas incompleto · ❌ nã
 |---|---|---|---|
 | 1 | README útil | ✅ | 302 linhas: o que é, quickstart de 5 min, stack, estrutura, testes, roadmap, suporte. Traduzido (EN/ES). Mais `CHANGELOG.md` com aviso de "⚠️ Requer atenção" por versão, voltado a quem roda VPS |
 | 2 | Instruções de instalação | ✅ | README §Quickstart + `docs/SETUP.md` + `docs/deploy-selfhost/` + `docs/deploy-hostgator/` + `install.sh` |
-| 3 | Versão de runtime definida | ✅ | `.nvmrc` = 22, `engines.node >=22`, `packageManager: pnpm@9.15.9`, e o CI usa `setup-node@v7` com Node 22 — alinhados |
+| 3 | Versão de runtime definida | ✅ | `.nvmrc` fixa o patch da linha 22, `engines.node` exige o mesmo piso, `packageManager: pnpm@9.15.9`, e o CI usa `setup-node@v7` com o mesmo número — alinhados |
 | 4 | Lockfile | ✅ | `pnpm-lock.yaml`, e ambos os jobs do CI usam `--frozen-lockfile` |
 | 5 | `.env.example` | ⚠️ | Existe (+ `.env.hostgator.example`), mas **6 vars de `lib/env.ts` continuam ausentes**, entre elas 3 secrets: `IMPERSONATE_COOKIE_SECRET`, `INTERNAL_CRON_SECRET`, `LGPD_SIGNING_KEY` (+ `LGPD_DPO_EMAIL`, `LGPD_EXPORT_EXPIRES_HOURS`, `NUVEMSHOP_ENABLED`) |
 | 6 | Comando de desenvolvimento | ✅ | `pnpm dev`. Nota: `docs/testing/` documenta que E2E fresco exige `build` + `start`, não `dev` |
