@@ -6,6 +6,8 @@
  *   2. a organização (tenant)
  *   3. a associação do dono como `admin`
  *   4. a linha em `platform_admins` (super-admin de plataforma)
+ *   5. as chaves de IA que o instalador colheu, como CREDENCIAIS da organização
+ *      do dono (ADR-0005, D5) — nunca como linha do `.env`
  *
  * Depois disso o dono faz login e o onboarding do app cuida do resto
  * (WhatsApp, IA, time). A verificação em duas etapas é OPCIONAL e se liga em
@@ -31,6 +33,9 @@ function loadEnv(): Record<string, string> {
     for (const line of fs.readFileSync(p, "utf8").split("\n")) {
       const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
       if (m && !out[m[1]!]) out[m[1]!] = m[2]!.replace(/^"(.*)"$/, "$1");
+      // Também no `process.env`: os módulos do produto que este script importa
+      // (`lib/crypto/aes_gcm` → `lib/env`) leem de lá, não deste mapa.
+      if (m && !process.env[m[1]!]) process.env[m[1]!] = m[2]!.replace(/^"(.*)"$/, "$1");
     }
   }
   return out;
@@ -261,11 +266,97 @@ async function ensurePlatformAdmin(userId: string): Promise<void> {
   console.log("[bootstrap] dono promovido a super-admin de plataforma");
 }
 
+/**
+ * AS CHAVES DE IA VIRAM CREDENCIAIS DA ORGANIZAÇÃO DO DONO (ADR-0005, D5).
+ *
+ * O instalador pergunta a chave do provedor de conversa (`AI_PROVIDER`) e, quando
+ * ele não é a OpenAI, uma chave da OpenAI à parte para ouvir áudio. Antes, as
+ * duas iam para o `.env` e respondiam pela IA de TODAS as organizações do
+ * servidor. Agora cada uma vira a SUA credencial ativa e validada da organização
+ * do dono — cifrada do mesmo jeito que a tela cifra, visível em IA › Credenciais.
+ * Este script é um dos dois caminhos que criam o dono (o outro é o bloco SQL
+ * inline do `hostgator-setup-kit/install.sh`); os dois cadastram as chaves.
+ *
+ * Idempotente: provedor que já tem credencial ativa e validada não ganha outra
+ * (trocar chave é pela tela). "Validada" porque o instalador acabou de conferir
+ * a chave com o provedor; a tela oferece revalidar.
+ *
+ * Sob `INTERNAL_AGENT_RUN_STUB=true` (o dublê do provedor controlado, como o CI
+ * roda o e2e), sem chave nenhuma, entra uma credencial de MENTIRA: o resolvedor
+ * exige credencial da organização mesmo com o provedor dublado — é assim em
+ * produção, e o dublê não pode ter um caminho a menos.
+ */
+async function ensureCredenciaisDeIa(orgId: string, ownerId: string): Promise<void> {
+  const provedorDeConversa = (env.AI_PROVIDER ?? "").trim().toLowerCase() || "anthropic";
+  const VARIAVEL: Record<string, string> = {
+    anthropic: "ANTHROPIC_API_KEY",
+    openai: "OPENAI_API_KEY",
+    openrouter: "OPENROUTER_API_KEY",
+  };
+  const pares: Array<[string, string]> = [];
+  const varConversa = VARIAVEL[provedorDeConversa];
+  if (varConversa && (env[varConversa] ?? "").trim() !== "") pares.push([provedorDeConversa, env[varConversa]!.trim()]);
+  if (provedorDeConversa !== "openai" && (env.OPENAI_API_KEY ?? "").trim() !== "") {
+    pares.push(["openai", env.OPENAI_API_KEY!.trim()]);
+  }
+  // Sem chave colhida NÃO se inventa credencial — nem sob o dublê do provedor
+  // (`INTERNAL_AGENT_RUN_STUB`): uma instalação fresca sem chave é uma
+  // organização sem credencial, e é esse o estado que o onboarding e a jornada
+  // J1 do e2e medem ("setup IA sem chave: cria o agente como rascunho"). Quem
+  // precisa de IA no e2e usa a organização semeada por
+  // `scripts/seed-e2e-credentials.ts`, que cadastra a credencial do dublê.
+  if (pares.length === 0) {
+    console.info("[bootstrap] nenhuma chave de IA colhida — a IA fica desligada até alguém cadastrar em IA › Credenciais");
+    return;
+  }
+  const { bufToBytea, encryptKey } = await import("@/lib/crypto/aes_gcm");
+  for (const [provider, apiKey] of pares) {
+    const { data: existente } = await admin
+      .from("ai_provider_credentials")
+      .select("id")
+      .eq("organization_id", orgId)
+      .eq("provider", provider)
+      .eq("is_active", true)
+      .not("validated_at", "is", null)
+      .limit(1)
+      .maybeSingle();
+    if (existente) {
+      console.info(`[bootstrap] credencial ${provider} já cadastrada e validada — nada gravado (troca é pela tela)`);
+      continue;
+    }
+    const cifrada = encryptKey(apiKey);
+    const { error } = await admin.from("ai_provider_credentials").insert({
+      organization_id: orgId,
+      provider,
+      label: "Cadastrada pelo instalador",
+      api_key_encrypted: bufToBytea(cifrada.ciphertext),
+      api_key_iv: bufToBytea(cifrada.iv),
+      api_key_tag: bufToBytea(cifrada.tag),
+      api_key_last4: cifrada.last4,
+      is_active: true,
+      validated_at: new Date().toISOString(),
+      created_by: ownerId,
+    } as never);
+    if (error) {
+      if (error.code === "23505") {
+        console.info(`[bootstrap] credencial ${provider} do instalador já existia — nada gravado`);
+        continue;
+      }
+      console.warn(
+        `[bootstrap] não consegui cadastrar a chave da ${provider}: ${error.message}. Cadastre em IA › Credenciais.`,
+      );
+      continue;
+    }
+    console.info(`[bootstrap] chave da ${provider} cadastrada como credencial da organização do dono (ADR-0005)`);
+  }
+}
+
 async function main(): Promise<void> {
   const ownerId = await ensureOwnerUser();
   const orgId = await ensureOrg(ownerId);
   await ensureMembership(ownerId, orgId);
   await ensurePlatformAdmin(ownerId);
+  await ensureCredenciaisDeIa(orgId, ownerId);
   console.log(`\n✅ Bootstrap completo.\n  dono: ${OWNER_EMAIL}\n  org:  ${orgId}\n  Faça login em ${env.NEXT_PUBLIC_APP_URL || "https://<seu-dominio>"} e conclua o onboarding.`);
 }
 

@@ -16,7 +16,6 @@ import { AgentEditorClient } from "./_client";
 import type { FunilDaResposta } from "@/hooks/pipelines/usePipelines";
 import { coberturaDoFunil, type EtapaDoMapa } from "@/lib/leads/agent-mapping";
 import type { CoberturaPorFunil } from "./_components/FunisDoAgente";
-import { lerAmbiente } from "@/lib/instalacao/ambiente";
 import { escolherVersoesDaTela } from "@/lib/ai/agents/versoes-da-tela";
 import { fusoUtilizavel } from "@/lib/tempo/fusos";
 
@@ -30,21 +29,6 @@ const VERSION_COLUMNS =
 
 const CREDENTIAL_COLUMNS =
   "id, organization_id, provider, label, api_key_last4, validated_at, validation_error, models_available, is_active, created_by, created_at, updated_at";
-
-/**
- * Os provedores cuja chave veio na INSTALAÇÃO (`.env`), não da tela de
- * Credenciais.
- *
- * Sai de `lerAmbiente`, a mesma leitura que o retrato da instalação usa — uma
- * segunda lista de nomes de variável divergiria no dia em que um provedor novo
- * entrasse.
- */
-function provedoresDaInstalacao(): string[] {
-  const a = lerAmbiente();
-  return Object.entries(a.chavesDeProvedor)
-    .filter(([, tem]) => tem)
-    .map(([id]) => id);
-}
 
 export default async function AgentEditorPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
@@ -228,7 +212,6 @@ export default async function AgentEditorPage({ params }: { params: Promise<{ id
         draftObsoleto={draftObsoleto}
         versions={versions}
         credentials={credentials}
-        provedoresDaInstalacao={provedoresDaInstalacao()}
         channelSessions={channelSessions}
         funis={funis}
         cobertura={cobertura}

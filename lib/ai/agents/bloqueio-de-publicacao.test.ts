@@ -2,18 +2,14 @@ import { describe, expect, it } from "vitest";
 
 import { bloqueioDePublicacao, type EntradaDoBloqueio } from "./bloqueio-de-publicacao";
 
-/** Um agente pronto para publicar: chave da instalação presente, número no ar. */
+/** Um agente pronto para publicar: credencial da organização validada, número no ar. */
 function pronto(over: Partial<EntradaDoBloqueio> = {}): EntradaDoBloqueio {
   return {
     temRascunhoVigente: true,
     formularioValido: true,
     alteracoesNaoSalvas: false,
     provedor: "anthropic",
-    chave: {
-      daInstalacao: true,
-      instalacaoTemChaveDoProvedor: true,
-      estadoDaCredencialDaOrg: null,
-    },
+    chave: { estadoDaCredencialDaOrg: "validated" },
     numero: { estado: "WORKING" },
     ...over,
   };
@@ -24,44 +20,25 @@ describe("bloqueioDePublicacao", () => {
     expect(bloqueioDePublicacao(pronto())).toBeNull();
   });
 
-  // ─── O defeito 1: a chave da instalação ──────────────────────────────────
+  // ─── A chave é SEMPRE da organização (ADR-0005) ──────────────────────────
   //
-  // Este é o caso que o editor bloqueava para sempre. Não é um canto: é a
-  // escolha padrão de quem instala pelo kit e cola a chave no `.env`, que é o
-  // jeito como o produto é vendido.
-  it("PUBLICA com a chave da instalação, sem nenhuma linha de credencial da org", () => {
-    const motivo = bloqueioDePublicacao(
-      pronto({
-        chave: {
-          daInstalacao: true,
-          instalacaoTemChaveDoProvedor: true,
-          // Nenhuma credencial cadastrada na organização — o estado de uma
-          // instalação fresca, e o que fazia `findCredential` devolver null.
-          estadoDaCredencialDaOrg: null,
-        },
-      }),
-    );
-    expect(motivo).toBeNull();
+  // A opção "a chave desta instalação" saiu da tela junto com a chave da
+  // instalação. Sem uma linha de credencial da organização casando com a
+  // escolha, o motivo é "sem chave" — não existe mais o caso em que o `.env`
+  // responde por ela.
+  it("sem credencial da organização escolhida, bloqueia com sem_chave", () => {
+    expect(
+      bloqueioDePublicacao(pronto({ chave: { estadoDaCredencialDaOrg: null } })),
+    ).toEqual({ codigo: "sem_chave", provedor: "anthropic" });
   });
 
-  it("recusa a chave da instalação quando o ambiente não tem chave do provedor", () => {
-    const motivo = bloqueioDePublicacao(
-      pronto({
-        provedor: "openai",
-        chave: {
-          daInstalacao: true,
-          instalacaoTemChaveDoProvedor: false,
-          estadoDaCredencialDaOrg: null,
-        },
-      }),
-    );
-    expect(motivo).toEqual({
-      codigo: "instalacao_sem_chave_do_provedor",
-      provedor: "openai",
-    });
+  it("a entrada não tem como dizer 'use a chave da instalação' — o tipo não aceita", () => {
+    // @ts-expect-error — `daInstalacao` saiu com a ADR-0005; voltar é reprovado pelo compilador.
+    const entrada: EntradaDoBloqueio = pronto({ chave: { daInstalacao: true, estadoDaCredencialDaOrg: null } });
+    expect(entrada).toBeTruthy();
   });
 
-  // ─── O defeito 2: número é requisito de ATENDER, não de rascunhar ────────
+  // ─── Número é requisito de ATENDER, não de rascunhar ─────────────────────
   it("bloqueia a publicação — e só ela — quando nenhum número foi escolhido", () => {
     expect(bloqueioDePublicacao(pronto({ numero: { estado: null } }))).toEqual({
       codigo: "sem_numero",
@@ -80,48 +57,18 @@ describe("bloqueioDePublicacao", () => {
   });
 
   // ─── Credencial da organização ───────────────────────────────────────────
-  it("exige escolha quando não é a chave da instalação e nenhuma linha casou", () => {
-    expect(
-      bloqueioDePublicacao(
-        pronto({
-          chave: {
-            daInstalacao: false,
-            instalacaoTemChaveDoProvedor: true,
-            estadoDaCredencialDaOrg: null,
-          },
-        }),
-      ),
-    ).toEqual({ codigo: "sem_chave", provedor: "anthropic" });
-  });
-
   it.each(["validating", "unvalidated", "invalid", "inactive"] as const)(
     "recusa credencial da org no estado %s",
     (estado) => {
       expect(
-        bloqueioDePublicacao(
-          pronto({
-            chave: {
-              daInstalacao: false,
-              instalacaoTemChaveDoProvedor: true,
-              estadoDaCredencialDaOrg: estado,
-            },
-          }),
-        ),
+        bloqueioDePublicacao(pronto({ chave: { estadoDaCredencialDaOrg: estado } })),
       ).toEqual({ codigo: "chave_nao_utilizavel", provedor: "anthropic", estado });
     },
   );
 
   it("aceita credencial da org validada", () => {
     expect(
-      bloqueioDePublicacao(
-        pronto({
-          chave: {
-            daInstalacao: false,
-            instalacaoTemChaveDoProvedor: false,
-            estadoDaCredencialDaOrg: "validated",
-          },
-        }),
-      ),
+      bloqueioDePublicacao(pronto({ chave: { estadoDaCredencialDaOrg: "validated" } })),
     ).toBeNull();
   });
 
@@ -131,11 +78,7 @@ describe("bloqueioDePublicacao", () => {
       temRascunhoVigente: false,
       formularioValido: false,
       alteracoesNaoSalvas: true,
-      chave: {
-        daInstalacao: true,
-        instalacaoTemChaveDoProvedor: false,
-        estadoDaCredencialDaOrg: null,
-      },
+      chave: { estadoDaCredencialDaOrg: null },
       numero: { estado: null },
     });
     expect(bloqueioDePublicacao(tudoErrado)).toEqual({ codigo: "sem_rascunho" });
@@ -149,5 +92,13 @@ describe("bloqueioDePublicacao", () => {
         formularioValido: true,
       }),
     ).toEqual({ codigo: "alteracoes_nao_salvas" });
+    expect(
+      bloqueioDePublicacao({
+        ...tudoErrado,
+        temRascunhoVigente: true,
+        formularioValido: true,
+        alteracoesNaoSalvas: false,
+      }),
+    ).toEqual({ codigo: "sem_chave", provedor: "anthropic" });
   });
 });

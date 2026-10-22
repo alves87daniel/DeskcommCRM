@@ -156,6 +156,15 @@ export interface PontoDeIa {
    * que fala com a API de transcrição.
    */
   fixo?: { razao: string; usa?: { provider: string; modelId: string } };
+  /**
+   * Ponto com SERVIÇO PADRÃO PRÓPRIO: o produto sabe o que chamar sem ninguém
+   * escolher (a transcrição fala com a API de transcrição da OpenAI, nunca com
+   * o modelo de conversa), mas a organização PODE apontar outro serviço
+   * compatível no painel — credencial, endereço e modelo (ADR-0005, item 18 da
+   * #33). Sem binding vale o padrão; com binding vale o binding. Diferente de
+   * `fixo`, que não aceita escolha nenhuma.
+   */
+  padraoProprio?: { provider: string; modelId: string; razao: string };
   registraEm: DestinoDeTelemetria;
   /**
    * O ponto sabe ser decidido pelo Jev (`lib/ai/decisao/`), que devolve decisão
@@ -514,23 +523,30 @@ export const PONTOS_DE_IA: readonly PontoDeIa[] = [
     papel: "perceber",
     exige: { audio: true },
     emissor: "lib/messaging/media/transcription.ts",
-    fixo: {
+    // ⚠️ SERVIÇO PADRÃO PRÓPRIO, e por que precisa estar escrito aqui.
+    //
+    // A tela mostrava `claude-sonnet-5` neste ponto, com "usando o padrão da
+    // organização" — porque o ponto percorria a mesma cadeia de resolução dos
+    // pontos de conversa e caía no último degrau. O texto ao lado dizia "usa o
+    // padrão de transcrição da OpenAI", então a mesma tela afirmava duas coisas
+    // incompatíveis sobre o mesmo ponto.
+    //
+    // Um modelo de conversa NÃO transcreve áudio. Anunciar um ali é dizer a
+    // quem opera que o áudio está sendo ouvido pelo modelo errado — e mandá-lo
+    // caçar um problema que não existe, ou trocar um modelo que não é o que
+    // faz o trabalho. `lib/messaging/media/transcription.ts` manda para
+    // `/v1/audio/transcriptions` com `whisper-1`.
+    //
+    // Era `fixo`; virou `padraoProprio` com a ADR-0005 (item 18 da #33): a
+    // instalação que transcrevia por um serviço compatível com chave própria no
+    // `.env` (Groq, gateway) passa a fazê-lo com uma credencial `custom` da
+    // organização apontada AQUI — o `update.sh` migra o par do `.env` para
+    // esse binding antes de esvaziar a variável.
+    padraoProprio: {
+      provider: "openai",
+      modelId: "whisper-1",
       razao:
-        "Usa o padrão de transcrição da OpenAI, que é o formato que os serviços do mercado implementam. Aceita apontar para outro serviço compatível — inclusive um rodando na sua própria máquina — mas exige uma chave desse serviço, separada da chave do modelo de conversa.",
-      // ⚠️ O QUE ELE USA DE VERDADE, e por que precisa estar escrito aqui.
-      //
-      // A tela mostrava `claude-sonnet-5` neste ponto, com "usando o padrão da
-      // organização" — porque um ponto `fixo` percorria a mesma cadeia de
-      // resolução dos pontos de conversa e caía no último degrau. O texto ao
-      // lado dizia "usa o padrão de transcrição da OpenAI", então a mesma tela
-      // afirmava duas coisas incompatíveis sobre o mesmo ponto.
-      //
-      // Um modelo de conversa NÃO transcreve áudio. Anunciar um ali é dizer a
-      // quem opera que o áudio está sendo ouvido pelo modelo errado — e mandá-lo
-      // caçar um problema que não existe, ou trocar um modelo que não é o que
-      // faz o trabalho. `lib/messaging/media/transcription.ts` manda para
-      // `/v1/audio/transcriptions` com `whisper-1`.
-      usa: { provider: "openai", modelId: "whisper-1" },
+        "Usa o padrão de transcrição da OpenAI, que é o formato que os serviços do mercado implementam. Para apontar outro serviço compatível — Groq, um gateway, um rodando na sua própria máquina —, cadastre a chave desse serviço como provedor personalizado (com o endereço) em IA › Credenciais e escolha-a aqui.",
     },
     sintomaDeFalha:
       "O cliente manda áudio e o agente responde como se não tivesse recebido nada.",

@@ -30,7 +30,6 @@ import {
 import { PAPEIS, PONTOS_DE_IA, PONTO_POR_ID } from "@/lib/ai/pontos/registro";
 import { PROVEDORES, ehProvedorSuportado } from "@/lib/ai/pontos/provedores";
 import { validarBinding } from "@/lib/ai/pontos/validar-binding";
-import { lerAmbiente } from "@/lib/instalacao/ambiente";
 import { modeloDeTranscricaoEmVigor } from "@/lib/messaging/media/transcription";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -154,6 +153,9 @@ export async function GET(): Promise<Response> {
       exige: ponto.exige,
       sintomaDeFalha: ponto.sintomaDeFalha,
       fixo: ponto.fixo ?? null,
+      // Ponto com serviço padrão próprio (item 18 da #33): a tela mostra a razão
+      // e OFERECE o seletor — diferente do fixo, que só mostra a razão.
+      padraoProprio: ponto.padraoProprio ?? null,
       /**
        * Escolha do agente publicado — a tela mostra como leitura, com link.
        *
@@ -168,16 +170,13 @@ export async function GET(): Promise<Response> {
       mandadoPeloAgente: agentePublicado !== null && PONTOS_DO_AGENTE_PUBLICADO.has(ponto.id),
       efetivo: {
         provider: decisao.provider,
-        // O ponto fixo de transcrição declara `whisper-1`, mas `TRANSCRIPTION_MODEL`
+        // O padrão do ponto de transcrição declara `whisper-1`, mas `TRANSCRIPTION_MODEL`
         // (o mesmo `.env` do worker) troca o modelo que roda: a tela anuncia o que
-        // roda, pela mesma função que o worker usa.
+        // roda, pela mesma função que o worker usa. Com BINDING (item 18 da #33),
+        // o que roda é o modelo do binding — e é ele que a tela anuncia.
         modelId:
-          ponto.id === "transcricao_de_audio"
-            ? modeloDeTranscricaoEmVigor({
-                model: process.env.TRANSCRIPTION_MODEL,
-                apiKey: process.env.TRANSCRIPTION_API_KEY,
-                baseUrl: process.env.TRANSCRIPTION_BASE_URL,
-              })
+          ponto.id === "transcricao_de_audio" && decisao.origem === "padrao_do_ponto"
+            ? modeloDeTranscricaoEmVigor({ model: process.env.TRANSCRIPTION_MODEL })
             : decisao.modelId,
         credentialId: decisao.credentialId,
         baseUrl: decisao.baseUrl,
@@ -210,10 +209,6 @@ export async function GET(): Promise<Response> {
     // ainda não cadastrou nenhuma chave" com a empresa sem IA para atender, e
     // nenhum ponto desta tela sabe usá-la.
     credenciais: (credsRes.data ?? []).filter((c) => ehProvedorSuportado(c.provider)),
-    // Sem chave cadastrada, o aviso só pode dizer "o atendimento usa a chave que
-    // veio na instalação" quando ela existe. A mesma conta de
-    // `app/app/ai/credentials/page.tsx`.
-    instalacaoTemChave: instalacaoTemChaveDeIa(),
     modelos,
     podeEditar: roleAtLeast(org.role, "admin"),
   });
@@ -508,9 +503,4 @@ export async function PATCH(req: NextRequest): Promise<Response> {
     padrao: { provider: corpo.provider, defaultModel: corpo.default_model },
     avisos,
   });
-}
-
-function instalacaoTemChaveDeIa(): boolean {
-  const ambiente = lerAmbiente();
-  return ambiente.gateway || Object.values(ambiente.chavesDeProvedor).some(Boolean);
 }

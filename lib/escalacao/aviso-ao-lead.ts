@@ -70,6 +70,8 @@ export type MotivoDoAviso =
   | "suspeita_de_opt_out"
   /** O teto de gasto com IA parou o atendimento automático. */
   | "orcamento_de_ia"
+  /** A organização está sem chave de IA: nada responde no automático (ADR-0005). */
+  | "ia_sem_chave"
   /** O sistema decidiu escalar (sentimento, baixa confiança, etapa, termo jurídico…). */
   | "outro";
 
@@ -81,6 +83,7 @@ export function motivoDoAviso(reason: string): MotivoDoAviso {
   if (reason === "requested_human") return "pediu_humano";
   if (reason === "suspected_optout") return "suspeita_de_opt_out";
   if (reason === "orcamento_de_ia") return "orcamento_de_ia";
+  if (reason === "ia_sem_chave") return "ia_sem_chave";
   return "outro";
 }
 
@@ -126,6 +129,13 @@ const ABERTURAS: Record<MotivoDoAviso, readonly string[]> = {
     "Vou passar seu atendimento para uma pessoa da equipe.",
     "A partir daqui quem continua com você é alguém do time.",
     "Estou transferindo esta conversa para um atendente humano.",
+  ],
+  // Sem chave de IA não há modelo para escrever nada: texto fixo, e sem
+  // explicar a causa ao cliente — a causa é da empresa, não dele.
+  ia_sem_chave: [
+    "Vou chamar uma pessoa da equipe para seguir com você por aqui.",
+    "Daqui em diante alguém do time assume o seu atendimento.",
+    "Estou encaminhando a sua conversa para um colega humano.",
   ],
   outro: [
     "Esse caso é melhor resolvido por uma pessoa. Já acionei o time.",
@@ -181,6 +191,11 @@ const ABERTURAS_ES: Record<MotivoDoAviso, readonly string[]> = {
     "Voy a pasar tu atención a una persona del equipo.",
     "A partir de aquí te atiende alguien del equipo.",
     "Estoy transfiriendo esta conversación a una persona del equipo.",
+  ],
+  ia_sem_chave: [
+    "Voy a llamar a alguien del equipo para que siga contigo por aquí.",
+    "De ahora en adelante una persona del equipo se encarga de tu atención.",
+    "Estoy derivando tu conversación a un compañero humano.",
   ],
   outro: [
     "Esto lo resuelve mejor una persona del equipo. Ya les avisé.",

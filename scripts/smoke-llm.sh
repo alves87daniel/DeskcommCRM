@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Gate de release / upgrade de major do AI SDK (regra dura 16): sobe um Postgres
 # efêmero (mesma receita do test-db.sh: pgvector + prelude + baseline install) e
-# roda scripts/smoke-llm.ts contra o MODELO REAL. Exige ANTHROPIC_API_KEY no env.
+# roda scripts/smoke-llm.ts contra o MODELO REAL. Exige ANTHROPIC_API_KEY no env;
+# a chave é gravada como credencial cifrada da organização do smoke (ADR-0005),
+# com a AI_CRED_AES_KEY do env ou uma gerada só para esta execução.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -59,4 +61,5 @@ SMOKE_DB_URL="postgresql://postgres:postgres@127.0.0.1:${PORT}/postgres" \
   NEXT_PUBLIC_SUPABASE_URL="${NEXT_PUBLIC_SUPABASE_URL:-https://placeholder.supabase.co}" \
   NEXT_PUBLIC_SUPABASE_ANON_KEY="${NEXT_PUBLIC_SUPABASE_ANON_KEY:-placeholder-anon}" \
   SUPABASE_SERVICE_ROLE_KEY="${SUPABASE_SERVICE_ROLE_KEY:-placeholder-service}" \
+  AI_CRED_AES_KEY="${AI_CRED_AES_KEY:-$(openssl rand -base64 32)}" \
   pnpm exec tsx "$ROOT/scripts/smoke-llm.ts"

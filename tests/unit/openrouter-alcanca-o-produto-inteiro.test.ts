@@ -6,11 +6,11 @@
  * um buraco na instalação que aceitou o convite — e os buracos são mudos, que é
  * o que os torna caros:
  *
- *  - `resolveOrgLlmConfig` não tinha ramo de fallback de env para openrouter:
- *    numa instalação sem `ANTHROPIC_API_KEY`, TUDO que passa pelo seam lançava
- *    `LlmNotConfiguredError`. Na derivação de mídia isso acontecia ANTES do
- *    mecanismo de aviso: 5 tentativas, `media_derived_status='failed'`, zero
- *    avisos na Central, só um `logger.error` no log do contêiner.
+ *  - (histórico) `resolveOrgLlmConfig` não tinha ramo de fallback de env para
+ *    openrouter. O ramo entrou e SAIU de novo: a ADR-0005 apagou todo degrau de
+ *    chave do ambiente, e quem guarda isso é
+ *    `lib/agent-engine/edge/llm/credentials.test.ts` e a cerca
+ *    `tests/unit/ia-sem-chave-da-plataforma.test.ts`.
  *  - `modelCapabilities('openrouter', 'openai/gpt-4o')` devolvia
  *    `{image:false}`, porque a capacidade era do PROVEDOR e num roteador ela é
  *    do MODELO. O comprovante do cliente virava marcador e o aviso afirmava "o
@@ -27,30 +27,6 @@ import {
   capacidadeEhConhecida,
   modelCapabilities,
 } from "@/lib/agent-engine/edge/llm/capabilities";
-import { llmEdgeConfigFromEnv } from "@/lib/agent-engine/edge/llm/credentials";
-
-describe("a chave da OpenRouter chega ao seam", () => {
-  it("llmEdgeConfigFromEnv carrega OPENROUTER_API_KEY", () => {
-    const cfg = llmEdgeConfigFromEnv({ OPENROUTER_API_KEY: "sk-or-v1-teste" });
-    expect(
-      cfg.openrouterApiKey,
-      "sem isto, a instalação só-OpenRouter não tem chave que o seam aceite e tudo morre com llm_not_configured",
-    ).toBe("sk-or-v1-teste");
-  });
-
-  it("chave vazia não vira string vazia (o mesmo cuidado das outras duas)", () => {
-    const cfg = llmEdgeConfigFromEnv({ OPENROUTER_API_KEY: "" });
-    expect(cfg.openrouterApiKey).toBeUndefined();
-  });
-
-  it("o resolvedor tem o ramo de fallback para openrouter", () => {
-    // Comportamental seria melhor, mas `resolveOrgLlmConfig` exige `pg.Pool` e
-    // decifragem AES — está coberto no invariante com Postgres real. Aqui o
-    // alvo é a existência do RAMO, que é o que faltava.
-    const fonte = readFileSync("lib/agent-engine/edge/llm/credentials.ts", "utf8");
-    expect(fonte).toMatch(/provider === 'openrouter' && cfg\.openrouterApiKey/);
-  });
-});
 
 describe("capacidade num roteador é do MODELO, não do provedor", () => {
   it("o instrumento distingue os providers conhecidos (controle positivo)", () => {
@@ -85,17 +61,8 @@ describe("capacidade num roteador é do MODELO, não do provedor", () => {
   });
 });
 
-describe("o aviso de boot lê a mesma régua que a execução", () => {
-  it("OPENROUTER_API_KEY conta como chave de IA configurada", () => {
-    const fonte = readFileSync("lib/env.ts", "utf8");
-    const condicao = /if \(\s*!env\.AI_GATEWAY_API_KEY\s*&&\s*!env\.ANTHROPIC_API_KEY([^)]*)\)/.exec(fonte);
-    expect(condicao, "não achei o aviso de chave de IA no lib/env.ts — instrumento cego").not.toBeNull();
-    expect(
-      condicao?.[1],
-      "o boot avisa que a IA está muda numa instalação só-OpenRouter, em que ela não está",
-    ).toContain("OPENROUTER_API_KEY");
-  });
-});
+// O aviso de boot sobre chave de IA no `.env` saiu com a ADR-0005: a chave é
+// credencial da organização, e o boot não tem o que avisar.
 
 describe("o worker de mídia obedece ao painel", () => {
   it("lê o binding de visao_de_imagem antes de resolver o modelo", () => {
@@ -109,10 +76,9 @@ describe("o worker de mídia obedece ao painel", () => {
     expect(fonte).toContain("ai_purpose_bindings");
   });
 
-  it("a chave da OpenRouter é passada ao seam da derivação", () => {
-    const fonte = readFileSync("workers/media-derive-worker.ts", "utf8");
-    expect(fonte).toMatch(/openrouterApiKey: process\.env\.OPENROUTER_API_KEY/);
-  });
+  // A chave da OpenRouter não é mais passada ao seam pelo `.env` (ADR-0005): o
+  // seam a lê da credencial da organização, e a cerca
+  // `tests/unit/ia-sem-chave-da-plataforma.test.ts` reprova a volta.
 });
 
 describe("o instalador grava o provedor escolhido no banco", () => {

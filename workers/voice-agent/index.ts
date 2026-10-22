@@ -51,6 +51,8 @@ import {
 import { AudioSocketCallBridge } from "./audioSocketBridge";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getActiveVoiceAgent } from "@/lib/ai/agents";
+import { avisarIaDesligadaPorFaltaDeChaveViaSupabase } from "@/lib/ai/ia-sem-chave/aviso";
+import { ENVS_OBRIGATORIAS_DO_WORKER_DE_VOZ } from "./env-obrigatorio";
 import { resolveOrCreateCallerContact } from "@/lib/voip/resolve-caller";
 import { garantirLeadDaConversa } from "@/lib/leads/nascimento-do-lead";
 import { buscarConhecimento, resolverAcervoDoAgente } from "@/lib/ai/knowledge/busca";
@@ -253,6 +255,15 @@ async function handleAudioSocketConnection(socket: net.Socket, uuid: string, lef
     socket.end();
     return;
   }
+  // Sem credencial OpenAI da organização a ligação NÃO abre (ADR-0005): a
+  // sessão Realtime é paga, e a chave de outra conta não responde por ela. O
+  // worker avisa na Central (um aviso por organização) e encerra o socket.
+  if (agent.apiKey === null) {
+    console.error(`[audiosocket] org ${callRow.organization_id} sem credencial OpenAI ativa e validada — ligação recusada`);
+    await avisarIaDesligadaPorFaltaDeChaveViaSupabase(supabaseAdmin, callRow.organization_id);
+    socket.end();
+    return;
+  }
 
   // Mesmo acervo que o agente de texto (WhatsApp) já usa — reaproveita
   // resolverAcervoDoAgente/buscarConhecimento em vez de reimplementar RAG
@@ -346,8 +357,10 @@ function startAudioSocketServer() {
 // ---------- bootstrap ----------
 
 function assertEnv() {
-  const required = ["ARI_URL", "ARI_WS_URL", "ARI_USERNAME", "ARI_PASSWORD", "OPENAI_API_KEY"];
-  const missing = required.filter((k) => !process.env[k]);
+  // A chave da OpenAI NÃO entra aqui (ADR-0005): ela é credencial da
+  // organização, lida por ligação. Exigi-la no boot deixava o worker fora do ar
+  // em toda instalação com a env vazia — que passa a ser toda instalação.
+  const missing = ENVS_OBRIGATORIAS_DO_WORKER_DE_VOZ.filter((k) => !process.env[k]);
   if (missing.length > 0) {
     throw new Error(`[voice-agent] env faltando: ${missing.join(", ")}`);
   }

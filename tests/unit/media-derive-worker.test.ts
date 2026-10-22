@@ -50,10 +50,21 @@ vi.mock("@/lib/supabase/admin", () => ({
             : tabela === "ai_agent_versions"
               ? agenteComVideo
               : messageRow;
+      // O binding do dublê é o da VISÃO: a transcrição consulta o SEU ponto
+      // (`transcricao_de_audio`), e um dublê que devolvesse a mesma linha para
+      // qualquer `purpose` resolveria uma credencial a mais e mandaria o modelo
+      // de visão para o transcritor.
+      let purposeFiltrado: unknown = null;
+      const linhaDaConsulta = () =>
+        tabela === "ai_purpose_bindings" && purposeFiltrado !== "visao_de_imagem" ? null : linha;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const terminais: any = {
-        maybeSingle: async () => ({ data: linha, error: null }),
-        single: async () => ({ data: linha, error: null }),
+        eq: (coluna: string, valor: unknown) => {
+          if (coluna === "purpose") purposeFiltrado = valor;
+          return chain;
+        },
+        maybeSingle: async () => ({ data: linhaDaConsulta(), error: null }),
+        single: async () => ({ data: linhaDaConsulta(), error: null }),
         insert: async (row: Record<string, unknown>) => {
           if (tabela === "agent_inbox_items") inboxInsertMock(row);
           return { error: null };
@@ -63,7 +74,7 @@ vi.mock("@/lib/supabase/admin", () => ({
           return { eq: () => ({ eq: async () => ({ error: null }) }) };
         },
         then: (resolve: (v: unknown) => unknown) =>
-          Promise.resolve({ data: linha ? [linha] : [], error: null }).then(resolve),
+          Promise.resolve({ data: linhaDaConsulta() ? [linhaDaConsulta()] : [], error: null }).then(resolve),
       };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const chain: any = new Proxy(terminais, {

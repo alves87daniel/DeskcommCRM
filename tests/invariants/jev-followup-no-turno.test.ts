@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import pg from "pg";
+import { cadastrarCredencialDeTeste } from "../support/credencial-de-teste";
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { createFollowupTurnHandler, type FollowupTurnDeps } from "@/lib/agent-engine/agent/followup-turn";
@@ -145,7 +146,7 @@ type DepsDoJev = ReturnType<typeof jevDuble>["deps"];
 function handlerCom(jev: DepsDoJev, opts: { concluirFalha?: boolean } = {}) {
   const deps: FollowupTurnDeps = {
     crmCfg: { supabase: {} as never } as never,
-    llmCfg: { anthropicApiKey: "fake" } as never,
+    llmCfg: {} as never, // a chave é a credencial da organização (ADR-0005)
     knobs: {
       historyLimit: 20,
       maxContextTokens: 4000,
@@ -280,6 +281,7 @@ async function cenarioAteOClassificar(settings: unknown): Promise<Cenario> {
     `insert into organizations (id, slug, legal_name, display_name, settings) values ($1, $2, 'Jev Followup', 'Jev Followup', $3)`,
     [org, `jev-followup-${org}`, JSON.stringify(settings)],
   );
+  await cadastrarCredencialDeTeste(pool, org);
   const { rows: ct } = await pool.query<{ id: string }>(
     `insert into contacts (organization_id, name, phone_number) values ($1, 'Lead', '+5511900000441') returning id`,
     [org],

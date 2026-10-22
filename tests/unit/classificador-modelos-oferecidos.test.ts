@@ -4,8 +4,12 @@
  * escolhe um modelo de um provedor sem chave, salva, e a tela passa a dizer
  * "nenhuma intenção casou" — uma frase sobre o texto dele, não sobre a chave que
  * falta.
+ *
+ * Desde a ADR-0005 a lista tem UMA origem: a credencial da organização. A
+ * "chave desta instalação" (o `.env`) saiu — ela oferecia um classificador que
+ * rodava pela conta de outra pessoa.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { listClassifierModels } from "@/lib/ai/classifier-models";
 
@@ -36,7 +40,9 @@ function db(opts: {
   } as never;
 }
 
-const SEM_PLATAFORMA = { anthropic: false, openai: false };
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("listClassifierModels", () => {
   it("oferece apenas provedores com credencial da organização ativa e validada", async () => {
@@ -48,34 +54,32 @@ describe("listClassifierModels", () => {
         onIn: (v) => (pedidos = v),
       }),
       "org1",
-      SEM_PLATAFORMA,
     );
     expect(pedidos).toEqual(["openai"]);
-    expect(out).toEqual([
-      { provider: "openai", model_id: "gpt-5-mini", display_name: "GPT-5 mini", origem: "org" },
-    ]);
+    expect(out).toEqual([{ provider: "openai", model_id: "gpt-5-mini", display_name: "GPT-5 mini" }]);
   });
 
-  it("a chave da instalação também conta — quem hospeda configurou o .env, não a tela", async () => {
-    let pedidos: unknown = null;
-    await listClassifierModels(
-      db({ creds: { data: [] }, models: { data: [] }, onIn: (v) => (pedidos = v) }),
+  it("a chave no .env da instalação NÃO conta — a organização sem credencial não tem classificador (ADR-0005)", async () => {
+    vi.stubEnv("ANTHROPIC_API_KEY", "sk-ant-da-instalacao");
+    vi.stubEnv("OPENAI_API_KEY", "sk-da-instalacao");
+    const consultouCatalogo = vi.fn();
+    const out = await listClassifierModels(
+      db({ creds: { data: [] }, models: { data: [] }, onIn: consultouCatalogo }),
       "org1",
-      { anthropic: true, openai: false },
     );
-    expect(pedidos).toEqual(["anthropic"]);
+    expect(out).toEqual([]);
+    expect(consultouCatalogo).not.toHaveBeenCalled();
   });
 
-  it("credencial da organização vence a chave da instalação na marcação de origem", async () => {
+  it("a opção não carrega 'origem': há uma só, e um rótulo '(chave desta instalação)' não tem o que marcar", async () => {
     const out = await listClassifierModels(
       db({
         creds: { data: [{ provider: "anthropic" }] },
         models: { data: [{ provider: "anthropic", model_id: "claude-haiku-4-5", display_name: "Haiku" }] },
       }),
       "org1",
-      { anthropic: true, openai: false },
     );
-    expect(out[0]?.origem).toBe("org");
+    expect(out[0]).not.toHaveProperty("origem");
   });
 
   it("a chave do Jev (que não conversa) não abre o catálogo dele como classificador", async () => {
@@ -87,7 +91,6 @@ describe("listClassifierModels", () => {
         onIn: (v) => (pedidos = v),
       }),
       "org1",
-      SEM_PLATAFORMA,
     );
     expect(pedidos).toEqual(["openai"]);
     expect(out.map((m) => m.provider)).toEqual(["openai"]);
@@ -98,7 +101,6 @@ describe("listClassifierModels", () => {
     const out = await listClassifierModels(
       db({ creds: { data: [] }, models: { data: [] }, onIn: consultouCatalogo }),
       "org1",
-      SEM_PLATAFORMA,
     );
     expect(out).toEqual([]);
     expect(consultouCatalogo).not.toHaveBeenCalled();
@@ -106,11 +108,7 @@ describe("listClassifierModels", () => {
 
   it("falha da consulta SOBE — lista vazia seria lida como 'não dá para escolher modelo'", async () => {
     await expect(
-      listClassifierModels(
-        db({ creds: { error: { message: "boom" } } }),
-        "org1",
-        SEM_PLATAFORMA,
-      ),
+      listClassifierModels(db({ creds: { error: { message: "boom" } } }), "org1"),
     ).rejects.toThrow(/classifier_models_credentials_failed/);
   });
 
@@ -121,7 +119,6 @@ describe("listClassifierModels", () => {
         models: { data: [{ provider: "openai", model_id: "gpt-5-mini", display_name: null }] },
       }),
       "org1",
-      SEM_PLATAFORMA,
     );
     expect(out[0]?.display_name).toBe("gpt-5-mini");
   });

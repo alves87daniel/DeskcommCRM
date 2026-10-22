@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import pg from "pg";
+import { cadastrarCredencialDeTeste } from "../support/credencial-de-teste";
 
 import type * as InboundTurn from "@/lib/agent-engine/agent/inbound-turn";
 import type * as TurnoJaRespondido from "@/lib/agent-engine/agent/turno-ja-respondido";
@@ -121,7 +122,7 @@ const USO = {
 function montaHandler() {
   return m.createInboundTurnHandler({
     crmCfg: { supabase: {} as never },
-    llmCfg: { anthropicApiKey: "fake" } as never,
+    llmCfg: {} as never, // a chave é a credencial da organização (ADR-0005)
     knobs: {
       historyLimit: 10,
       maxContextTokens: 1000,
@@ -214,6 +215,7 @@ beforeAll(async () => {
      values ($1,'turno-duplicado','Turno Duplicado','Turno Duplicado') on conflict (id) do nothing`,
     [ORG],
   );
+  await cadastrarCredencialDeTeste(pool, ORG);
   await pool.query(
     `insert into channel_sessions (id, organization_id, waha_session_name, status, webhook_secret_encrypted)
      values ($1,$2,'turno-duplicado-session','WORKING','\\x00'::bytea),
@@ -506,7 +508,7 @@ describe("resposta obsoleta — a porta: o handler real não envia o que ficou d
     expect(claimed?.id).toBe(job.id);
     const handler = m.createInboundTurnHandler({
       crmCfg: { supabase: {} as never },
-      llmCfg: { anthropicApiKey: "fake" } as never,
+      llmCfg: {} as never, // a chave é a credencial da organização (ADR-0005)
       knobs: {
         historyLimit: 10,
         maxContextTokens: 1000,

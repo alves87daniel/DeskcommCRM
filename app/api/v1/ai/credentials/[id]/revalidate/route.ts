@@ -1,3 +1,4 @@
+import { fecharAvisoDeIaSemChaveViaSupabase } from "@/lib/ai/ia-sem-chave/aviso";
 import { requireSupportWrite } from "@/lib/impersonate/support";
 /**
  * POST /api/v1/ai/credentials/:id/revalidate (admin)
@@ -108,6 +109,9 @@ export async function POST(
   if (updErr || !updated) {
     return fail("internal_error", "Erro ao atualizar credential.", 500, { requestId });
   }
+  // Item 20 da #33: revalidada com sucesso é credencial utilizável — o aviso
+  // "IA desligada por falta de chave" desta organização fecha.
+  if (result.ok) await fecharAvisoDeIaSemChaveViaSupabase(admin, activeOrg.orgId);
 
   await audit({
     action: "ai.credential_revalidated",

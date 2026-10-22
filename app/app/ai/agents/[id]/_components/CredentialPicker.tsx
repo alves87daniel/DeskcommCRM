@@ -23,8 +23,6 @@ interface Props {
   onChange: (id: string) => void;
   disabled?: boolean;
   id?: string;
-  /** A instalação tem chave deste provedor no `.env`? */
-  instalacaoTemChave?: boolean;
 }
 
 export const STATUS_LABEL: Record<ReturnType<typeof credentialStatus>, string> = {
@@ -35,15 +33,6 @@ export const STATUS_LABEL: Record<ReturnType<typeof credentialStatus>, string> =
   inactive: "inativa",
 };
 
-/**
- * O valor que representa "a chave que veio na instalação".
- *
- * Um `<SelectItem>` não aceita valor vazio, e o vazio já significa "não
- * escolhida" no formulário — daí o token. Ele NÃO chega ao servidor: o
- * formulário o traduz em `credential_id: null`, que é o contrato da versão.
- */
-export const CHAVE_DA_INSTALACAO = "__instalacao__";
-
 export function CredentialPicker({
   provider,
   credentials,
@@ -51,13 +40,13 @@ export function CredentialPicker({
   onChange,
   disabled,
   id,
-  instalacaoTemChave = false,
 }: Props) {
   const t = useT();
   const filtered = credentials.filter((c) => c.provider === provider);
-  // Sem nenhuma das duas origens não há o que escolher — e é aí que o atalho
-  // para cadastrar precisa aparecer.
-  const semOpcao = filtered.length === 0 && !instalacaoTemChave;
+  // Sem credencial da organização não há o que escolher — e é aí que o atalho
+  // para cadastrar precisa aparecer. (A opção "a chave desta instalação" saiu
+  // com a ADR-0005: toda versão aponta para uma credencial da organização.)
+  const semOpcao = filtered.length === 0;
 
   return (
     <div className="space-y-1">
@@ -67,17 +56,6 @@ export function CredentialPicker({
           <SelectValue placeholder={t("Escolha uma chave")} />
         </SelectTrigger>
         <SelectContent>
-          {/*
-            A chave do `.env` é o caso MAIS COMUM do produto — quem instala pelo
-            kit cola a chave no terminal e nunca abre a tela de Credenciais. O
-            runtime sempre soube usá-la; só esta tela não deixava escolhê-la, e o
-            resultado era um editor onde o dono não conseguia salvar nada.
-          */}
-          {instalacaoTemChave ? (
-            <SelectItem value={CHAVE_DA_INSTALACAO}>
-              {t("A chave desta instalação")} ({provider})
-            </SelectItem>
-          ) : null}
           {filtered.map((c) => {
             const st = credentialStatus(c);
             return (

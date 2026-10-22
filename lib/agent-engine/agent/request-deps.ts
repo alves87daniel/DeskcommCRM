@@ -9,8 +9,11 @@ import type { InboundTurnDeps } from './inbound-turn';
 export function requestTurnDeps(): InboundTurnDeps {
   const env = loadEnv();
   const fixture = process.env.INTERNAL_AGENT_RUN_STUB === 'true';
+  // O dublê troca SÓ o provedor (registry): a credencial da organização continua
+  // sendo exigida pelo resolvedor, como em produção (ADR-0005). Quem roda o
+  // dublê cadastra uma credencial de mentira na organização de teste
+  // (`scripts/bootstrap-owner.ts` faz isso sob INTERNAL_AGENT_RUN_STUB).
   const llmCfg = llmEdgeConfigFromEnv(env);
-  if (fixture) llmCfg.anthropicApiKey = 'local-controlled-provider';
   return {
     ...(fixture
       ? {

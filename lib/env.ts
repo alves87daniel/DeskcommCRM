@@ -210,13 +210,18 @@ const schema = z.object({
   UPSTASH_REDIS_REST_URL: required("UPSTASH_REDIS_REST_URL"),
   UPSTASH_REDIS_REST_TOKEN: required("UPSTASH_REDIS_REST_TOKEN"),
 
-  // AI providers — env-gated. Worker no-ops with skip="ai_gateway_key_missing"
-  // when AI_GATEWAY_API_KEY is absent, so production boot must not be fatal.
+  // ═══ CHAVES DE IA DO AMBIENTE: DECLARADAS, NUNCA LIDAS PELO PRODUTO ═══
+  //
+  // `AI_GATEWAY_API_KEY`, `OPENROUTER_API_KEY`, `ANTHROPIC_API_KEY` e
+  // `OPENAI_API_KEY` seguem no schema SÓ para scripts locais de desenvolvimento
+  // e teste (`scripts/smoke-llm.ts`, `scripts/provoke-agent-turn.ts`) e ficam
+  // VAZIAS em toda instalação de produção. Código de produto em app/, lib/,
+  // workers/, hooks/ e components/ não as lê para atender organização: a chave
+  // de todo ponto de IA sai de `ai_provider_credentials` da organização
+  // (ADR-0005). A cerca `tests/unit/ia-sem-chave-da-plataforma.test.ts` reprova
+  // leitura delas fora deste arquivo e de `lib/agent-engine/env.ts`.
   AI_GATEWAY_API_KEY: z.string().optional().default(""),
   AI_GATEWAY_BASE_URL: z.string().optional().default(""),
-  // OpenRouter: alternativa ao gateway da Vercel, compatível com a API da
-  // OpenAI. Opcional — sem ela nada muda; com ela o chat passa a ser roteado
-  // por lá. Ver resolveLanguageModel() em lib/ai/gateway.ts.
   OPENROUTER_API_KEY: z.string().optional().default(""),
   OPENROUTER_BASE_URL: z.string().optional().default(""),
   // Atribuição OPCIONAL da OpenRouter (`HTTP-Referer` / `X-Title`): identifica a
@@ -233,19 +238,15 @@ const schema = z.object({
   // e NUNCA `z.enum` (motivo mais abaixo, em AGENT_DISPATCH_CONSUMER): quem valida
   // a grafia é o boot do worker, em `lib/agent-engine/env.ts`.
   OPENAI_REASONING_EFFORT: z.string().optional().default(""),
-  // Transcrição de áudio num serviço COMPATÍVEL com o da OpenAI (Groq, um
-  // Whisper próprio): a chave vale só para `/audio/transcriptions` — a conversa
-  // com o cliente e a leitura de imagem continuam no provedor do ponto.
-  // Vazio é ausente, como no resto do arquivo: sem `TRANSCRIPTION_API_KEY` a
-  // transcrição usa a `OPENAI_API_KEY` acima, que é o comportamento de sempre.
-  // Quem lê é o worker de derivação de mídia (`workers/media-derive-worker.ts`).
-  TRANSCRIPTION_API_KEY: z.string().optional().default(""),
-  TRANSCRIPTION_BASE_URL: z.string().optional().default(""),
+  // Transcrição de áudio: SEMPRE na OpenAI, com a chave OpenAI da ORGANIZAÇÃO
+  // (ADR-0005). O "serviço compatível" com chave e endereço próprios do `.env`
+  // saiu junto com a chave da instalação. Ficam os dois knobs sem chave, que
+  // valem com a chave da organização. Quem lê é o worker de derivação de mídia
+  // (`workers/media-derive-worker.ts`).
   TRANSCRIPTION_MODEL: z.string().optional().default(""),
   // Idiomas esperados no áudio, ISO-639-1 separados por vírgula ("es" ou
-  // "pt,es"). Vazio = o serviço detecta sozinho. Vale com a chave acima E com a
-  // da OpenAI da organização — assim como `TRANSCRIPTION_MODEL`. Leitura
-  // tolerante em `idiomasDaTranscricao` (grafia errada não derruba o worker).
+  // "pt,es"). Vazio = o serviço detecta sozinho. Leitura tolerante em
+  // `idiomasDaTranscricao` (grafia errada não derruba o worker).
   TRANSCRIPTION_LANGUAGES: z.string().optional().default(""),
   // Endereço da API do Jev (TypeSafe AI). Vazio é ausente: vale
   // https://api.typesafe.ai. Existe para o dublê do e2e — a CHAVE nunca vem
@@ -607,53 +608,6 @@ if (env.NODE_ENV === "production") {
   }
 }
 
-// Este processo só conhece as chaves do AMBIENTE. As credenciais cadastradas em
-// IA › Credenciais moram no banco e são resolvidas mais tarde, no contexto da
-// organização; por isso ausência aqui nunca pode virar diagnóstico de "IA muda".
-// `OPENROUTER_API_KEY` entra na condição porque `resolveLanguageModel`
-// (lib/ai/gateway.ts) a trata como configuração válida no ambiente, assim como
-// gateway e Anthropic.
-// `OPENAI_API_KEY` entra pelo mesmo motivo, com a diferença que o aviso não
-// precisa esconder: ela atende os pontos do provedor que a ORGANIZAÇÃO escolheu
-// (é o último degrau de `resolverModeloDoPonto`, lib/ai/gateway-binding.ts).
-// Sem esta linha, uma instalação que responde pelo OpenAI lia no boot que
-// "nenhuma chave de IA" estava configurada — issue #1181.
-if (
-  !env.AI_GATEWAY_API_KEY &&
-  !env.ANTHROPIC_API_KEY &&
-  !env.OPENROUTER_API_KEY &&
-  !env.OPENAI_API_KEY
-) {
-  console.warn(
-    "[env] Nenhuma chave de IA configurada no ambiente " +
-      "(AI_GATEWAY_API_KEY, ANTHROPIC_API_KEY, OPENROUTER_API_KEY ou OPENAI_API_KEY). " +
-      "Isto não prova que o agente está sem credencial: cada organização pode ter uma chave " +
-      "cadastrada em IA › Credenciais. A falta real só é conhecida quando a resolução completa " +
-      "do turno não encontra chave em nenhum degrau.",
-  );
-}
-// Este aviso ANUNCIAVA UM DESFECHO que o boot não tem como saber, e a correção
-// aqui é a mesma que o bloco de cima já pagou uma vez. Ele dizia "RAG embedding
-// unavailable" e "voice-note transcription is off" — as duas afirmações são
-// falsas numa instalação onde a organização cadastrou a chave PELA TELA:
-// o preparo de material resolve a chave por uma escada (ponto de IA →
-// credencial da organização → gateway → este env — `lib/ai/embeddings/chave.ts`),
-// e a transcrição já caía na credencial da org antes disso
-// (`workers/media-derive-worker.ts`).
-//
-// Quem lê um aviso de boot não consegue conferir o desfecho; ele acredita. E
-// acreditar em "está desligado" quando está ligado faz a pessoa ir cadastrar
-// uma chave que ela já tem — ou, pior, desistir do recurso. Então o aviso passou
-// a dizer só o que ESTE processo sabe: o que a variável é, e o que fazer se não
-// houver chave em lugar nenhum.
-if (!env.OPENAI_API_KEY) {
-  console.warn(
-    "[env] OPENAI_API_KEY ausente — ela é o ÚLTIMO degrau da escada de chave da OpenAI " +
-      "(preparo de material do acervo e transcrição de áudio). Se alguma organização já " +
-      "cadastrou a chave em IA › Credenciais, os dois seguem funcionando por ela; se não " +
-      "cadastrou nenhuma, ambos ficam parados até que alguém cadastre — pela tela ou aqui.",
-  );
-}
 if (!env.IMPERSONATE_COOKIE_SECRET || env.IMPERSONATE_COOKIE_SECRET.length < 32) {
   console.warn(
     "[env] IMPERSONATE_COOKIE_SECRET not set or shorter than 32 chars — impersonate flow will return 503 at runtime.",

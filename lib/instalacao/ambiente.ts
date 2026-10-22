@@ -3,9 +3,22 @@
  * processo, sem banco.
  *
  * Existe porque o onboarding pergunta coisas que o instalador já perguntou. Quem
- * roda o `install.sh` escolhe a IA, cola a chave, sobe o WhatsApp e o Redis; e
- * então abre a primeira tela e é tratado como se tivesse acabado de chegar. A
+ * roda o `install.sh` sobe o WhatsApp e o Redis e configura o e-mail; e então
+ * abre a primeira tela e é tratado como se tivesse acabado de chegar. A
  * detecção automática que falta começa aqui.
+ *
+ * ═══ O QUE NÃO MORA MAIS AQUI (ADR-0005) ═══
+ *
+ * Até 2026-10 este retrato dizia, por provedor, se "existe chave de plataforma
+ * no `.env` desta instalação" (`chavesDeProvedor`) e se havia gateway de IA
+ * (`gateway`). Quatro telas liam isso para oferecer "a chave desta instalação"
+ * e para calar o aviso de "falta chave" quando o `.env` tinha uma — a chave de
+ * UMA conta atendendo todas as organizações do servidor. A decisão do dono do
+ * produto (`docs/adr/0005-ia-paga-por-cada-organizacao.md`) acabou com o
+ * conceito: a chave de IA é SEMPRE credencial da organização, no banco, e este
+ * retrato — que é síncrono e sem I/O de propósito — não tem como respondê-la.
+ * Quem responde é `lerRetratoDaInstalacao` (`./retrato.ts`), lendo
+ * `ai_provider_credentials`.
  *
  * ⚠️ Desfaz uma premissa escrita no código: `app/api/v1/ai/providers/route.ts`
  * afirma que "o servidor web não enxerga o env do worker" e por isso nunca
@@ -15,10 +28,9 @@
  * nome de modelo, que vivem apenas no schema Zod de `lib/agent-engine/env.ts`;
  * `process.env` continua alcançável nos dois lados.
  *
- * Fonte injetável de propósito, como `listClassifierModels` recebe as chaves de
- * plataforma: é o que permite testar sem mexer no `process.env` do processo.
+ * Fonte injetável de propósito: é o que permite testar sem mexer no
+ * `process.env` do processo.
  */
-import { IDS_DE_PROVEDOR } from "@/lib/ai/pontos/provedores";
 import { lerTransporteDeWhatsapp, type TransporteDeWhatsapp } from "@/lib/channels/transporte";
 
 /**
@@ -29,10 +41,6 @@ import { lerTransporteDeWhatsapp, type TransporteDeWhatsapp } from "@/lib/channe
 export type FonteDeAmbiente = Record<string, string | undefined>;
 
 export interface AmbienteDaInstalacao {
-  /** Por provedor: existe chave de plataforma no `.env` desta instalação? */
-  chavesDeProvedor: Record<string, boolean>;
-  /** Gateway de IA configurado (alternativa a chave direta de provedor). */
-  gateway: boolean;
   /** Envio de e-mail configurado — falso em toda instalação pelo kit hoje. */
   email: boolean;
   /**
@@ -47,17 +55,6 @@ export interface AmbienteDaInstalacao {
   transporteDeWhatsapp: TransporteDeWhatsapp;
 }
 
-/** O nome da variável de chave de plataforma de cada provedor. */
-const VARIAVEL_DA_CHAVE: Record<string, string> = {
-  anthropic: "ANTHROPIC_API_KEY",
-  openai: "OPENAI_API_KEY",
-  openrouter: "OPENROUTER_API_KEY",
-  // O Google não tem chave de plataforma: `resolveOrgLlmConfig` não tem ramo de
-  // fallback para ele, e nenhuma variável existe em `lib/env.ts` nem no
-  // `.env.example`. Declarar aqui um nome inventado faria o leitor prometer um
-  // caminho que o runtime recusa.
-};
-
 function preenchida(source: FonteDeAmbiente, nome: string | undefined): boolean {
   if (!nome) return false;
   // Vazio é ausente — é o contrato do `.env` do projeto: o template gera
@@ -66,14 +63,7 @@ function preenchida(source: FonteDeAmbiente, nome: string | undefined): boolean 
 }
 
 export function lerAmbiente(source: FonteDeAmbiente = process.env): AmbienteDaInstalacao {
-  const chavesDeProvedor: Record<string, boolean> = {};
-  for (const id of IDS_DE_PROVEDOR) {
-    chavesDeProvedor[id] = preenchida(source, VARIAVEL_DA_CHAVE[id]);
-  }
-
   return {
-    chavesDeProvedor,
-    gateway: preenchida(source, "AI_GATEWAY_API_KEY"),
     // Dois transportes, e a pergunta aqui é "esta instalação consegue mandar
     // e-mail?" — não "qual provedor ela usa". Ler só um deles diria "e-mail não
     // configurado" a quem preencheu o outro. O `.env` é a única fonte visível

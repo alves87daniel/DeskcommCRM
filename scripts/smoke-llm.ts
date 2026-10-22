@@ -15,7 +15,9 @@
  *   6. o teto de `ai_budgets` avisa na 1ª chamada acima dele e BLOQUEIA na 2ª,
  *      antes do provider (LlmBudgetExceededError) — e o script restaura o estado.
  *
- * Requer ANTHROPIC_API_KEY real no env. Custo: ~4 chamadas curtas de Haiku (as 2
+ * Requer ANTHROPIC_API_KEY real e AI_CRED_AES_KEY no env: a chave é gravada
+ * como credencial cifrada da organização do smoke, porque o seam não lê chave
+ * do ambiente (ADR-0005). Custo: ~4 chamadas curtas de Haiku (as 2
  * do teste de cache são as caras; as do passo 6 são de uma palavra).
  */
 import pg from 'pg';
@@ -27,6 +29,7 @@ import {
   llmEdgeConfigFromEnv,
   LlmBudgetExceededError,
 } from '@/lib/agent-engine/edge/llm/run-model-call';
+import { bufToBytea, encryptKey } from '@/lib/crypto/aes_gcm';
 import { stablePrefixHash } from '@/lib/agent-engine/edge/llm/stable-prefix';
 
 const DB_URL = process.env.SMOKE_DB_URL ?? 'postgresql://postgres:postgres@127.0.0.1:54329/postgres';
@@ -73,7 +76,10 @@ function bigSystem(): string {
 }
 
 async function main(): Promise<void> {
-  if (!process.env.ANTHROPIC_API_KEY) fail('ANTHROPIC_API_KEY ausente no env — o smoke exige o modelo real');
+  const chave = process.env.ANTHROPIC_API_KEY;
+  if (!chave) fail('ANTHROPIC_API_KEY ausente no env — o smoke exige o modelo real');
+  if (!process.env.AI_CRED_AES_KEY)
+    fail('AI_CRED_AES_KEY ausente no env — a chave é gravada como credencial cifrada da organização (ADR-0005)');
   const min = MIN_CACHEABLE[MODEL];
   if (min === undefined) fail(`modelo ${MODEL} sem entrada em MIN_CACHEABLE — adicione o mínimo cacheável dele`);
 
@@ -85,12 +91,24 @@ async function main(): Promise<void> {
      on conflict (id) do update set settings = excluded.settings`,
     [ORG, MODEL],
   );
+  // A chave da organização do smoke, como a tela de Credenciais grava: cifrada,
+  // ativa e validada. É a ÚNICA origem de chave do seam (ADR-0005).
+  const segredo = encryptKey(chave);
+  await db.query(
+    `insert into ai_provider_credentials
+       (organization_id, provider, label, api_key_encrypted, api_key_iv, api_key_tag, api_key_last4, is_active, validated_at)
+     values ($1, 'anthropic', 'smoke-llm', $2::bytea, $3::bytea, $4::bytea, $5, true, now())
+     on conflict (organization_id, provider, label) do update
+       set api_key_encrypted = excluded.api_key_encrypted,
+           api_key_iv = excluded.api_key_iv,
+           api_key_tag = excluded.api_key_tag,
+           api_key_last4 = excluded.api_key_last4,
+           is_active = true,
+           validated_at = now()`,
+    [ORG, bufToBytea(segredo.ciphertext), bufToBytea(segredo.iv), bufToBytea(segredo.tag), segredo.last4],
+  );
 
-  const cfg = llmEdgeConfigFromEnv({
-    ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-    OPENAI_API_KEY: process.env.OPENAI_API_KEY,
-    LLM_CACHE_TTL: '1h',
-  });
+  const cfg = llmEdgeConfigFromEnv({ LLM_CACHE_TTL: '1h' });
   const system = bigSystem();
   const tools = {
     consultar_catalogo: tool({

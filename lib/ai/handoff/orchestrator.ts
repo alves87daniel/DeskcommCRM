@@ -69,7 +69,13 @@ export type HandoffReason =
    * a MESMA constante que o engine grava: dois caminhos param a IA pelo mesmo
    * motivo, e duas grafias fariam quem filtra por uma achar metade das conversas.
    */
-  | "orcamento_de_ia";
+  | "orcamento_de_ia"
+  /**
+   * A organização está sem chave de IA (ADR-0005, D3). Literal de
+   * `HANDOFF_REASON_SEM_CHAVE` (`lib/ai/ia-sem-chave/motivo.ts`), pelo mesmo
+   * motivo do de cima: o motor e a voz gravam a mesma grafia.
+   */
+  | "ia_sem_chave";
 
 export interface TriggerHandoffInput {
   serviceBoundary?: ServiceBoundary;
@@ -130,6 +136,7 @@ const MOTIVO_DA_PASSAGEM = {
   legal_mention: "legal_mention",
   refund_mention: "refund_mention",
   orcamento_de_ia: "orcamento_de_ia",
+  ia_sem_chave: "ia_sem_chave",
 } satisfies Record<HandoffReason, MotivoDaPassagem>;
 
 function motivoDaPassagem(reason: HandoffReason): MotivoDaPassagem {

@@ -48,6 +48,10 @@
     { "id": "handoff", "lane": "volta", "col": 2, "type": "service", "label": "performHumanHandoff / triggerHandoff", "sublabel": "conversa → fila humana, razão orcamento_de_ia, zero token" },
     { "id": "conversas", "lane": "volta", "col": 3, "type": "database", "label": "conversations / contacts", "sublabel": "status='pending' · bot_silenced_until='infinity' · force_human=true" },
     { "id": "retrata", "lane": "volta", "col": 1, "type": "service", "label": "retratarAvisos + CTE retrata", "sublabel": "gasto abaixo do limiar, teto apagado ou afrouxamento pela tela" }
+,
+
+    { "id": "semchave", "lane": "volta", "col": 4, "type": "service", "label": "LlmNotConfiguredError (terminal)", "sublabel": "ADR-0005: sem credencial ativa e validada da organização não há chave — nenhum degrau no .env; a mesma escolta devolve a conversa à equipe, sem retry" },
+    { "id": "avisosemchave", "lane": "volta", "col": 5, "type": "service", "label": "avisarIaDesligadaPorFaltaDeChave", "sublabel": "UM aviso 'IA desligada por falta de chave' por organização (dedup por título) · lib/ai/ia-sem-chave" }
   ],
   "edges": [
     { "id": "e1", "from": "card", "to": "hook", "label": "escolher o degrau · digitar o teto · marcar \"começar agora\"" },
@@ -93,6 +97,12 @@
     { "id": "e41", "from": "saude", "to": "regua", "label": "gasto do mês pelo caminho canônico" },
     { "id": "e42", "from": "kpis", "to": "budgets", "label": "current_month_consumed_cents — ACUMULADO, e o alerta diz isso" },
     { "id": "e43", "from": "kpis", "to": "saude", "label": "o alerta leva para a tela que tem o número real" }
+,
+    { "id": "e_semchave_1", "from": "credentials", "to": "semchave", "label": "credencial da organização ausente/revogada → lança (ADR-0005; a cerca ia-sem-chave-da-plataforma reprova qualquer ramo de env)" },
+    { "id": "e_semchave_2", "from": "semchave", "to": "handoff", "label": "comHandoffSeIaNaoResponder: passagem imediata, motivo ia_sem_chave, texto fixo (zero tokens)" },
+    { "id": "e_semchave_3", "from": "semchave", "to": "fila", "label": "terminal=true → cancelJob (nunca failJob/job_dead por conversa)" },
+    { "id": "e_semchave_4", "from": "handoff", "to": "avisosemchave", "label": "depois da passagem: abre o aviso da organização (também pelo worker de voz e pelos jobs sem escolta)" },
+    { "id": "e_semchave_5", "from": "avisosemchave", "to": "inbox", "label": "a Central mostra UM 'IA desligada por falta de chave' e a frase da regra aponta IA › Credenciais" }
   ],
   "cards": [
     {

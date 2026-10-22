@@ -8,7 +8,6 @@ import { escolherModeloDoProvedor } from "@/lib/ai/agents/escolher-modelo";
 import { capacidadesPadraoDoOnboarding } from "@/lib/ai/agents/capacidades-padrao";
 import { versionCreateSchema } from "@/lib/ai/agents/validation";
 import { lockRouter, writeRouterMembers } from "@/lib/ai/agents/router-members";
-import { chaveDePlataforma } from "@/lib/ai/runtime/agent";
 import { PROVIDERS } from "@/lib/ai/agents/validation";
 import { capabilitiesOf } from "@/lib/channels/capabilities";
 import type { ChannelProvider } from "@/lib/channels/types";
@@ -67,12 +66,12 @@ export async function resolveSetupModel(
      join ai_models m on m.provider=v.provider and m.model_id=v.model and m.supports_tools and m.deprecated_at is null
      left join ai_provider_credentials c on c.organization_id=a.organization_id and c.id=v.credential_id and c.provider=v.provider
      where a.organization_id=$1 and a.archived_at is null and a.paused_at is null and v.status='published'
-     and (v.credential_id is null or (c.is_active and c.validated_at is not null))
+     and c.is_active and c.validated_at is not null
      order by (v.channel_session_id=$2) desc,a.priority desc,a.created_at`,
     [orgId, channelId],
   );
   for (const row of published.rows) {
-    if (PROVIDERS.includes(row.provider) && (row.credential_id || chaveDePlataforma(row.provider)))
+    if (PROVIDERS.includes(row.provider) && row.credential_id)
       return {
         provider: row.provider,
         model: row.model,
@@ -82,7 +81,10 @@ export async function resolveSetupModel(
   }
   const org = await db.query("select settings from organizations where id=$1", [orgId]);
   const credentials = await db.query(
-    "select id,provider from ai_provider_credentials where organization_id=$1 and is_active and validated_at is not null order by created_at,id",
+    // A MAIS RECENTE por provedor vence (ADR-0005 D2): `find` abaixo pega a
+    // primeira do provedor, então a ordem decrescente é o que faz a chave nova
+    // valer na troca.
+    "select id,provider from ai_provider_credentials where organization_id=$1 and is_active and validated_at is not null order by created_at desc,id desc",
     [orgId],
   );
   const preferred = org.rows[0]?.settings?.llm?.provider;
@@ -92,7 +94,7 @@ export async function resolveSetupModel(
   for (const provider of providers) {
     if (!PROVIDERS.includes(provider)) continue;
     const credential = credentials.rows.find((c) => c.provider === provider);
-    if (!credential && !chaveDePlataforma(provider)) continue;
+    if (!credential) continue;
     const models = await db.query(
       "select model_id,display_name,is_default_for_provider,supports_tools,input_price_per_million_cents,output_price_per_million_cents from ai_models where provider=$1 and deprecated_at is null",
       [provider],
@@ -102,7 +104,7 @@ export async function resolveSetupModel(
       return {
         provider,
         model: selected.modelId,
-        credential_id: credential?.id ?? null,
+        credential_id: credential.id,
         label: `${provider} · ${models.rows.find((m) => m.model_id === selected.modelId)?.display_name ?? selected.modelId}`,
       };
   }

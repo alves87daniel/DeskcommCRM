@@ -432,14 +432,15 @@ describe("D12 — o clima roda com a chave colada pela tela", () => {
     });
   });
 
-  it("OpenAI só no .env, sem modelo escolhido para o clima: mede com o padrão da organização", async () => {
+  it("OpenAI só no .env, sem credencial: o clima NÃO é medido (ADR-0005 — a plataforma não custeia IA)", async () => {
     envMock.OPENAI_API_KEY = "sk-openai-da-instalacao";
     try {
       const { resultado, banco } = await rodar({
         settings: { llm: { provider: "openai", default_model: "gpt-5.6-terra" } },
       });
-      expect(resultado.skipped, `o worker desistiu: ${resultado.reason ?? "-"}`).toBe(false);
-      expect(banco.llm_calls[0]).toMatchObject({ provider: "openai", model: "openai/gpt-5.6-terra" });
+      expect(resultado).toEqual({ skipped: true, reason: "ai_gateway_key_missing" });
+      expect(generateObject).not.toHaveBeenCalled();
+      expect(banco.llm_calls).toHaveLength(0);
     } finally {
       envMock.OPENAI_API_KEY = "";
     }

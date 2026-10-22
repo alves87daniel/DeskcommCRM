@@ -20,10 +20,11 @@ import {
 import { camadasEfetivas } from "@/lib/agent-engine/guardrails/camadas-da-org";
 import { DEFAULT_CLASSIFIER_MODEL } from "@/lib/ai/gateway";
 import { resolverModeloDoPonto } from "@/lib/ai/gateway-binding";
-import { lerAmbiente } from "@/lib/instalacao/ambiente";
 import { logger } from "@/lib/logger";
 import { PROVEDORES } from "@/lib/ai/pontos/provedores";
 import { tagDeIdioma } from "@/lib/i18n/datas";
+import { AvisoDeIaSemChave } from "@/components/ai/AvisoDeIaSemChave";
+import { temCredencialDeIaUtilizavel } from "@/lib/ai/credenciais/utilizavel";
 import { CredentialsList } from "./_components/CredentialsList";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +50,9 @@ export default async function CredentialsPage() {
 
   const credentials = (data ?? []) as CredentialRow[];
   const canWrite = ROLE_RANK[activeOrg.role] >= ROLE_RANK.admin;
+  // A frase da regra (ADR-0005, D3) aparece onde se resolve: sem credencial
+  // utilizável a IA desta organização está desligada, e a tela diz isso.
+  const temChaveUtilizavel = await temCredencialDeIaUtilizavel(supabase, activeOrg.orgId);
 
   // Mesma regra do DELETE — e a mesma da FK `ON DELETE RESTRICT`: TODA versão
   // que aponta para a credencial trava a exclusão, não só a publicada. O número
@@ -141,12 +145,6 @@ export default async function CredentialsPage() {
       }
     : null;
 
-  // A chave do `.env` também é "IA principal" — sem ela na conta, a lista
-  // acusaria falta de IA a quem atende com a chave que veio na instalação.
-  const ambiente = lerAmbiente();
-  const instalacaoTemIa =
-    ambiente.gateway || Object.values(ambiente.chavesDeProvedor).some(Boolean);
-
   return (
     <div className="flex h-full flex-col gap-6 p-6">
       <header>
@@ -165,12 +163,12 @@ export default async function CredentialsPage() {
           )}
         </p>
       </header>
+      {temChaveUtilizavel ? null : <AvisoDeIaSemChave idioma={idioma} />}
       <CredentialsList
         initialData={credentials}
         canWrite={canWrite}
         usageMap={usageMap}
         jev={jev}
-        instalacaoTemIa={instalacaoTemIa}
       />
     </div>
   );

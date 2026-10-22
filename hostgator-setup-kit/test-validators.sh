@@ -2219,6 +2219,10 @@ provedor_ok() {  # provedor_ok <descrição> <VAR da chave> <valor> <AI_PROVIDER
 printf '%s\n' "$*" >> "$DOCKER_LOG"
 case "$1" in
   compose) case "$*" in *" exec "*) printf 'healthy\n{"data":{"status":"healthy"}}\n' ;; esac; exit 0 ;;
+  run)
+    # O cifrador da chave de IA (ADR-0005): "ct iv tag last4" de mentira.
+    case "$*" in *" --entrypoint node "*) printf 'deadbeef cafe f00d 1234\n'; exit 0 ;; esac
+    exit 0 ;;
 esac
 exit 0
 STUB
@@ -2249,16 +2253,22 @@ STUB
         "$(grep -E '^AI_PROVIDER=' "$raiz/crmia/.env" || echo '(ausente)')"
       exit 1
     fi
-    # E a chave que a pessoa tinha continua lá, com o valor dela.
-    #
-    # O fixture entra no formato ANTIGO (o `"'$val'"` acima, aspas simples) e sai
-    # daqui no formato NOVO: o valor atravessou o load_env de um kit atualizado
-    # lendo o .env de uma instalação velha, que é a rota de quem re-roda o
-    # install.sh depois de atualizar o kit. Por isso a asserção compara o VALOR,
-    # e o formato de entrada difere de propósito do de saída.
-    if ! grep -qx "$var=\"$val\"" "$raiz/crmia/.env"; then
-      printf '  ✗ %s — %s não sobreviveu: %s\n' "$desc" "$var" \
+    # A chave que a pessoa colou NÃO fica no .env (ADR-0005, D4): a linha sai
+    # declarada e VAZIA, e a chave vira credencial da organização do dono — o
+    # cifrador da imagem do app é chamado (o dublê acima responde por ele) e a
+    # tela diz que cadastrou. O fixture entra no formato ANTIGO (aspas simples):
+    # é a rota de quem re-roda o install.sh depois de atualizar o kit.
+    if ! grep -qx "$var=\"\"" "$raiz/crmia/.env"; then
+      printf '  ✗ %s — %s deveria sair declarada e VAZIA no .env (ADR-0005): %s\n' "$desc" "$var" \
         "$(grep -E "^$var=" "$raiz/crmia/.env" || echo '(ausente)')"
+      exit 1
+    fi
+    if ! grep -q -- '--entrypoint node' "$raiz/docker.log"; then
+      printf '  ✗ %s — a chave colada não foi cifrada para virar credencial da organização do dono\n' "$desc"
+      exit 1
+    fi
+    if ! printf '%s' "$saida" | grep -q "chave da $esperado cadastrada como credencial"; then
+      printf '  ✗ %s — a tela não disse que a chave virou credencial da organização do dono\n' "$desc"
       exit 1
     fi
     printf '  ✓ %s\n' "$desc"
@@ -2291,6 +2301,17 @@ TMP_SEM_IA="$(mktemp -d)"
 printf '%s\n' "$*" >> "$DOCKER_LOG"
 case "$1" in
   compose) case "$*" in *" exec "*) printf 'healthy\n{"data":{"status":"healthy"}}\n' ;; esac; exit 0 ;;
+  run)
+    # O cifrador da chave de IA (ADR-0005): a partir daqui "o banco" tem a
+    # credencial — é o que o psql dublado abaixo responde.
+    case "$*" in *" --entrypoint node "*) : > "$DOCKER_LOG.ia-cadastrada"; printf 'deadbeef cafe f00d 1234\n'; exit 0 ;; esac
+    # "A organização do dono tem credencial validada?": 1 depois de cadastrar
+    # nesta rodada, ou quando a rodada começa com ela cadastrada (IA_CADASTRADA=1).
+    case "$*" in *"count(*) from public.ai_provider_credentials"*)
+      if [ "${IA_CADASTRADA:-}" = 1 ] || [ -f "$DOCKER_LOG.ia-cadastrada" ]; then printf '1\n'; fi
+      exit 0 ;;
+    esac
+    exit 0 ;;
 esac
 exit 0
 STUB
@@ -2301,9 +2322,9 @@ STUB
     | grep -vE '^(ANTHROPIC|OPENROUTER|OPENAI)_API_KEY=|^AI_GATEWAY_API_KEY=' > "$VPS_PROJ/.env"
 
   rodar_sem_ia() {
-    : > "$VPS_LOG"
+    : > "$VPS_LOG"; rm -f "$VPS_LOG.ia-cadastrada"
     (cd "$VPS_PROJ" && env PATH="$VPS_RAIZ/bin:$PATH" DOCKER_LOG="$VPS_LOG" \
-      CRONTAB_SANDBOX="$CRONTAB_SANDBOX" SUPABASE_ACCESS_TOKEN= \
+      CRONTAB_SANDBOX="$CRONTAB_SANDBOX" SUPABASE_ACCESS_TOKEN= IA_CADASTRADA="${IA_CADASTRADA:-}" \
       bash "$VPS_RAIZ/install.sh" --yes 2>&1 || true) | sed -E 's/\x1b\[[0-9;]*m//g'
   }
 
@@ -2365,7 +2386,37 @@ STUB
   if printf '%s' "$rabo" | grep -q 'A IA ainda não atende'; then
     printf '  ✗ com a chave presente, a tela final avisou que falta chave de IA\n'; exit 1
   fi
-  printf '  ✓ com a chave presente, o lembrete não aparece (o aviso não é ruído permanente)\n'
+  # E a chave virou credencial da organização do dono (ADR-0005, D5): o
+  # cifrador foi chamado e o .env saiu com a variável declarada e vazia.
+  if ! grep -q -- '--entrypoint node' "$VPS_LOG"; then
+    printf '  ✗ com a chave presente, o instalador não a cadastrou como credencial da organização do dono\n'; exit 1
+  fi
+  if [ -n "$(valor_no_env "$VPS_PROJ/.env" ANTHROPIC_API_KEY)" ]; then
+    printf '  ✗ ANTHROPIC_API_KEY ficou com valor no .env — a chave deve viver só como credencial (ADR-0005)\n'; exit 1
+  fi
+  printf '  ✓ com a chave presente, o lembrete não aparece (o aviso não é ruído permanente) e a chave virou credencial\n'
+
+  # ── Rodar de novo com a credencial já cadastrada: não pergunta, não grava ──
+  # ADR-0005, D5 (dono do produto, 21/10/2026): a segunda execução lê o banco,
+  # não pergunta a chave do provedor cadastrado e não grava nada — sem violar a
+  # restrição única (organização, provedor, rótulo). Trocar chave é pela tela.
+  printf '%s\n' "$BASE_ENV" > "$VPS_PROJ/.env"
+  saida="$(IA_CADASTRADA=1 rodar_sem_ia)"
+  if ! printf '%s' "$saida" | grep -q 'Instalação concluída'; then
+    printf '  ✗ (idempotência) a rodada com credencial já cadastrada não chegou à tela final — inconclusivo\n'
+    exit 1
+  fi
+  if ! printf '%s' "$saida" | grep -q 'já está cadastrada como credencial'; then
+    printf '  ✗ (idempotência) o instalador não disse que a chave já estava cadastrada\n'; exit 1
+  fi
+  if grep -q -- '--entrypoint node' "$VPS_LOG"; then
+    printf '  ✗ (idempotência) o instalador cifrou/gravou a chave de novo com a credencial já cadastrada\n'; exit 1
+  fi
+  rabo="${saida##*Instalação concluída}"
+  if printf '%s' "$rabo" | grep -q 'A IA ainda não atende'; then
+    printf '  ✗ (idempotência) com a credencial no banco, a tela final avisou que falta chave\n'; exit 1
+  fi
+  printf '  ✓ rodar de novo com a credencial cadastrada: não pergunta, não grava, e o resumo lê o banco\n'
 ) || fail=1
 rm -rf "$TMP_SEM_IA"
 

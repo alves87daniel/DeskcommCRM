@@ -39,7 +39,7 @@ import { TETO_TOOLS_POR_AGENTE } from "@/lib/mcp/tools/selecao-por-pacote";
 import { PROVEDORES } from "@/lib/ai/pontos/provedores";
 
 import { ModelPicker, useModelMeta } from "./ModelPicker";
-import { CHAVE_DA_INSTALACAO, CredentialPicker, STATUS_LABEL, findCredential } from "./CredentialPicker";
+import { CredentialPicker, STATUS_LABEL, findCredential } from "./CredentialPicker";
 import { rotuloDoEstadoDoCanal } from "@/lib/channels/estado";
 import { bloqueioDePublicacao } from "@/lib/ai/agents/bloqueio-de-publicacao";
 import { mesmoRascunho } from "@/lib/ai/agents/mesmo-rascunho";
@@ -97,13 +97,6 @@ const ID_DO_MOTIVO_DO_PUBLICAR = "motivo-do-publicar";
 
 interface BaseProps {
   credentials: CredentialRow[];
-  /**
-   * Provedores cujas chaves vieram na INSTALAÇÃO (o `.env`), e não da tela de
-   * Credenciais. Sem isto, o editor exigia uma linha em `ai_provider_credentials`
-   * que a instalação pelo kit nunca cria — e o dono caía numa tela onde não
-   * conseguia salvar nada.
-   */
-  provedoresDaInstalacao?: string[];
   /**
    * O provedor que a organização já usa — `organizations.settings.llm.provider`,
    * lido pela página de CRIAÇÃO junto com as credenciais.
@@ -259,9 +252,10 @@ export function buildState(args: {
     priority: agent?.priority ?? 0,
     provider: (version?.provider as Provider) ?? provedorInicial(provedorPadrao),
     model: version?.model ?? "",
-    // `null` gravado = a versão usa a chave da instalação. Sem esta tradução,
-    // reabrir o agente mostraria o campo em branco e pediria para escolher de novo.
-    credential_id: version ? (version.credential_id ?? CHAVE_DA_INSTALACAO) : "",
+    // Linha antiga com `null` (a extinta "chave da instalação", ADR-0005) abre
+    // em branco de propósito: a pessoa precisa escolher uma credencial da
+    // organização antes de publicar de novo.
+    credential_id: version?.credential_id ?? "",
     channel_session_id: version?.channel_session_id ?? "",
     // O DEFAULT vira o prompt real do agente se ninguém editar — por isso é
     // traduzido de verdade (não só a interface): em espanhol ele instrui a IA
@@ -331,8 +325,7 @@ function toVersionPayload(s: FormState) {
     system_prompt: s.system_prompt,
     provider: s.provider,
     model: s.model,
-    // O token é da TELA; o contrato da versão é `null` = chave da instalação.
-    credential_id: s.credential_id === CHAVE_DA_INSTALACAO ? null : s.credential_id,
+    credential_id: s.credential_id,
     // "" na tela é "ainda não escolhi o número", e no contrato da versão isso é
     // `null`. Sem a tradução, o Zod recusaria a string vazia e o rascunho de
     // quem ainda não conectou o WhatsApp não salvaria — o defeito de origem.
@@ -449,14 +442,6 @@ export function AgentForm(props: Props) {
     if (!form.model) errors.model = t("Escolha o modelo de inteligência artificial.");
     if (!form.credential_id)
       errors.credential_id = t("Escolha a chave de acesso da empresa de inteligência artificial.");
-    // Escolher "a chave desta instalação" para um provedor que a instalação NÃO
-    // tem seria publicar um agente que morre em toda mensagem. A mesma recusa
-    // existe no servidor (rota de versões); aqui ela chega antes do clique.
-    if (
-      form.credential_id === CHAVE_DA_INSTALACAO &&
-      !(props.provedoresDaInstalacao ?? []).includes(form.provider)
-    )
-      errors.credential_id = `${t("Esta instalação não tem chave de")} ${form.provider}. ${t("Escolha outra empresa de IA ou cadastre uma chave.")}`;
     // ⚠️ O NÚMERO NÃO ENTRA AQUI — de propósito, e não por esquecimento.
     //
     // Esta lista é o que impede de SALVAR. Exigir o número aqui travava o
@@ -488,12 +473,10 @@ export function AgentForm(props: Props) {
   /**
    * A dica do botão "Publicar" — uma frase, vinda de UM motivo.
    *
-   * A régua é `lib/ai/agents/bloqueio-de-publicacao.ts`, e ela saiu daqui porque
-   * aqui ela estava errada para o caso mais comum do produto: perguntava por uma
-   * LINHA de credencial (`cred`), e "a chave desta instalação" não é uma linha —
-   * é `credential_id: null`. Quem instalou pelo kit e nunca abriu a tela de
-   * Credenciais via o botão desabilitado para sempre, pedindo para escolher a
-   * chave que tinha acabado de escolher.
+   * A régua é `lib/ai/agents/bloqueio-de-publicacao.ts`. Desde a ADR-0005 a
+   * única chave que existe é a credencial da organização: sem uma ativa e
+   * validada do provedor, o botão fica travado e a dica manda cadastrar em
+   * IA › Credenciais (o instalador já cadastra a chave colhida).
    */
   const publishBlockReason = React.useMemo(() => {
     if (!isEdit) return t("Salve o agent antes de publicar.");
@@ -502,13 +485,7 @@ export function AgentForm(props: Props) {
       formularioValido: isValid,
       alteracoesNaoSalvas: dirty,
       provedor: form.provider,
-      chave: {
-        daInstalacao: form.credential_id === CHAVE_DA_INSTALACAO,
-        instalacaoTemChaveDoProvedor: (props.provedoresDaInstalacao ?? []).includes(
-          form.provider,
-        ),
-        estadoDaCredencialDaOrg: credSt,
-      },
+      chave: { estadoDaCredencialDaOrg: credSt },
       numero: { estado: channelSession?.status ?? null },
     });
     if (!motivo) return null;
@@ -519,8 +496,6 @@ export function AgentForm(props: Props) {
         return t("Resolva os erros do formulário.");
       case "alteracoes_nao_salvas":
         return t("Salve o rascunho antes de publicar.");
-      case "instalacao_sem_chave_do_provedor":
-        return `${t("Esta instalação não tem chave de")} ${motivo.provedor}. ${t("Escolha outra empresa de IA ou cadastre uma chave.")}`;
       case "sem_chave":
         return t("Escolha a chave de acesso da empresa de inteligência artificial.");
       case "chave_nao_utilizavel":
@@ -532,7 +507,7 @@ export function AgentForm(props: Props) {
       case "numero_desconectado":
         return `${t("Número WhatsApp não está conectado (status:")} ${motivo.estado}).`;
     }
-  }, [isEdit, props, isValid, dirty, credSt, form.provider, form.credential_id, channelSession, t]);
+  }, [isEdit, props, isValid, dirty, credSt, form.provider, channelSession, t]);
 
   // ---------------------------------------------------------------------
   // Handlers
@@ -904,7 +879,6 @@ export function AgentForm(props: Props) {
               onChange={(id) => patch({ credential_id: id })}
               disabled={disabled}
               id="credential_id"
-              instalacaoTemChave={(props.provedoresDaInstalacao ?? []).includes(form.provider)}
             />
             {validation.credential_id ? (
               <p className="text-xs text-destructive">{validation.credential_id}</p>

@@ -78,23 +78,8 @@ describe("embedText", () => {
     expect(arg.headers).toBeUndefined();
   });
 
-  it("COM gateway, mantém a string (é ele quem roteia) e anexa os headers do tenant", async () => {
-    chaveMock = () => ({
-      apiKey: null,
-      baseUrl: null,
-      provedor: "gateway",
-      viaGateway: true,
-      origem: "gateway_da_instalacao",
-      rotulo: null,
-      avisos: [],
-    });
-
-    await embedText("oi", { organizationId: "org-1" });
-
-    const arg = embedSpy.mock.calls[0]?.[0] as { model: unknown; headers?: Record<string, string> };
-    expect(arg.model).toBe("openai/text-embedding-3-small");
-    expect(arg.headers?.["X-AI-Gateway-Tenant-Id"]).toBe("org-1");
-  });
+  // O degrau "gateway da instalação" saiu com a ADR-0005: não há caminho em que
+  // a organização sem credencial seja atendida por uma chave do ambiente.
 
   it("devolve a contagem de tokens que o SDK reporta", async () => {
     const r = await embedText("oi", { organizationId: "org-1" });

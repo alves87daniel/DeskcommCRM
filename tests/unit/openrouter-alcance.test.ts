@@ -35,7 +35,6 @@
  * PRECISA assustar — e este teste é quem obriga a decidir isso conscientemente.
  */
 import { readFileSync } from "node:fs";
-import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -44,49 +43,10 @@ import { validarBinding } from "@/lib/ai/pontos/validar-binding";
 
 const RAIZ = resolve(__dirname, "../..");
 
-/** Arquivos de produção que importam o resolver (exclui testes e o próprio módulo). */
-function chamadoresDoResolver(): string[] {
-  const saida = execFileSync(
-    "git",
-    // `--color=never` não é decoração: `git grep` não colore quando não há TTY,
-    // MAS colore assim mesmo se o dev tiver `color.ui=always` no ~/.gitconfig — e
-    // aí cada caminho volta embrulhado em ANSI, o `split("\n")` devolve
-    // "\u001b[35mlib/ai/...\u001b[m", e nenhum `readFileSync` acha o arquivo.
-    // Medido nas três combinações:
-    //   sem config            -> ANSI: false
-    //   -c color.ui=always    -> ANSI: true   <- o teste quebra aqui
-    //   + --color=never       -> ANSI: false
-    ["grep", "--color=never", "-l", "resolveLanguageModel", "--", "lib", "workers", "app", "scripts"],
-    { cwd: RAIZ, encoding: "utf8" },
-  );
-  return saida
-    .split("\n")
-    .filter(Boolean)
-    .filter((f) => !f.includes(".test.") && f !== "lib/ai/gateway.ts" && f !== "lib/env.ts");
-}
-
+// Os dois primeiros casos deste bloco mediam o alcance de `resolveLanguageModel`
+// — o resolvedor que roteava pela chave do `.env`. Ele saiu com a ADR-0005
+// (a chave é sempre da organização), e com ele saiu o que havia a medir.
 describe("alcance da OPENROUTER_API_KEY", () => {
-  it("o resolver tem chamadores — senão o invariante estaria passando por vacuidade", () => {
-    // Sem esta asserção, apagar o resolver deixaria o teste abaixo verde e o
-    // aviso do .env.example desprotegido.
-    expect(chamadoresDoResolver().length).toBeGreaterThan(0);
-  });
-
-  it("os caminhos do resolver por env seguem sem ferramentas", () => {
-    const comFerramentas = chamadoresDoResolver().filter((arquivo) =>
-      /\btools\s*:/.test(readFileSync(resolve(RAIZ, arquivo), "utf8")),
-    );
-
-    expect(
-      comFerramentas,
-      comFerramentas.length
-        ? `${comFerramentas.join(", ")} passa(m) ferramentas ao modelo E resolve(m) pela OpenRouter. ` +
-            "O aviso sobre tool calling em .env.example / .env.hostgator.example foi escrito quando " +
-            "isso NÃO acontecia e agora está desatualizado: reescreva-o antes de liberar este caminho."
-        : undefined,
-    ).toEqual([]);
-  });
-
   it("o agente com ferramentas AGORA está ao alcance da OpenRouter — e isso é deliberado", () => {
     // ─── A virada, e por que ela não afrouxa este arquivo ──────────────────
     //

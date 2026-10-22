@@ -39,7 +39,20 @@ vi.mock("@/lib/supabase/admin", () => ({
           ai_knowledge_versions: state.versions,
         }[table] ?? state.credentials;
       const filters: Array<(row: Record<string, unknown>) => boolean> = [];
-      const achadas = () => rows.filter((row) => filters.every((f) => f(row)));
+      // A ORDEM pedida é aplicada: sem isto, "a mais recente" seria a ordem do
+      // array da fixture, e o resolvedor que ignorasse o `order` passaria igual.
+      const ordens: Array<{ coluna: string; ascending: boolean }> = [];
+      const achadas = () =>
+        rows
+          .filter((row) => filters.every((f) => f(row)))
+          .sort((a, b) => {
+            for (const o of ordens) {
+              const x = String(a[o.coluna] ?? "");
+              const y = String(b[o.coluna] ?? "");
+              if (x !== y) return (x < y ? -1 : 1) * (o.ascending ? 1 : -1);
+            }
+            return 0;
+          });
       const query = {
         select: () => query,
         eq: (column: string, value: unknown) => {
@@ -50,7 +63,10 @@ vi.mock("@/lib/supabase/admin", () => ({
           filters.push((row: Record<string, unknown>) => row[column] !== value);
           return query;
         },
-        order: () => query,
+        order: (coluna: string, opts?: { ascending?: boolean }) => {
+          ordens.push({ coluna, ascending: opts?.ascending ?? true });
+          return query;
+        },
         limit: () => query,
         then: (ok: (v: { data: unknown; error: unknown }) => void) =>
           ok(state.falhas.has(table) ? { data: null, error: { message: "falha" } } : { data: achadas(), error: null }),
@@ -101,6 +117,24 @@ beforeEach(() => {
 });
 
 describe("resolverChaveDeEmbedding", () => {
+  it("a chave no .env da instalação NÃO é degrau: sem credencial da organização, não há chave (ADR-0005)", async () => {
+    state.env.AI_GATEWAY_API_KEY = "gateway-ficticio";
+    state.env.OPENAI_API_KEY = "chave-ficticia-env-openai";
+    state.env.OPENROUTER_API_KEY = "chave-ficticia-instalacao";
+    state.credentials = [];
+    expect(await resolverChaveDeEmbedding("org-1")).toBeNull();
+  });
+
+  it("troca de chave: com duas credenciais OpenAI validadas, a MAIS RECENTE vale (D2)", async () => {
+    state.credentials = [
+      credential({ id: "cred-antiga", provider: "openai", api_key_encrypted: "chave-antiga", created_at: "2026-10-01T00:00:00Z" }),
+      credential({ id: "cred-nova", provider: "openai", api_key_encrypted: "chave-nova", created_at: "2026-10-20T00:00:00Z" }),
+    ];
+    const chave = await resolverChaveDeEmbedding("org-1");
+    expect(chave?.apiKey).toBe("chave-nova");
+    expect(chave?.avisos.join(" ")).toMatch(/2 chaves openai/);
+  });
+
   it("credencial OpenRouter validada serve à indexação e à consulta da própria organização", async () => {
     state.credentials = [
       credential({ organization_id: "outra-org", api_key_encrypted: "chave-alheia" }),
@@ -143,51 +177,6 @@ describe("resolverChaveDeEmbedding", () => {
     expect(await resolverChaveDeEmbedding("org-1")).toBeNull();
   });
 
-  it("aceita a chave OpenRouter da instalação quando não há credencial da organização", async () => {
-    state.env.OPENROUTER_API_KEY = "chave-ficticia-instalacao";
-
-    expect(await resolverChaveDeEmbedding("org-1")).toMatchObject({
-      apiKey: "chave-ficticia-instalacao",
-      baseUrl: "https://openrouter.ai/api/v1",
-      provedor: "openrouter",
-      origem: "chave_da_instalacao",
-    });
-  });
-
-  // A chave OpenRouter da organização costuma estar ali para a CONVERSA. Se ela
-  // passasse na frente da OpenAI ou do gateway da instalação, a atualização
-  // trocaria em silêncio o fornecedor de quem já indexava.
-  it("OPENAI_API_KEY da instalação vence a credencial OpenRouter da organização", async () => {
-    state.env.OPENAI_API_KEY = "chave-ficticia-env-openai";
-    state.credentials = [credential({})];
-
-    expect(await resolverChaveDeEmbedding("org-1")).toMatchObject({
-      apiKey: "chave-ficticia-env-openai",
-      provedor: "openai",
-      origem: "chave_da_instalacao",
-    });
-  });
-
-  it("o gateway da instalação vence a credencial OpenRouter da organização", async () => {
-    state.env.AI_GATEWAY_API_KEY = "gateway-ficticio";
-    state.credentials = [credential({})];
-
-    expect(await resolverChaveDeEmbedding("org-1")).toMatchObject({
-      provedor: "gateway",
-      origem: "gateway_da_instalacao",
-    });
-  });
-
-  it("a credencial OpenRouter da organização vence a OPENROUTER_API_KEY da instalação", async () => {
-    state.env.OPENROUTER_API_KEY = "chave-ficticia-instalacao";
-    state.credentials = [credential({})];
-
-    expect(await resolverChaveDeEmbedding("org-1")).toMatchObject({
-      apiKey: "chave-ficticia-openrouter",
-      origem: "credencial_da_organizacao",
-    });
-  });
-
   it("binding explícito de OpenRouter usa a própria credencial e o modelo permanece fixo", async () => {
     state.bindings = [
       {
@@ -220,7 +209,6 @@ describe("resolverChaveDeEmbedding", () => {
         base_url: null,
       },
     ];
-    state.env.OPENAI_API_KEY = "chave-ficticia-env-openai";
     state.credentials = [
       credential({ id: "cred-google", provider: "google", api_key_encrypted: "chave-ficticia-google" }),
     ];
@@ -235,10 +223,12 @@ describe("resolverChaveDeEmbedding", () => {
     });
     expect(modeloDeEmbedding(chave!.provedor)).toBe("google/gemini-embedding-001");
     // Perguntar por OUTRA família ignora o binding do Google: é o que a tela
-    // pergunta antes de oferecer "Trocar para a OpenAI".
+    // pergunta antes de oferecer "Trocar para a OpenAI". Sem credencial OpenAI
+    // da organização a resposta é "não há chave" — nunca a da instalação
+    // (ADR-0005).
     expect(
       await resolverChaveDeEmbedding("org-1", "embedding_consultar", { familia: "openai" }),
-    ).toMatchObject({ provedor: "openai", origem: "chave_da_instalacao" });
+    ).toBeNull();
   });
 
   it("credencial do Google sem escolha só vale quando não há NENHUMA via OpenAI", async () => {
@@ -349,7 +339,6 @@ describe("a família da base não muda porque uma credencial apareceu ou sumiu",
 
   it("a chave da família sumiu: não há chave — nunca a outra família em silêncio", async () => {
     state.credentials = [openai()];
-    state.env.OPENAI_API_KEY = "chave-ficticia-env-openai";
     state.organizations = [{ id: "org-1", settings: { base_de_conhecimento: { familia: "google" } } }];
 
     expect(await resolverChaveDeEmbedding("org-1", "embedding_consultar")).toBeNull();

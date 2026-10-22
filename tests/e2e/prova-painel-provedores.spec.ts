@@ -101,6 +101,24 @@ test("F1 — ponto fixo mostra a RAZÃO, não um cadeado mudo", async ({ page })
   await page.screenshot({ path: "evidence/provedores/03-ponto-fixo-com-razao.png", fullPage: true });
 });
 
+test("F1b — o ponto de transcrição mostra a razão do padrão E oferece o seletor (ADR-0005, item 18)", async ({ page }) => {
+  // Era fixo; virou "serviço padrão próprio": sem escolha vale a OpenAI/whisper-1
+  // da organização, e a escolha do painel é como a organização aponta um Groq ou
+  // um gateway compatível (o `update.sh` migra para cá o par do `.env`).
+  await page.goto("/app/ai/providers");
+  await page.waitForSelector('[data-testid="painel-de-provedores"]');
+  await page.click('[data-testid="avancado-perceber"]');
+  await expect(page.locator('[data-testid="razao-padrao-transcricao_de_audio"]')).toContainText(
+    "padrão de transcrição",
+  );
+  await expect(page.locator('[data-testid="origem-transcricao_de_audio"]')).toContainText(
+    /serviço padrão do produto/i,
+  );
+  // Diferente do fixo (F1): o seletor EXISTE — oferecer e honrar, não oferecer e ignorar.
+  await expect(page.locator('[data-testid="provider-transcricao_de_audio"]')).toHaveCount(1);
+  await page.screenshot({ path: "evidence/provedores/03b-transcricao-padrao-proprio.png", fullPage: true });
+});
+
 test("F3 — a OpenRouter é oferecida e seus modelos estão no seletor", async ({ page }) => {
   await page.goto("/app/ai/providers");
   await page.waitForSelector('[data-testid="painel-de-provedores"]');

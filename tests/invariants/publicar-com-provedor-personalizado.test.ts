@@ -104,7 +104,7 @@ it("o modelo que o endpoint NÃO devolveu continua recusado, e nada é publicado
   expect(depois.status).toBe("draft");
 });
 
-it("`custom` sem credencial própria é recusado mesmo com a chave de plataforma declarada", async () => {
+it("`custom` sem credencial própria é recusado — não existe chave de plataforma (ADR-0005), e `p_platform_credential_verified` não compra nada", async () => {
   const f = await rascunhoCustom(MODELO_DO_ENDPOINT, false);
   await expect(
     pool.query("select * from fn_publish_ai_agent_version($1,$2,$3,true)", [
@@ -112,7 +112,7 @@ it("`custom` sem credencial própria é recusado mesmo com a chave de plataforma
       f.agent,
       f.version,
     ]),
-  ).rejects.toThrow("model_not_found");
+  ).rejects.toThrow("credential_missing");
   expect((await estado(f.agent, f.version)).published_version_id).toBeNull();
 });
 

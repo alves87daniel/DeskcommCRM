@@ -4,9 +4,6 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { seedGov, GOV_ADMIN } from "./gov-helpers";
 vi.mock("@/lib/audit", () => ({ audit: vi.fn().mockResolvedValue(undefined) }));
-vi.mock("@/lib/ai/runtime/agent", () => ({
-  chaveDePlataforma: (provider: string) => (provider === "openai" ? "test-key-never-sent" : null),
-}));
 import { setupProspectingAgent } from "@/lib/prospecting/agent-setup";
 import { prospectingAgentSetupSchema } from "@/lib/prospecting/agent-setup-schema";
 import {
@@ -76,6 +73,13 @@ async function fixture() {
   await pool.query(
     "insert into organizations(id,slug,legal_name,display_name,settings) values($1,$2,'Setup fixture','Setup fixture','{\"llm\":{\"provider\":\"openai\"}}')",
     [org, `setup-${org}`],
+  );
+  // A credencial da organização é a ÚNICA chave (ADR-0005): sem esta linha o
+  // setup não acha modelo e a função SQL recusa publicar (credential_missing).
+  // Bytea placeholder: nenhum turno roda aqui, ninguém decifra.
+  await pool.query(
+    "insert into ai_provider_credentials(organization_id,provider,label,api_key_encrypted,api_key_iv,api_key_tag,api_key_last4,is_active,validated_at) values($1,'openai','fixture',decode('00','hex'),decode('00','hex'),decode('00','hex'),'0000',true,now())",
+    [org],
   );
   const pipeline = (
     await pool.query("select id from crm_pipelines where organization_id=$1 limit 1", [org])

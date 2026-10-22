@@ -1,5 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import pg from "pg";
+import { cadastrarCredencialDeTeste } from "../support/credencial-de-teste";
 
 import type * as InboundTurn from "@/lib/agent-engine/agent/inbound-turn";
 import type * as Providers from "@/lib/agent-engine/edge/llm/providers";
@@ -149,7 +150,7 @@ function modeloQueManda(rotulo: string) {
 function montaHandler(doGenerate: unknown, instante: Date) {
   return m.createInboundTurnHandler({
     crmCfg: { supabase: {} as never },
-    llmCfg: { anthropicApiKey: "fake" } as never,
+    llmCfg: {} as never, // a chave é a credencial da organização (ADR-0005)
     knobs: {
       historyLimit: 10,
       maxContextTokens: 1000,
@@ -229,6 +230,7 @@ beforeAll(async () => {
      values ($1,'janela-relogio','Janela Relogio','Janela Relogio') on conflict (id) do nothing`,
     [ORG],
   );
+  await cadastrarCredencialDeTeste(pool, ORG);
   await pool.query(
     `insert into contacts (id, organization_id, name, phone_number)
      values ($1,$2,'Lead da Janela','+5511900000777') on conflict (id) do nothing`,

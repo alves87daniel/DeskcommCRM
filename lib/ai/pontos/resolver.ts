@@ -40,6 +40,8 @@ import { PONTO_POR_ID, type PontoDeIa } from "./registro";
 /** De onde a escolha efetiva veio — vai para a tela e para o log. */
 export type OrigemDaEscolha =
   | "fixo_do_produto"
+  /** Ponto com serviço padrão próprio, sem binding: o padrão do ponto, nunca o da organização. */
+  | "padrao_do_ponto"
   | "agente_publicado"
   | "binding"
   | "variavel_de_ambiente"
@@ -74,6 +76,7 @@ export const EXPLICACAO_DA_ORIGEM: Record<OrigemDaEscolha, string> = {
     "Herdado de quem disparou a chamada — o agente publicado, ou o roteador de intenção.",
   padrao_da_organizacao: "Usando o padrão da organização.",
   fixo_do_produto: "O produto resolve este ponto sozinho — não há modelo a escolher.",
+  padrao_do_ponto: "Usando o serviço padrão do produto para este ponto; escolha outro no painel se quiser.",
   // Duas origens, uma por desfecho: a frase única ("se ele está em observação,
   // quem decide é…") não dizia o que aconteceu NAQUELA mensagem.
   jev: "O Jev decidiu.",
@@ -208,6 +211,32 @@ export function decidirBinding(entrada: EntradaDaDecisao): DecisaoDeBinding {
       credentialId: null,
       baseUrl: null,
       origem: "fixo_do_produto",
+      avisos,
+    };
+  }
+
+  // 0b · Ponto com serviço padrão PRÓPRIO (ADR-0005, item 18 da #33): o
+  // binding do painel vale quando existe — é assim que a transcrição aponta
+  // para um Groq ou um gateway compatível, com a credencial `custom` da
+  // organização —; sem ele, o padrão DO PONTO, e nunca o da organização (um
+  // modelo de conversa não transcreve áudio).
+  if (ponto?.padraoProprio) {
+    if (entrada.binding !== null && entrada.binding.is_enabled) {
+      return {
+        provider: entrada.binding.provider,
+        modelId: entrada.binding.model_id,
+        credentialId: entrada.binding.credential_id,
+        baseUrl: entrada.binding.base_url,
+        origem: "binding",
+        avisos,
+      };
+    }
+    return {
+      provider: ponto.padraoProprio.provider,
+      modelId: ponto.padraoProprio.modelId,
+      credentialId: null,
+      baseUrl: null,
+      origem: "padrao_do_ponto",
       avisos,
     };
   }

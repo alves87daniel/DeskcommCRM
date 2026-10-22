@@ -18,6 +18,7 @@
  * porque a rota responde JSON com `requestId` e a Server Action responde para
  * uma tela em português.
  */
+import { fecharAvisoDeIaSemChaveViaSupabase } from "@/lib/ai/ia-sem-chave/aviso";
 import { audit } from "@/lib/audit";
 import { bufToBytea, encryptKey } from "@/lib/crypto/aes_gcm";
 import type { ProvedorComChave } from "@/lib/ai/pontos/provedores";
@@ -279,6 +280,11 @@ async function validarEmSegundoPlano(
       )
       .eq("id", credentialId)
       .eq("organization_id", organizationId);
+    // ADR-0005, D3 (item 20 da #33): a credencial que acabou de passar no
+    // provedor é o que faltava — o aviso "IA desligada por falta de chave" da
+    // organização fecha aqui, e reabre sozinho (a dedup só olha os abertos) se
+    // ela voltar a ficar sem chave utilizável.
+    if (r.ok) await fecharAvisoDeIaSemChaveViaSupabase(admin, organizationId);
   } catch {
     // Falha de rede na validação não pode derrubar nada: a credencial existe e
     // o campo `validated_at` continua nulo, que é a leitura honesta de "ainda

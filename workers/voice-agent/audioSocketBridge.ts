@@ -76,8 +76,8 @@ export interface AudioSocketCallContext {
   voiceSpeed: number;
   /** Modelo Realtime (gpt-realtime, gpt-realtime-2.1, ...) -- ver guardrails-schema.ts. */
   voiceModel?: string;
-  /** Chave da OpenAI pra esta org -- ver resolverChaveOpenAiDaVoz em lib/ai/agents.ts. */
-  apiKey?: string;
+  /** Chave da OpenAI DESTA org -- ver resolverChaveOpenAiDaVoz em lib/ai/agents.ts. Sem ela a ligação nem abre (index.ts). */
+  apiKey: string;
   onTranscriptTurn: (turn: { speaker: "agent" | "customer"; text: string }) => void;
   onCallEnded: () => void;
   /**
@@ -154,7 +154,7 @@ export class AudioSocketCallBridge {
     private ctx: AudioSocketCallContext,
   ) {
     this.realtimeModel = ctx.voiceModel ?? REALTIME_MODEL_FALLBACK;
-    const apiKey = ctx.apiKey || process.env.OPENAI_API_KEY!;
+    const apiKey = ctx.apiKey;
     const realtimeUrl = `wss://api.openai.com/v1/realtime?model=${this.realtimeModel}`;
     this.realtimeWs = new WebSocket(realtimeUrl, {
       headers: { Authorization: `Bearer ${apiKey}` },

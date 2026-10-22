@@ -1196,6 +1196,20 @@ escolher_provedor() {
 }
 escolher_provedor
 
+# ── A chave já cadastrada não é perguntada de novo (ADR-0005, D5) ───────────
+# Re-execução: se a organização do dono já tem credencial ativa e validada do
+# provedor, o campo nem aparece — trocar chave é pela tela, em IA › Credenciais.
+# Lê o BANCO, não o `.env` (que fica vazio desde a ADR-0005). Numa instalação
+# nova, sem conexão ainda, `credencial_validada_do_dono` responde "não sei" e
+# o campo é perguntado — que é o comportamento de sempre.
+PROVEDORES_JA_CADASTRADOS=""
+for _prov in "$AI_PROVIDER" openai; do
+  if credencial_validada_do_dono "$_prov" "${OWNER_EMAIL:-}"; then
+    PROVEDORES_JA_CADASTRADOS="${PROVEDORES_JA_CADASTRADOS} ${_prov}"
+  fi
+done
+ja_cadastrado() { case " ${PROVEDORES_JA_CADASTRADOS} " in *" $1 "*) return 0;; esac; return 1; }
+
 # O campo da chave do provedor ESCOLHIDO — e só dele. Pedir as três faria a
 # pessoa achar que precisa das três.
 #
@@ -1212,6 +1226,10 @@ case "$AI_PROVIDER" in
   openai)     CAMPO_IA="OPENAI_API_KEY|Chave da OpenAI — a IA que atende (platform.openai.com/api-keys; Enter pula: dá para cadastrar depois pela tela, em IA › Credenciais)||v_openai|secret|opcional";;
   *)          CAMPO_IA="ANTHROPIC_API_KEY|Chave da Anthropic — a IA que atende (console.anthropic.com; Enter pula: dá para cadastrar depois pela tela, em IA › Credenciais)||v_anthropic|secret|opcional";;
 esac
+if ja_cadastrado "$AI_PROVIDER"; then
+  CAMPO_IA=""
+  c_grn "$(t "✓ a chave da {1} já está cadastrada como credencial da organização do dono — não vou perguntar de novo (para trocar: IA › Credenciais)" "$AI_PROVIDER")"
+fi
 
 # A chave da OpenAI é pedida À PARTE quando ela NÃO é o provedor de conversa,
 # porque ouvir áudio ainda depende dela (o Whisper é da OpenAI). A base de
@@ -1221,6 +1239,9 @@ esac
 # produção, com a chave certa no .env e indo para o endpoint errado.
 if [ "$AI_PROVIDER" = "openai" ]; then
   CAMPO_OPENAI_EXTRA=""
+elif ja_cadastrado openai; then
+  CAMPO_OPENAI_EXTRA=""
+  c_grn "$(t "✓ a chave da OpenAI (áudio) já está cadastrada como credencial da organização do dono — não vou perguntar de novo")"
 else
   CAMPO_OPENAI_EXTRA="OPENAI_API_KEY|Chave da OpenAI — para ouvir áudios; a base de conhecimento aceita OpenRouter (Enter pula: dá para cadastrar depois pela tela, em IA › Credenciais)||v_openai|secret|opcional"
 fi
@@ -1290,7 +1311,7 @@ FIELDS=(
   # uma máquina que não existe fora do laptop de quem desenvolve. Era o estado
   # de TODA instalação feita pelo caminho documentado. (issue #431/#426)
   "SUPABASE_ACCESS_TOKEN|Token de acesso do Supabase — configura os links de e-mail (supabase.com/dashboard/account/tokens). NÃO fica salvo. Enter pula|||secret|opcional"
-  "$CAMPO_IA"
+  ${CAMPO_IA:+"$CAMPO_IA"}
   ${CAMPO_OPENAI_EXTRA:+"$CAMPO_OPENAI_EXTRA"}
   "OWNER_EMAIL|E-mail do primeiro admin (dono)||v_email||"
   "OWNER_PASSWORD|Senha do primeiro admin (mínimo 8 caracteres)||v_password|secret|"
@@ -1721,21 +1742,20 @@ esac
   printf '# install.sh já vir com a sua escolha como padrão, em vez de re-adivinhar\n'
   printf '# pelas chaves presentes. A app não lê esta variável.\n'
   envq AI_PROVIDER "${AI_PROVIDER:-anthropic}"
-  # `${ANTHROPIC_API_KEY:-}`, não `$ANTHROPIC_API_KEY`: quem escolhe OpenRouter
-  # ou OpenAI nunca passa pelo campo da Anthropic, e sob `set -u` (linha 12) a
-  # variável não associada derrubava o script AQUI — no meio da escrita do
-  # .env, deixando o arquivo pela metade e a instalação sem como continuar.
-  envq ANTHROPIC_API_KEY "${ANTHROPIC_API_KEY:-}"
-  envq AI_GATEWAY_API_KEY "${AI_GATEWAY_API_KEY:-}"
-  printf '# OpenRouter: alternativa ao AI Gateway para o chat da IA. A ordem de\n'
-  printf '# resolução é AI_GATEWAY_API_KEY > OPENROUTER_API_KEY > provider direto,\n'
-  printf '# então deixar vazio NÃO muda nada — o comportamento de hoje continua.\n'
+  # ⚠️ As quatro chaves de IA saem VAZIAS, sempre (ADR-0005, D4): a plataforma
+  # não custeia IA, e o CRM não lê chave de IA deste arquivo para atender
+  # organização nenhuma. A chave que a pessoa acabou de colar vai para o BANCO,
+  # como credencial da organização do dono (passo 10.5, mais abaixo) — cifrada,
+  # e visível em IA › Credenciais. As linhas continuam declaradas para o
+  # `.env` ter a forma que o `.env.hostgator.example` promete.
+  printf '# Chaves de IA: VAZIAS por doutrina (ADR-0005). A chave de cada empresa é\n'
+  printf '# cadastrada pela tela, em IA › Credenciais; o instalador grava a sua lá.\n'
+  envq ANTHROPIC_API_KEY ""
+  envq AI_GATEWAY_API_KEY ""
+  envq OPENROUTER_API_KEY ""
   printf '# BASE_URL vazia = https://openrouter.ai/api/v1 (só mude se usa proxy).\n'
-  envq OPENROUTER_API_KEY "${OPENROUTER_API_KEY:-}"
   envq OPENROUTER_BASE_URL "${OPENROUTER_BASE_URL:-}"
-  printf '# OpenAI: transcrição dos áudios do WhatsApp (Whisper) + embeddings do RAG.\n'
-  printf '# Opcional — sem ela a IA responde sem a base e pede o áudio em texto.\n'
-  envq OPENAI_API_KEY "${OPENAI_API_KEY:-}"
+  envq OPENAI_API_KEY ""
   printf '# Web Push: aviso na bandeja do sistema com a aba do CRM fechada.\n'
   printf '# Opcional e VAZIO por padrão — sem o par, os avisos aparecem só com o\n'
   printf '# site aberto, que é exatamente o que acontecia antes. Para ligar:\n'
@@ -2030,19 +2050,18 @@ PEND
 # que a IA ainda não atende e ONDE cadastrar depois. Este bloco repete o
 # caminho na TELA FINAL, que é a única tela que a pessoa lê inteira.
 #
-# Critério: nenhuma credencial DE AMBIENTE preenchida — nem a do provedor
-# escolhido, nem o AI Gateway (que tem precedência na resolução do chat, ver
-# `.env.hostgator.example`). Credencial cadastrada pela tela (banco) não dá
-# para ver daqui; quem já cadastrou reconhece o aviso e ignora.
+# Critério (ADR-0005, D5): a organização do DONO tem credencial ativa e validada
+# do provedor de conversa? Lido do BANCO — o `.env` fica vazio e não diz nada.
+# Sem conseguir ler (instalação que parou antes do banco), vale "não tem": o
+# aviso a mais custa uma leitura; o aviso a menos custa um agente mudo.
 pendencia_da_ia() {
-  local chave="" rotulo=""
+  local rotulo=""
   case "${AI_PROVIDER:-anthropic}" in
-    openrouter) chave="${OPENROUTER_API_KEY:-}"; rotulo="OpenRouter" ;;
-    openai)     chave="${OPENAI_API_KEY:-}";     rotulo="OpenAI" ;;
-    *)          chave="${ANTHROPIC_API_KEY:-}";  rotulo="Anthropic" ;;
+    openrouter) rotulo="OpenRouter" ;;
+    openai)     rotulo="OpenAI" ;;
+    *)          rotulo="Anthropic" ;;
   esac
-  [ -n "$chave" ] && return 0
-  [ -n "${AI_GATEWAY_API_KEY:-}" ] && return 0
+  credencial_validada_do_dono "${AI_PROVIDER:-anthropic}" "${OWNER_EMAIL:-}" && return 0
 
   cat <<PEND
 
@@ -2238,6 +2257,39 @@ else
   # corpo passa de 200 bytes, o head fecha o pipe e o printf leva SIGPIPE.
   [ -n "$health_body" ] && c_dim "$(t "  última resposta: {1}" "$(printf '%s' "$health_body" | head -c 200 || true)")"
 fi
+
+# ── 10.5 As chaves de IA viram credenciais da organização do dono (ADR-0005, D5) ─
+# A pessoa colou a chave na entrevista como sempre; a diferença é a PROPRIEDADE:
+# em vez de uma linha no `.env` que pagaria a IA de todas as empresas do
+# servidor, ela vira credencial ativa e validada da organização do dono — a
+# mesma linha que IA › Credenciais mostra. As duas chaves possíveis (a do
+# provedor de conversa e a da OpenAI para áudio, quando o provedor não é a
+# OpenAI) entram cada uma como a sua credencial; descartar a segunda deixaria a
+# transcrição desligada logo depois de uma instalação nova. Provedor já
+# cadastrado não grava nada (re-execução idempotente, D5).
+cadastrar_chaves_de_ia_colhidas() {
+  local imagem="${APP_IMAGE:-${IMG_APP}:${VERSAO_ALVO}}" pares par var prov valor
+  pares="$(var_da_chave_de_ia "$AI_PROVIDER" 2>/dev/null || true):$AI_PROVIDER"
+  [ "$AI_PROVIDER" = "openai" ] || pares="$pares OPENAI_API_KEY:openai"
+  for par in $pares; do
+    var="${par%%:*}"; prov="${par#*:}"
+    [ -n "$var" ] || continue
+    valor="${!var:-}"
+    [ -n "$valor" ] || continue
+    if ja_cadastrado "$prov"; then
+      c_dim "$(t "  (a chave da {1} já estava cadastrada — nada gravado)" "$prov")"
+      continue
+    fi
+    if printf '%s\n' "$valor" | cadastrar_credencial_de_ia_do_dono "$prov" "$OWNER_EMAIL" "$imagem" >/dev/null 2>&1; then
+      c_grn "$(t "✓ chave da {1} cadastrada como credencial da organização do dono (IA › Credenciais)" "$prov")"
+      PROVEDORES_JA_CADASTRADOS="${PROVEDORES_JA_CADASTRADOS} ${prov}"
+    else
+      c_ylw "$(t "⚠ não consegui cadastrar a chave da {1} como credencial. O CRM está no ar; cadastre a chave pela tela, em IA › Credenciais." "$prov")"
+    fi
+  done
+}
+step "$(t "Cadastrando as chaves de IA como credenciais da organização do dono")"
+cadastrar_chaves_de_ia_colhidas
 
 # O catálogo dos provedores diretos vem no baseline, mas a OpenRouter é grande
 # demais para ser congelada nele: seus ~400 modelos chegam pelo cron diário

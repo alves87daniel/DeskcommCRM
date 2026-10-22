@@ -3836,9 +3836,10 @@ export const DICIONARIO: Traducoes = {
   "Transforma o áudio que o cliente mandou em texto que o agente lê.": {
     es: "Transforma el audio que envió el cliente en texto que el agente lee.",
   },
-  "Usa o padrão de transcrição da OpenAI, que é o formato que os serviços do mercado implementam. Aceita apontar para outro serviço compatível — inclusive um rodando na sua própria máquina — mas exige uma chave desse serviço, separada da chave do modelo de conversa.": {
-    es: "Usa el estándar de transcripción de OpenAI, el formato que implementan los servicios del mercado. Permite apuntar a otro servicio compatible, incluso uno que corra en tu propio equipo, pero requiere una clave de ese servicio, distinta de la clave del modelo de conversación.",
+  "Usa o padrão de transcrição da OpenAI, que é o formato que os serviços do mercado implementam. Para apontar outro serviço compatível — Groq, um gateway, um rodando na sua própria máquina —, cadastre a chave desse serviço como provedor personalizado (com o endereço) em IA › Credenciais e escolha-a aqui.": {
+    es: "Usa el estándar de transcripción de OpenAI, el formato que implementan los servicios del mercado. Para apuntar a otro servicio compatible (Groq, un gateway, uno que corra en tu propio equipo), registra la clave de ese servicio como proveedor personalizado (con la dirección) en IA › Credenciales y elígela aquí.",
   },
+  "padrão do produto": { es: "predeterminado del producto" },
   "O cliente manda áudio e o agente responde como se não tivesse recebido nada.": {
     es: "El cliente manda audio y el agente responde como si no hubiera recibido nada.",
   },
@@ -3940,6 +3941,9 @@ export const DICIONARIO: Traducoes = {
   },
   "Usando o padrão da organização.": {
     es: "Usando el valor predeterminado de la organización.",
+  },
+  "Usando o serviço padrão do produto para este ponto; escolha outro no painel se quiser.": {
+    es: "Usando el servicio predeterminado del producto para este punto; elige otro en el panel si quieres.",
   },
   "O produto resolve este ponto sozinho — não há modelo a escolher.": {
     es: "El producto resuelve este punto por sí solo; no hay modelo que elegir.",
@@ -12148,6 +12152,17 @@ export const DICIONARIO: Traducoes = {
     { es: "El cliente parece haber pedido no recibir más mensajes" },
   "O limite de gasto com IA foi atingido — o cliente não pediu uma pessoa":
     { es: "Se alcanzó el límite de gasto en IA — el cliente no pidió hablar con una persona" },
+  // ADR-0005, D3: a IA desligada por falta de chave da organização.
+  "A IA está desligada por falta de chave — o cliente não pediu uma pessoa":
+    { es: "La IA está apagada por falta de clave — el cliente no pidió hablar con una persona" },
+  "IA desligada por falta de chave": { es: "IA apagada por falta de clave" },
+  "Esta organização não tem chave de IA ativa e validada, então nenhum ponto de IA chama provedor: as conversas que chegam vão direto para a equipe. A plataforma não custeia IA. Para religar, cadastre a chave em IA › Credenciais.":
+    { es: "Esta organización no tiene una clave de IA activa y validada, así que ningún punto de IA llama al proveedor: las conversaciones que llegan van directo al equipo. La plataforma no paga la IA. Para reactivarla, registra la clave en IA › Credenciales." },
+  "Esta empresa não tem chave de IA ativa e validada. Sem ela nenhum ponto de IA chama provedor: as conversas vão direto para a equipe. A plataforma não custeia IA — a chave é da sua empresa.":
+    { es: "Esta empresa no tiene una clave de IA activa y validada. Sin ella ningún punto de IA llama al proveedor: las conversaciones van directo al equipo. La plataforma no paga la IA: la clave es de tu empresa." },
+  "Cadastrar a chave em IA › Credenciais": { es: "Registrar la clave en IA › Credenciales" },
+  "Enquanto não houver chave, a IA desta empresa fica desligada: nenhum ponto de IA chama provedor.":
+    { es: "Mientras no haya clave, la IA de esta empresa queda apagada: ningún punto de IA llama al proveedor." },
   "O cliente demonstrou irritação na conversa":
     { es: "El cliente mostró molestia en la conversación" },
   // D11: só na passagem e no aviso da equipe (`MARCA_DO_JEV`), nunca ao cliente.

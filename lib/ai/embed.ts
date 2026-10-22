@@ -2,8 +2,8 @@
  * Embedding do RAG — indexação e busca, o mesmo modelo dos dois lados.
  *
  * A chave vem de `lib/ai/embeddings/chave.ts`, que resolve pela organização:
- * binding do ponto → credencial OpenAI/OpenRouter da org → gateway da instalação
- * → chave da instalação. Até a 0181 este arquivo lia SÓ `process.env`, e o efeito era o
+ * binding do ponto → credencial da organização, e nada abaixo disso (ADR-0005:
+ * não existe chave da instalação). Até a 0181 este arquivo lia SÓ `process.env`, e o efeito era o
  * pior possível para quem instala: cadastrar a chave da OpenAI pela tela não
  * habilitava a base de conhecimento, enquanto duas telas do produto prometiam
  * que sim.
@@ -20,7 +20,7 @@ import {
   type ChaveDeEmbedding,
   type PontoDeEmbedding,
 } from "@/lib/ai/embeddings/chave";
-import { gatewayHeaders, type ModelId } from "@/lib/ai/gateway";
+import type { ModelId } from "@/lib/ai/gateway";
 
 export interface EmbedOptions {
   organizationId: string;
@@ -69,34 +69,26 @@ export async function embedText(
 
   const modelId = String(opts.model ?? modeloDeEmbedding(chave.provedor));
 
-  // COM gateway: a string `openai/text-embedding-3-small` é roteada por ele, que
-  // lê `AI_GATEWAY_API_KEY` do process.env. Headers vão junto p/ observabilidade
-  // por tenant + ZDR.
-  //
-  // SEM gateway: precisa ser um provider EXPLÍCITO. Passar a string com
-  // barra aqui não cai no OpenAI direto — no AI SDK, id com barra é resolvido
-  // pelo gateway da Vercel mesmo sem chave, entrando no plano anônimo, cujo teto
-  // devolve `GatewayRateLimitError`. OpenAI direto usa id sem prefixo; OpenRouter
-  // recebe o slug completo que a API de embeddings dela exige.
-  const resolvido = chave.viaGateway
-    ? modelId
-    : chave.provedor === "google"
-      ? createGoogleGenerativeAI({ apiKey: chave.apiKey ?? "" }).embeddingModel(
+  // Sempre um provider EXPLÍCITO, com a chave da organização. Passar a string
+  // com barra aqui não cai no OpenAI direto — no AI SDK, id com barra é
+  // resolvido pelo gateway da Vercel mesmo sem chave, entrando no plano anônimo,
+  // cujo teto devolve `GatewayRateLimitError`. OpenAI direto usa id sem prefixo;
+  // OpenRouter recebe o slug completo que a API de embeddings dela exige.
+  const resolvido =
+    chave.provedor === "google"
+      ? createGoogleGenerativeAI({ apiKey: chave.apiKey }).embeddingModel(
           modelId.replace(/^google\//, ""),
         )
       : createOpenAI({
-        apiKey: chave.apiKey ?? "",
-        ...(chave.baseUrl ? { baseURL: chave.baseUrl } : {}),
-      }).textEmbeddingModel(
-        chave.provedor === "openrouter" ? modelId : modelId.replace(/^openai\//, ""),
-      );
+          apiKey: chave.apiKey,
+          ...(chave.baseUrl ? { baseURL: chave.baseUrl } : {}),
+        }).textEmbeddingModel(
+          chave.provedor === "openrouter" ? modelId : modelId.replace(/^openai\//, ""),
+        );
 
   const result = await embed({
     model: resolvido,
     value: content,
-    headers: chave.viaGateway
-      ? gatewayHeaders({ organizationId: opts.organizationId })
-      : undefined,
     // O Gemini devolve 3072 dimensões por padrão; pedir 1536 é o que deixa a
     // coluna `vector(1536)` servir aos dois provedores sem migration. A busca é
     // por cosseno (`<=>`), então o vetor não normalizado dessa dimensão não

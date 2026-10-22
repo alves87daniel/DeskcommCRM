@@ -1,5 +1,5 @@
 /**
- * O AGENTE SE CONFIGURA ANTES DE HAVER WHATSAPP — e publica com a chave do `.env`.
+ * O AGENTE SE CONFIGURA ANTES DE HAVER WHATSAPP — e publica com a credencial da organização.
  *
  * ─── Os dois defeitos, medidos numa VPS de cliente ──────────────────────────
  *
@@ -75,10 +75,27 @@ const AGENTE_ROW = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
+/** A credencial validada da organização — desde a ADR-0005, a única chave que existe. */
+const CRED = {
+  id: "55555555-5555-4555-8555-555555555555",
+  organization_id: ORG,
+  provider: "anthropic",
+  label: "Anthropic",
+  api_key_last4: "c0de",
+  validated_at: "2026-01-01T00:00:00Z",
+  validation_error: null,
+  models_available: null,
+  is_active: true,
+  created_by: null,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+};
+
 /**
- * O rascunho de quem ainda não tem número: `channel_session_id` nulo e
- * `credential_id` nulo (= a chave da instalação). É o estado que o produto
- * produz numa instalação fresca, e o que esta suíte existe para exercitar.
+ * O rascunho de quem ainda não tem número: `channel_session_id` nulo e a
+ * credencial da organização escolhida. É o estado que o produto produz numa
+ * instalação fresca depois de cadastrar a chave, e o que esta suíte existe
+ * para exercitar.
  */
 const RASCUNHO = {
   id: "v1",
@@ -89,7 +106,7 @@ const RASCUNHO = {
   system_prompt: "Você é a Sofia, assistente do consultório. Atenda com acolhimento.",
   provider: "anthropic",
   model: "claude-sonnet-5",
-  credential_id: null,
+  credential_id: CRED.id,
   tool_ids: [],
   channel_session_id: null,
   max_steps: 10,
@@ -125,10 +142,7 @@ function abrirEditor(
       <AgentForm
         mode="edit"
         agent={AGENTE_ROW as never}
-        // Instalação fresca: NENHUMA credencial cadastrada na tela de IA, e a
-        // chave da Anthropic vindo do ambiente.
-        credentials={[] as never}
-        provedoresDaInstalacao={["anthropic"]}
+        credentials={[CRED] as never}
         channelSessions={(opcoes.canais ?? []) as never}
         draft={versao as never}
         published={null}
@@ -191,17 +205,26 @@ describe("editor do agente sem número conectado", () => {
   });
 
   // ─── O defeito 2 ─────────────────────────────────────────────────────────
-  it("PUBLICA com a chave da instalação, sem nenhuma credencial cadastrada", () => {
+  it("PUBLICA com a credencial validada da organização e o número conectado", () => {
     const { botaoPublicar } = abrirEditor({
       canais: [{ id: CANAL, display_name: "WhatsApp da clínica", status: "WORKING" }],
       versao: { ...RASCUNHO, channel_session_id: CANAL },
     });
     const dica = botaoPublicar().closest("span")?.getAttribute("title") ?? "";
-    expect(
-      botaoPublicar(),
-      `o botão de publicar está travado para quem usa a chave do .env — dica: "${dica}"`,
-    ).toBeEnabled();
+    expect(botaoPublicar(), `o botão de publicar está travado — dica: "${dica}"`).toBeEnabled();
     expect(dica).toBe("");
+  });
+
+  it("NÃO publica sem credencial da organização — a chave da instalação não existe mais (ADR-0005)", () => {
+    // Linha antiga com `credential_id: null` (a extinta "chave da instalação")
+    // abre em branco: a pessoa precisa escolher uma credencial da organização.
+    const { botaoPublicar } = abrirEditor({
+      canais: [{ id: CANAL, display_name: "WhatsApp da clínica", status: "WORKING" }],
+      versao: { ...RASCUNHO, channel_session_id: CANAL, credential_id: null },
+    });
+    const dica = botaoPublicar().closest("span")?.getAttribute("title") ?? "";
+    expect(botaoPublicar()).toBeDisabled();
+    expect(dica).toMatch(/formulário|chave/i);
   });
 
   it("continua barrando número que existe mas não está conectado", () => {
@@ -219,7 +242,7 @@ describe("versionCreateSchema — o número é opcional, o resto não", () => {
     system_prompt: RASCUNHO.system_prompt,
     provider: "anthropic",
     model: "claude-sonnet-5",
-    credential_id: null,
+    credential_id: CRED.id,
   };
 
   it("aceita channel_session_id nulo", () => {

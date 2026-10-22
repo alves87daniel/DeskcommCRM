@@ -54,9 +54,9 @@ async function rascunhoSemNumero() {
   const version = randomUUID();
   await pool.query(
     `insert into ai_agent_versions
-       (id,organization_id,agent_id,version_number,system_prompt,provider,model,channel_session_id,status)
-     values ($1,$2,$3,1,'Atenda quem chegar.','anthropic',$4,null,'draft')`,
-    [version, f.org, f.agent, modelo],
+       (id,organization_id,agent_id,version_number,system_prompt,provider,model,credential_id,channel_session_id,status)
+     values ($1,$2,$3,1,'Atenda quem chegar.','anthropic',$4,$5,null,'draft')`,
+    [version, f.org, f.agent, modelo, f.credential],
   );
   return { ...f, version, modelo };
 }

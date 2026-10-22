@@ -52,6 +52,8 @@ interface Ponto {
   exige: { tools?: boolean; imagem?: boolean; audio?: boolean; embeddingDims?: number };
   sintomaDeFalha: string;
   fixo: { razao: string } | null;
+  /** Serviço padrão próprio: o padrão vale sem escolha, e a escolha vale quando existe. */
+  padraoProprio: { provider: string; modelId: string; razao: string } | null;
   mandadoPeloAgente: boolean;
   efetivo: {
     provider: string;
@@ -95,7 +97,6 @@ interface Dados {
   provedores: Provedor[];
   credenciais: Credencial[];
   /** Há chave de IA no `.env` da instalação (`lerAmbiente`). */
-  instalacaoTemChave: boolean;
   modelos: Modelo[];
   padrao: { provider: string; defaultModel: string | null };
   podeEditar: boolean;
@@ -195,9 +196,9 @@ export function PainelDeProvedores() {
         <Card className="mb-6 border-amber-500/40 bg-amber-500/5 p-4" data-testid="aviso-sem-chave">
           <p className="text-sm">
             {t("Você ainda não cadastrou a chave da sua IA principal, a que conversa com os clientes.")}{" "}
-            {/* Só é verdade quando a instalação tem chave; sem ela, a frase
-                contradizia o cartão do Jev logo abaixo. */}
-            {dados.instalacaoTemChave && t("Enquanto isso, o atendimento usa a chave que veio na instalação.")}{" "}
+            {/* Sem chave da organização a IA fica DESLIGADA para ela — não
+                existe chave da instalação que responda enquanto isso (ADR-0005). */}
+            {t("Enquanto não houver chave, a IA desta empresa fica desligada: nenhum ponto de IA chama provedor.")}{" "}
             <Link className="underline underline-offset-4" href="/app/ai/credentials">
               {t("Cadastrar uma chave")}
             </Link>
@@ -510,6 +511,11 @@ function CartaoDoPonto({
                 {t("fixo")}
               </Badge>
             )}
+            {ponto.padraoProprio && ponto.efetivo.origem === "padrao_do_ponto" && (
+              <Badge variant="outline" className="text-xs">
+                {t("padrão do produto")}
+              </Badge>
+            )}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{t(ponto.oQueFaz)}</p>
           {/* O modelo deste cartão continua valendo com o Jev ligado — como
@@ -548,6 +554,14 @@ function CartaoDoPonto({
       {ponto.fixo && (
         <p className="mt-2 text-xs text-muted-foreground" data-testid={`razao-fixo-${ponto.id}`}>
           {t(ponto.fixo.razao)}
+        </p>
+      )}
+
+      {/* Diferente do fixo: a razão explica o padrão E o seletor continua abaixo,
+          porque a organização pode apontar outro serviço (item 18 da #33). */}
+      {ponto.padraoProprio && (
+        <p className="mt-2 text-xs text-muted-foreground" data-testid={`razao-padrao-${ponto.id}`}>
+          {t(ponto.padraoProprio.razao)}
         </p>
       )}
 

@@ -5,7 +5,6 @@
  * Returns a discriminated result so the caller maps validation errors to 422
  * with a stable error code, and unknown errors to 500.
  */
-import { chaveDePlataforma } from "@/lib/ai/runtime/agent";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { PUBLISH_ERROR_CODES, type PublishErrorCode } from "./validation";
 
@@ -45,14 +44,18 @@ export async function publishAgentVersion(
     .maybeSingle();
   if (readError || !version)
     return { ok: false, code: "version_not_found", message: "version_not_found" };
-  const platform = version.credential_id === null;
-  if (platform && !chaveDePlataforma(version.provider))
+  // Sem credencial da organização não se publica (ADR-0005). O banco repete a
+  // recusa (`fn_publish_ai_agent_version`, migration 0511, ignora a flag antiga
+  // `p_platform_credential_verified`); aqui ela chega antes da ida ao banco.
+  if (version.credential_id === null)
     return { ok: false, code: "credential_missing", message: "credential_missing" };
   const { data, error } = await admin.rpc("fn_publish_ai_agent_version", {
     p_org_id: params.orgId,
     p_agent_id: params.agentId,
     p_version_id: params.versionId,
-    ...(params.expectedProvenance ? { p_platform_credential_verified: platform, p_expected_provenance: params.expectedProvenance } : platform ? { p_platform_credential_verified: true } : {}),
+    // A flag segue na assinatura da função SQL por compatibilidade de overload;
+    // desde a 0511 ela não libera nada. Vai `false` sempre.
+    ...(params.expectedProvenance ? { p_platform_credential_verified: false, p_expected_provenance: params.expectedProvenance } : {}),
   });
 
   if (error) {

@@ -1987,6 +1987,283 @@ ensure_encryption_key() {
     || c_ylw "$(t "⚠ não consegui semear a chave de cifra no banco — segredos de webhook não poderão ser salvos até rodar update.sh de novo.")"
 }
 
+
+# ═══ IA SEM CHAVE DA PLATAFORMA (ADR-0005) ═══════════════════════════════════
+#
+# A plataforma não custeia IA. A chave de todo ponto de IA sai de
+# `ai_provider_credentials` da ORGANIZAÇÃO, ativa e validada; as variáveis
+# `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY` e
+# `AI_GATEWAY_API_KEY` ficam VAZIAS no `.env` de toda instalação (D4). O kit é
+# quem faz isso valer para quem instala e para quem já instalou:
+#
+#   * o `install.sh` continua perguntando as chaves, mas cada uma vira credencial
+#     ativa e validada da organização do DONO (D5) — nunca uma linha do `.env`;
+#     rodar de novo não pergunta a chave de provedor já cadastrado, e o resumo
+#     final lê o BANCO, não o `.env`;
+#   * o `update.sh` esvazia, por provedor, a variável cuja credencial já existe
+#     na organização do dono, e avisa qual ainda falta (D4). Ninguém edita o
+#     `.env` à mão (doutrina de packaging).
+#
+# Todas as funções abaixo falam com o banco pelo MESMO `pg_container ... psql`
+# dos outros passos do kit, e tratam "não consegui ler" como "não tem": o
+# instalador então pergunta, e o atualizador então avisa — nunca o contrário.
+# Prova: tests/shell/ia-sem-chave-da-plataforma.test.sh.
+
+# Literal SQL seguro: aspas simples dobradas. Nunca interpole valor cru.
+sql_literal() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"; }
+
+# A organização do dono: a primeira em que o e-mail do dono (OWNER_EMAIL do
+# `.env`) é admin ativo. É uma subconsulta, para entrar em qualquer `where`.
+sql_org_do_dono() {  # sql_org_do_dono <email>
+  printf '(select uo.organization_id from auth.users u join public.user_organizations uo on uo.user_id = u.id where u.email = %s and uo.role = %s and uo.revoked_at is null order by uo.accepted_at nulls last, uo.organization_id limit 1)' \
+    "$(sql_literal "$1")" "'admin'"
+}
+
+# O valor de UMA chave num arquivo .env, sem `load_env` (que exporta tudo): só
+# a leitura, com as aspas que o `envq` escreve removidas.
+valor_no_envfile() {  # valor_no_envfile <envfile> <CHAVE>
+  grep -E "^${2}=" "$1" 2>/dev/null | head -1 | cut -d= -f2- | tr -d "'\"" || true
+}
+
+# Devolve 0 quando a organização do dono tem credencial ATIVA e VALIDADA do
+# provedor. Qualquer problema de leitura (sem e-mail, sem conexão de banco no
+# ambiente, docker/psql ausente, resposta que não é número) devolve 1: "não
+# sei" vale como "não tem", e quem chama pergunta ou avisa.
+credencial_validada_do_dono() {  # credencial_validada_do_dono <provider> [email] [rotulo]
+  local provider="$1" email="${2:-${OWNER_EMAIL:-}}" rotulo="${3:-}" saida filtro_rotulo=""
+  [ -n "$provider" ] && [ -n "$email" ] || return 1
+  [ -n "${SUPABASE_DB_ADMIN_URL:-${SUPABASE_DB_URL:-}}" ] || return 1
+  [ -n "$rotulo" ] && filtro_rotulo=" and c.label = $(sql_literal "$rotulo")"
+  saida="$(pg_container -i postgres:17-alpine psql "$(url_do_schema)" -t -A -c \
+    "select count(*) from public.ai_provider_credentials c where c.organization_id = $(sql_org_do_dono "$email") and c.provider = $(sql_literal "$provider") and c.is_active and c.validated_at is not null${filtro_rotulo};" \
+    2>/dev/null </dev/null | tr -d '[:space:]')" || return 1
+  case "$saida" in
+    ''|*[!0-9]*) return 1 ;;
+    0) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+# Cifra a chave EXATAMENTE como `lib/crypto/aes_gcm.ts` (AES-256-GCM, IV de 12
+# bytes, tag de 16, chave `AI_CRED_AES_KEY` em base64) — é o que o app decifra.
+# O plaintext entra pelo STDIN, nunca por argumento (argv aparece em `ps` e no
+# log). Imprime uma linha: "<ct_hex> <iv_hex> <tag_hex> <last4>".
+#
+# Roda o `node` da IMAGEM DO APP: o kit não exige node na VPS, e a imagem já
+# está no disco quando isto é chamado (depois do `pull`/`up`). Imagem com tag
+# fixa, nunca `latest` solta — é a que o `.env` pinou.
+cifrar_chave_de_ia() {  # cifrar_chave_de_ia <imagem com node> ; plaintext no STDIN
+  AI_CRED_AES_KEY="${AI_CRED_AES_KEY:-}" docker run --rm -i -e AI_CRED_AES_KEY --entrypoint node "$1" -e '
+const { createCipheriv, randomBytes } = require("node:crypto");
+let s = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (c) => { s += c; });
+process.stdin.on("end", () => {
+  const plaintext = s.replace(/\r?\n$/, "");
+  const key = Buffer.from(process.env.AI_CRED_AES_KEY || "", "base64");
+  if (key.length !== 32 || plaintext === "") { console.error("AI_CRED_AES_KEY ou chave invalida"); process.exit(2); }
+  const iv = randomBytes(12);
+  const c = createCipheriv("aes-256-gcm", key, iv);
+  const ct = Buffer.concat([c.update(plaintext, "utf8"), c.final()]);
+  process.stdout.write([ct.toString("hex"), iv.toString("hex"), c.getAuthTag().toString("hex"), plaintext.slice(-4)].join(" ") + "\n");
+});'
+}
+
+# O inverso do cifrador, para a revalidação (item 19): "ct_hex iv_hex tag_hex"
+# no STDIN, plaintext no STDOUT. Mesma imagem, mesma chave, mesmo AES-256-GCM.
+# Nunca grava nem loga o plaintext — quem chama o usa e descarta.
+decifrar_chave_de_ia() {  # decifrar_chave_de_ia <imagem com node> ; "ct iv tag" no STDIN
+  AI_CRED_AES_KEY="${AI_CRED_AES_KEY:-}" docker run --rm -i -e AI_CRED_AES_KEY --entrypoint node "$1" -e '
+const { createDecipheriv } = require("node:crypto");
+let s = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (c) => { s += c; });
+process.stdin.on("end", () => {
+  const [ct, iv, tag] = s.trim().split(/\s+/);
+  const key = Buffer.from(process.env.AI_CRED_AES_KEY || "", "base64");
+  if (key.length !== 32 || !ct || !iv || !tag) { console.error("AI_CRED_AES_KEY ou cifra invalida"); process.exit(2); }
+  const d = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "hex"));
+  d.setAuthTag(Buffer.from(tag, "hex"));
+  process.stdout.write(Buffer.concat([d.update(Buffer.from(ct, "hex")), d.final()]).toString("utf8"));
+});'
+}
+
+# Cadastra a chave (STDIN) como credencial ATIVA e VALIDADA da organização do
+# dono. "Validada" porque o instalador acabou de conferi-la com o provedor
+# (`v_anthropic`/`v_openai`/`v_openrouter`); sem rede ele segue, e a tela de
+# Credenciais oferece revalidar. Idempotente: a restrição única
+# (organização, provedor, rótulo) faz a segunda execução não gravar nada — e
+# quem chama só chama quando ainda não há credencial validada do provedor.
+# O rótulo e o endereço são opcionais: o instalador grava "Cadastrada pelo
+# instalador" sem endereço; a migração da transcrição (item 18) grava um
+# provedor `custom` com o endereço do serviço. E a credencial que entra FECHA
+# o aviso "IA desligada por falta de chave" da organização (item 20) — nos dois
+# idiomas em que a Central o grava.
+cadastrar_credencial_de_ia_do_dono() {  # <provider> <email> <imagem> [rotulo] [base_url] ; plaintext no STDIN
+  local provider="$1" email="$2" imagem="$3" rotulo="${4:-Cadastrada pelo instalador}" base_url="${5:-}" cifra ct iv tag last4 base_sql
+  cifra="$(cifrar_chave_de_ia "$imagem")" || return 1
+  read -r ct iv tag last4 <<< "$cifra"
+  [ -n "$ct" ] && [ -n "$iv" ] && [ -n "$tag" ] || return 1
+  case "${ct}${iv}${tag}" in *[!0-9a-fA-F]*) return 1 ;; esac
+  if [ -n "$base_url" ]; then base_sql="$(sql_literal "$base_url")"; else base_sql="null"; fi
+  pg_container -i postgres:17-alpine psql "$(url_do_schema)" -v ON_ERROR_STOP=1 -q <<SQL
+insert into public.ai_provider_credentials
+  (organization_id, provider, label, api_key_encrypted, api_key_iv, api_key_tag, api_key_last4, is_active, validated_at, created_by, base_url)
+select org.id, $(sql_literal "$provider"), $(sql_literal "$rotulo"),
+       decode('${ct}', 'hex'), decode('${iv}', 'hex'), decode('${tag}', 'hex'), $(sql_literal "$last4"),
+       true, now(), u.id, ${base_sql}
+  from (select $(sql_org_do_dono "$email") as id) org
+  join auth.users u on u.email = $(sql_literal "$email")
+ where org.id is not null
+on conflict (organization_id, provider, label) do nothing;
+-- ADR-0005, D3 (item 20 da #33): credencial utilizável fecha o aviso da organização.
+update public.agent_inbox_items set status = 'resolved'
+ where organization_id = $(sql_org_do_dono "$email") and kind = 'other' and status = 'open'
+   and title in ('IA desligada por falta de chave', 'IA apagada por falta de clave');
+SQL
+}
+
+# Revalida NO PROVEDOR a credencial da organização do dono (item 19 da #33):
+# "validada" no passado não basta para esvaziar a chave do .env. Devolve 0
+# quando o provedor aceitou (e carimba validated_at de novo), 1 quando ele
+# RECUSOU a chave (401/403: zera validated_at e grava validation_error, como a
+# rota de revalidação da tela) e 2 quando não deu para conferir — sem rede, sem
+# imagem, sem banco, sem endereço (nada muda no banco). Quem chama só esvazia
+# com 0. A chave decifrada vive só na variável, e é descartada em seguida.
+revalidar_credencial_do_dono() {  # <provider> <email> <imagem> [rotulo]
+  local provider="$1" email="$2" imagem="$3" rotulo="${4:-}" linha id ct iv tag base_url chave code filtro_rotulo=""
+  [ -n "$provider" ] && [ -n "$email" ] && [ -n "$imagem" ] || return 2
+  [ -n "${SUPABASE_DB_ADMIN_URL:-${SUPABASE_DB_URL:-}}" ] || return 2
+  [ -n "$rotulo" ] && filtro_rotulo=" and c.label = $(sql_literal "$rotulo")"
+  linha="$(pg_container -i postgres:17-alpine psql "$(url_do_schema)" -t -A -F ' ' -c \
+    "select c.id, encode(c.api_key_encrypted, 'hex'), encode(c.api_key_iv, 'hex'), encode(c.api_key_tag, 'hex'), coalesce(c.base_url, '-') from public.ai_provider_credentials c where c.organization_id = $(sql_org_do_dono "$email") and c.provider = $(sql_literal "$provider") and c.is_active and c.validated_at is not null${filtro_rotulo} order by c.created_at desc, c.id desc limit 1;" \
+    2>/dev/null </dev/null | head -1)" || return 2
+  read -r id ct iv tag base_url <<< "$linha"
+  [ -n "$id" ] && [ -n "$ct" ] && [ -n "$iv" ] && [ -n "$tag" ] || return 2
+  chave="$(printf '%s %s %s\n' "$ct" "$iv" "$tag" | decifrar_chave_de_ia "$imagem" 2>/dev/null)" || return 2
+  [ -n "$chave" ] || return 2
+  [ "$base_url" = "-" ] && base_url=""
+  base_url="${base_url%/}"
+  # Os mesmos endpoints de `lib/ai/provider-validators.ts` e dos validadores do
+  # install.sh: a OpenRouter prova a chave em /key (o /models dela é público).
+  case "$provider" in
+    anthropic)  code="$(curl -s -o /dev/null -w '%{http_code}' -m 20 https://api.anthropic.com/v1/models -H "x-api-key: $chave" -H "anthropic-version: 2023-06-01" 2>/dev/null)" || code=000 ;;
+    openai)     code="$(curl -s -o /dev/null -w '%{http_code}' -m 20 https://api.openai.com/v1/models -H "Authorization: Bearer $chave" 2>/dev/null)" || code=000 ;;
+    openrouter) code="$(curl -s -o /dev/null -w '%{http_code}' -m 20 https://openrouter.ai/api/v1/key -H "Authorization: Bearer $chave" 2>/dev/null)" || code=000 ;;
+    custom)     [ -n "$base_url" ] || { unset chave; return 2; }
+                code="$(curl -s -o /dev/null -w '%{http_code}' -m 20 "${base_url}/models" -H "Authorization: Bearer $chave" 2>/dev/null)" || code=000 ;;
+    *) unset chave; return 2 ;;
+  esac
+  unset chave
+  case "$code" in
+    2*)
+      pg_container -i postgres:17-alpine psql "$(url_do_schema)" -q -c "update public.ai_provider_credentials set validated_at = now(), validation_error = null where id = $(sql_literal "$id");" >/dev/null 2>&1 </dev/null
+      return 0 ;;
+    401|403)
+      pg_container -i postgres:17-alpine psql "$(url_do_schema)" -q -c "update public.ai_provider_credentials set validated_at = null, validation_error = 'auth_failed_401' where id = $(sql_literal "$id");" >/dev/null 2>&1 </dev/null
+      return 1 ;;
+    *) return 2 ;;
+  esac
+}
+
+# Item 18 da #33: a transcrição por serviço próprio do .env (TRANSCRIPTION_API_KEY +
+# TRANSCRIPTION_BASE_URL, Groq ou compatível) vira credencial `custom` da
+# organização do dono, apontada no ponto "Ouvir o áudio do cliente" (binding
+# `transcricao_de_audio`), ANTES de a chave sair do .env — senão a transcrição
+# pararia em silêncio. Idempotente: a credencial já cadastrada (pelo rótulo) não
+# é regravada, e um binding já escolhido pelo painel não é sobrescrito.
+ROTULO_DA_TRANSCRICAO_MIGRADA='Transcrição migrada do .env'
+migrar_transcricao_do_env() {  # migrar_transcricao_do_env [envfile] [imagem]
+  local envfile="${1:-.env}" imagem="${2:-}" email chave base modelo
+  [ -f "$envfile" ] || return 0
+  chave="$(valor_no_envfile "$envfile" TRANSCRIPTION_API_KEY)"
+  [ -n "$chave" ] || return 0
+  email="$(valor_no_envfile "$envfile" OWNER_EMAIL)"
+  [ -n "$imagem" ] || imagem="$(valor_no_envfile "$envfile" APP_IMAGE)"
+  [ -n "${AI_CRED_AES_KEY:-}" ] || AI_CRED_AES_KEY="$(valor_no_envfile "$envfile" AI_CRED_AES_KEY)"
+  export AI_CRED_AES_KEY
+  if [ -z "$email" ] || [ -z "$imagem" ]; then
+    c_ylw "$(t "⚠ TRANSCRIPTION_API_KEY no .env, mas sem OWNER_EMAIL ou APP_IMAGE para migrá-la como credencial — cadastre a chave em IA › Credenciais (provedor personalizado, com o endereço) e aponte-a em Ouvir o áudio do cliente.")"
+    unset chave; return 0
+  fi
+  if credencial_validada_do_dono custom "$email" "$ROTULO_DA_TRANSCRICAO_MIGRADA"; then unset chave; return 0; fi
+  base="$(valor_no_envfile "$envfile" TRANSCRIPTION_BASE_URL)"; base="${base:-https://api.openai.com/v1}"; base="${base%/}"
+  modelo="$(valor_no_envfile "$envfile" TRANSCRIPTION_MODEL)"; modelo="${modelo:-whisper-1}"
+  if printf '%s\n' "$chave" | cadastrar_credencial_de_ia_do_dono custom "$email" "$imagem" "$ROTULO_DA_TRANSCRICAO_MIGRADA" "$base"; then
+    pg_container -i postgres:17-alpine psql "$(url_do_schema)" -v ON_ERROR_STOP=1 -q <<SQL
+insert into public.ai_purpose_bindings (organization_id, purpose, provider, credential_id, model_id, base_url, is_enabled)
+select c.organization_id, 'transcricao_de_audio', 'custom', c.id, $(sql_literal "$modelo"), $(sql_literal "$base"), true
+  from public.ai_provider_credentials c
+ where c.organization_id = $(sql_org_do_dono "$email") and c.provider = 'custom' and c.label = $(sql_literal "$ROTULO_DA_TRANSCRICAO_MIGRADA")
+on conflict (organization_id, purpose) do nothing;
+SQL
+    c_grn "$(t "✓ a chave de transcrição do .env virou credencial da organização do dono, apontada em Ouvir o áudio do cliente (IA › Provedores)")"
+  else
+    c_ylw "$(t "⚠ não consegui migrar a chave de transcrição do .env como credencial. Cadastre-a em IA › Credenciais (provedor personalizado, com o endereço) e aponte-a em Ouvir o áudio do cliente.")"
+  fi
+  unset chave
+}
+
+# A variável do `.env` que carregava a chave de cada provedor. Só para o kit
+# saber de ONDE a resposta da entrevista vem e o QUE esvaziar.
+var_da_chave_de_ia() {  # var_da_chave_de_ia <provider>
+  case "$1" in
+    anthropic)  printf 'ANTHROPIC_API_KEY' ;;
+    openai)     printf 'OPENAI_API_KEY' ;;
+    openrouter) printf 'OPENROUTER_API_KEY' ;;
+    custom)     printf 'TRANSCRIPTION_API_KEY' ;;
+    *) return 1 ;;
+  esac
+}
+
+# Esvazia no `.env`, UMA POR PROVEDOR, a chave de IA cuja credencial já existe
+# na organização do dono (ADR-0005, D4). `AI_GATEWAY_API_KEY` não tem credencial
+# equivalente: sai quando o provedor de conversa do dono (AI_PROVIDER) tem
+# credencial validada. Variável sem a credencial correspondente FICA, e o aviso
+# diz qual falta. Rodar duas vezes não muda nada. Lê e-mail e provedor do
+# próprio arquivo: o `update.sh` pode rodar sem o ambiente carregado.
+# Item 19: antes de esvaziar, a credencial é REVALIDADA no provedor; a que não
+# passa (ou que não dá para conferir) fica no .env, com o motivo no aviso.
+# Item 18: TRANSCRIPTION_API_KEY segue a mesma régua, contra a credencial
+# `custom` migrada (pelo rótulo). A imagem do app (para decifrar) e a chave de
+# cifra saem do próprio .env — o update.sh pode rodar sem o ambiente carregado.
+esvaziar_chaves_de_ia_migradas() {  # esvaziar_chaves_de_ia_migradas [envfile] [imagem]
+  local envfile="${1:-.env}" imagem="${2:-}" email provedor_de_conversa par var provider rotulo resto valor faltando="" nao_limpas="" rc
+  [ -f "$envfile" ] || return 0
+  email="$(valor_no_envfile "$envfile" OWNER_EMAIL)"
+  provedor_de_conversa="$(valor_no_envfile "$envfile" AI_PROVIDER)"
+  provedor_de_conversa="${provedor_de_conversa:-anthropic}"
+  [ -n "$imagem" ] || imagem="$(valor_no_envfile "$envfile" APP_IMAGE)"
+  [ -n "${AI_CRED_AES_KEY:-}" ] || AI_CRED_AES_KEY="$(valor_no_envfile "$envfile" AI_CRED_AES_KEY)"
+  export AI_CRED_AES_KEY
+  for par in "ANTHROPIC_API_KEY:anthropic:" "OPENAI_API_KEY:openai:" "OPENROUTER_API_KEY:openrouter:" \
+             "TRANSCRIPTION_API_KEY:custom:${ROTULO_DA_TRANSCRICAO_MIGRADA}" "AI_GATEWAY_API_KEY:${provedor_de_conversa}:"; do
+    var="${par%%:*}"; resto="${par#*:}"; provider="${resto%%:*}"; rotulo="${resto#*:}"
+    valor="$(valor_no_envfile "$envfile" "$var")"
+    [ -n "$valor" ] || continue
+    if ! credencial_validada_do_dono "$provider" "$email" "$rotulo"; then
+      faltando="${faltando:+$faltando, }${var} (${provider})"
+      continue
+    fi
+    # Sob set -e (o kit inteiro roda assim), um retorno 1 solto derrubaria o update.
+    rc=0; revalidar_credencial_do_dono "$provider" "$email" "$imagem" "$rotulo" || rc=$?
+    case "$rc" in
+      0)
+        set_env_var "$envfile" "$var" '""'
+        c_grn "$(t "✓ {1} esvaziada no .env: a chave vive como credencial da organização do dono (IA › Credenciais)" "$var")" ;;
+      1) nao_limpas="${nao_limpas:+$nao_limpas, }${var} (${provider}: recusada pelo provedor)" ;;
+      *) nao_limpas="${nao_limpas:+$nao_limpas, }${var} (${provider}: não deu para conferir)" ;;
+    esac
+  done
+  if [ -n "$faltando" ]; then
+    c_ylw "$(t "⚠ Ainda com valor no .env, e o CRM NÃO as lê mais (ADR-0005): {1}." "$faltando")"
+    c_ylw "$(t "  Cadastre a chave em IA › Credenciais, na organização do dono; na próxima atualização a variável é esvaziada.")"
+  fi
+  if [ -n "$nao_limpas" ]; then
+    c_ylw "$(t "⚠ Não esvaziei (a credencial da organização não passou na revalidação no provedor): {1}. A chave do .env fica até a credencial ser revalidada em IA › Credenciais." "$nao_limpas")"
+  fi
+}
+
 # ── A ÚLTIMA RELEASE ESTÁVEL PUBLICADA ──────────────────────────────────────
 #
 # ⚠️ TAG EXISTIR NÃO É RELEASE PUBLICADA, e confundir as duas instala código

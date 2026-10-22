@@ -77,7 +77,7 @@ vi.mock("@/lib/supabase/server", () => ({
 
 vi.mock("@/lib/ai/gateway-binding", () => ({
   resolverModeloDoPonto: vi.fn(async () =>
-    banco.iaPrincipal ? { model: {}, modelId: "anthropic/claude-haiku-4-5", origem: "padrao" } : null,
+    banco.iaPrincipal ? { model: {}, modelId: "anthropic/claude-haiku-4-5", origem: "credencial_da_organizacao" } : null,
   ),
 }));
 
@@ -149,15 +149,23 @@ describe("tela de Credenciais — o aviso de que falta a IA principal", () => {
     expect(screen.getByText("Jev (TypeSafe AI)")).toBeInTheDocument();
   });
 
-  it.each([["ANTHROPIC_API_KEY"], ["OPENAI_API_KEY"], ["OPENROUTER_API_KEY"], ["AI_GATEWAY_API_KEY"]])(
-    "só a chave do Jev, mas a instalação trouxe %s: não avisa",
-    async (variavel) => {
-      ambiente([variavel]);
-      await abrir([JEV]);
-      expect(screen.getByText("Jev (TypeSafe AI)")).toBeInTheDocument();
-      expect(screen.queryByTestId("aviso-so-decisao")).toBeNull();
-    },
-  );
+  it("só a chave do Jev, mesmo com chave de IA no ambiente: avisa — o ambiente não conta (ADR-0005)", async () => {
+    // Antes, uma chave no `.env` calava o aviso: "o atendimento usa a chave que
+    // veio na instalação". Essa chave deixou de existir; a organização sem
+    // credencial de conversa está sem IA, e a tela diz isso.
+    ambiente(["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "AI_GATEWAY_API_KEY"]);
+    await abrir([JEV]);
+    expect(screen.getByText("Jev (TypeSafe AI)")).toBeInTheDocument();
+    expect(screen.getByTestId("aviso-so-decisao")).toBeInTheDocument();
+    // E a frase da regra (D3) aparece onde se resolve.
+    expect(screen.getByTestId("aviso-ia-sem-chave")).toHaveTextContent(/IA desligada por falta de chave/);
+  });
+
+  it("com credencial de conversa validada, a frase da regra some", async () => {
+    ambiente([]);
+    await abrir([JEV, ANTHROPIC]);
+    expect(screen.queryByTestId("aviso-ia-sem-chave")).toBeNull();
+  });
 
   it("a chave de conversa RECUSADA não conta como IA principal", async () => {
     ambiente([]);
