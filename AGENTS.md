@@ -302,8 +302,10 @@ server; segredo em query string; `throw` cru na borda da API.
 
 ## Runtime/Tooling Preferences
 
-- **Node ≥ 22** (`engines`, `.nvmrc` = 22; os workflows fixam `node-version: 22`). Gerenciador:
-  **pnpm 9.15.9** (`packageManager`). Não use npm/yarn.
+- **Node da linha 22, no patch fixado em `.nvmrc`** — `engines`, os Dockerfiles com Node e o
+  `node-version` de `.github/actions/preparar-node/action.yml` levam o mesmo número; confira com
+  `grep -rn 'node-version\|FROM node' .github Dockerfile*`. Gerenciador: **pnpm 9.15.9**
+  (`packageManager`). Não use npm/yarn.
 - **TypeScript estrito** via `tsconfig.typecheck.json`; `strict`, `noUncheckedIndexedAccess`,
   `isolatedModules`, alias `@/*` → raiz. `pnpm typecheck` é a régua.
 - **ESLint flat config** (`eslint.config.mjs`, ESLint 10): `next/core-web-vitals`,
