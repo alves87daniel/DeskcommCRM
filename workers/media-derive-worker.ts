@@ -196,7 +196,7 @@ export async function deriveMessageMedia(row: EventRow): Promise<HandlerResult> 
     // painel — credencial `custom` com endereço (Groq, gateway, máquina própria)
     // e o modelo de lá (ADR-0005, item 18 da #33). Numa org com Anthropic, a
     // chave da Anthropic mandada para a OpenAI voltava 401 em toda tentativa.
-    const transcricao = await resolverTranscricao(admin, llmCfg, row.organization_id);
+    const transcricao = await resolverTranscricao(admin, llmCfg, row.organization_id, llm);
 
     // O 5º argumento é a `base_url` do binding: o factory precisa dela para não
     // cair no endpoint padrão do provedor (ver o comentário lá em cima). A chave
@@ -320,6 +320,8 @@ async function resolverTranscricao(
   admin: ReturnType<typeof createAdminClient>,
   llmCfg: LlmEdgeConfig,
   organizationId: string,
+  /** A config já resolvida para a visão/conversa: quando é OpenAI, a chave serve e poupa uma ida ao banco. */
+  llm: { provider: string; apiKey: string },
 ): Promise<ServicoDeTranscricao | null> {
   const binding = await lerBindingDoPonto(admin, organizationId, "transcricao_de_audio");
   if (binding) {
@@ -339,9 +341,11 @@ async function resolverTranscricao(
       });
     }
   }
+  const model = modeloDeTranscricaoEmVigor({ model: env.TRANSCRIPTION_MODEL });
+  if (llm.provider === "openai") return { apiKey: llm.apiKey, baseUrl: null, model };
   try {
     const oa = await resolveOrgLlmConfig(derivePool(), llmCfg, organizationId, { provider: "openai" });
-    return { apiKey: oa.apiKey, baseUrl: null, model: modeloDeTranscricaoEmVigor({ model: env.TRANSCRIPTION_MODEL }) };
+    return { apiKey: oa.apiKey, baseUrl: null, model };
   } catch {
     return null;
   }
