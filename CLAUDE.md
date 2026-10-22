@@ -149,6 +149,7 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 12. API key em query string
 13. Bearer plaintext armazenado no DB (deve ser hash SHA256)
 14. `console.log` deixado em código merged (use logger estruturado ou Sentry breadcrumb)
+15. **Chave de IA do ambiente atendendo organização** — a plataforma não custeia IA: a chave sai só de `ai_provider_credentials` da organização, e sem ela o recurso fica desligado com aviso na tela. Lei em [`docs/adr/0005-ia-paga-por-cada-organizacao.md`](docs/adr/0005-ia-paga-por-cada-organizacao.md)
 
 ---
 

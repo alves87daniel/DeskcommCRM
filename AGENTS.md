@@ -575,6 +575,14 @@ sozinho (lint, prettier, typecheck) fica fora desta lista.
     `Fundação - Gabarito de regras não negociáveis do CLAUDE.md - #15 - Tipo DOC`; o corpo traz
     `Closes #N`. Régua em
     [`docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md`](docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md).
+11. **IA paga pela plataforma.** Aponte código em `app/`, `lib/`, `workers/`, `hooks/` ou
+    `components/` que lê `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+    `AI_GATEWAY_API_KEY` ou qualquer outra chave de IA do ambiente para atender uma organização, ou
+    que trata "sem credencial da organização" como caso em que outra chave responde. Caminho seguro:
+    a chave sai só de `ai_provider_credentials` da organização, ativa e validada; sem ela o ponto de
+    IA fica desligado para aquela organização, com aviso na tela. As envs ficam declaradas em
+    `lib/env.ts` apenas para scripts locais. Fonte:
+    [`docs/adr/0005-ia-paga-por-cada-organizacao.md`](docs/adr/0005-ia-paga-por-cada-organizacao.md).
 
 **Prioridade e merge.** Todo apontamento abre a conversa com a prioridade no começo do primeiro
 comentário: o selo do Codex (`![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)`) ou,
