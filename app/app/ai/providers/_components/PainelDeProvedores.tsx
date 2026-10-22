@@ -52,6 +52,8 @@ interface Ponto {
   exige: { tools?: boolean; imagem?: boolean; audio?: boolean; embeddingDims?: number };
   sintomaDeFalha: string;
   fixo: { razao: string } | null;
+  /** Serviço padrão próprio: o padrão vale sem escolha, e a escolha vale quando existe. */
+  padraoProprio: { provider: string; modelId: string; razao: string } | null;
   mandadoPeloAgente: boolean;
   efetivo: {
     provider: string;
@@ -509,6 +511,11 @@ function CartaoDoPonto({
                 {t("fixo")}
               </Badge>
             )}
+            {ponto.padraoProprio && ponto.efetivo.origem === "padrao_do_ponto" && (
+              <Badge variant="outline" className="text-xs">
+                {t("padrão do produto")}
+              </Badge>
+            )}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">{t(ponto.oQueFaz)}</p>
           {/* O modelo deste cartão continua valendo com o Jev ligado — como
@@ -547,6 +554,14 @@ function CartaoDoPonto({
       {ponto.fixo && (
         <p className="mt-2 text-xs text-muted-foreground" data-testid={`razao-fixo-${ponto.id}`}>
           {t(ponto.fixo.razao)}
+        </p>
+      )}
+
+      {/* Diferente do fixo: a razão explica o padrão E o seletor continua abaixo,
+          porque a organização pode apontar outro serviço (item 18 da #33). */}
+      {ponto.padraoProprio && (
+        <p className="mt-2 text-xs text-muted-foreground" data-testid={`razao-padrao-${ponto.id}`}>
+          {t(ponto.padraoProprio.razao)}
         </p>
       )}
 

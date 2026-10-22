@@ -153,6 +153,9 @@ export async function GET(): Promise<Response> {
       exige: ponto.exige,
       sintomaDeFalha: ponto.sintomaDeFalha,
       fixo: ponto.fixo ?? null,
+      // Ponto com serviço padrão próprio (item 18 da #33): a tela mostra a razão
+      // e OFERECE o seletor — diferente do fixo, que só mostra a razão.
+      padraoProprio: ponto.padraoProprio ?? null,
       /**
        * Escolha do agente publicado — a tela mostra como leitura, com link.
        *

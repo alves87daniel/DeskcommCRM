@@ -33,8 +33,9 @@ describe("espanhol dos textos que vêm de lista, não de literal", () => {
       p.rotulo,
       p.oQueFaz,
       p.sintomaDeFalha,
-      // `t(ponto.fixo.razao)` no cartão do ponto (PainelDeProvedores).
+      // `t(ponto.fixo.razao)` e `t(ponto.padraoProprio.razao)` no cartão do ponto (PainelDeProvedores).
       ...(p.fixo ? [p.fixo.razao] : []),
+      ...(p.padraoProprio ? [p.padraoProprio.razao] : []),
       ...(p.decisaoRapida ? [p.decisaoRapida.oQueOJevFaz] : []),
     ]);
     expect(textos.length, "a varredura não enxergou o registro").toBeGreaterThan(30);

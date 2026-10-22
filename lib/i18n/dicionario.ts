@@ -3836,9 +3836,10 @@ export const DICIONARIO: Traducoes = {
   "Transforma o áudio que o cliente mandou em texto que o agente lê.": {
     es: "Transforma el audio que envió el cliente en texto que el agente lee.",
   },
-  "Usa o padrão de transcrição da OpenAI, que é o formato que os serviços do mercado implementam. Aceita apontar para outro serviço compatível — inclusive um rodando na sua própria máquina — mas exige uma chave desse serviço, separada da chave do modelo de conversa.": {
-    es: "Usa el estándar de transcripción de OpenAI, el formato que implementan los servicios del mercado. Permite apuntar a otro servicio compatible, incluso uno que corra en tu propio equipo, pero requiere una clave de ese servicio, distinta de la clave del modelo de conversación.",
+  "Usa o padrão de transcrição da OpenAI, que é o formato que os serviços do mercado implementam. Para apontar outro serviço compatível — Groq, um gateway, um rodando na sua própria máquina —, cadastre a chave desse serviço como provedor personalizado (com o endereço) em IA › Credenciais e escolha-a aqui.": {
+    es: "Usa el estándar de transcripción de OpenAI, el formato que implementan los servicios del mercado. Para apuntar a otro servicio compatible (Groq, un gateway, uno que corra en tu propio equipo), registra la clave de ese servicio como proveedor personalizado (con la dirección) en IA › Credenciales y elígela aquí.",
   },
+  "padrão do produto": { es: "predeterminado del producto" },
   "O cliente manda áudio e o agente responde como se não tivesse recebido nada.": {
     es: "El cliente manda audio y el agente responde como si no hubiera recibido nada.",
   },
