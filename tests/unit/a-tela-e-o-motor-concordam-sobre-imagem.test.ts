@@ -91,28 +91,54 @@ describe("ponto FIXO anuncia o que ele mesmo usa", () => {
     });
 
     expect(d.modelId).toBe("whisper-1");
-    expect(d.origem).toBe("fixo_do_produto");
+    expect(d.origem).toBe("padrao_do_ponto");
     expect(d.modelId, "voltou a anunciar o modelo de conversa").not.toBe("claude-sonnet-5");
   });
 
-  it("o ponto fixo ignora até um binding salvo — a escolha do painel não se aplica", () => {
-    // Controle: alguém pode ter um binding antigo gravado para este ponto. Ele
-    // não pode ressuscitar o comportamento errado.
+  it("com binding, vale o binding — é assim que a transcrição aponta para um serviço compatível (ADR-0005, item 18)", () => {
+    // O par TRANSCRIPTION_API_KEY/TRANSCRIPTION_BASE_URL do `.env` virou
+    // credencial `custom` da organização apontada neste binding pelo
+    // `update.sh`; se o ponto o ignorasse, a transcrição migrada pararia em
+    // silêncio — o defeito que o item 18 existe para impedir.
     const d = decidirBinding({
       pontoId: "transcricao_de_audio",
       binding: {
         purpose: "transcricao_de_audio",
-        provider: "openai",
-        model_id: "gpt-5.6-sol",
-        credential_id: null,
-        base_url: null,
+        provider: "custom",
+        model_id: "whisper-large-v3",
+        credential_id: "33333333-3333-4333-8333-333333333333",
+        base_url: "https://api.groq.com/openai/v1",
         is_enabled: true,
       },
       agentePublicado: null,
       modeloDeAmbiente: undefined,
       padraoDaOrganizacao: { provider: "anthropic", defaultModel: "claude-sonnet-5" },
     });
-    expect(d.modelId).toBe("whisper-1");
+    expect(d).toMatchObject({
+      provider: "custom",
+      modelId: "whisper-large-v3",
+      credentialId: "33333333-3333-4333-8333-333333333333",
+      baseUrl: "https://api.groq.com/openai/v1",
+      origem: "binding",
+    });
+  });
+
+  it("binding DESLIGADO não vale: volta ao padrão do ponto, nunca ao da organização", () => {
+    const d = decidirBinding({
+      pontoId: "transcricao_de_audio",
+      binding: {
+        purpose: "transcricao_de_audio",
+        provider: "custom",
+        model_id: "whisper-large-v3",
+        credential_id: null,
+        base_url: null,
+        is_enabled: false,
+      },
+      agentePublicado: null,
+      modeloDeAmbiente: undefined,
+      padraoDaOrganizacao: { provider: "anthropic", defaultModel: "claude-sonnet-5" },
+    });
+    expect(d).toMatchObject({ provider: "openai", modelId: "whisper-1", origem: "padrao_do_ponto" });
   });
 
   it("ponto NÃO fixo segue a cadeia normal (controle positivo)", () => {
@@ -129,7 +155,7 @@ describe("ponto FIXO anuncia o que ele mesmo usa", () => {
       modeloDeAmbiente: undefined,
       padraoDaOrganizacao: { provider: "openai", defaultModel: "gpt-5.6-sol" },
     });
-    expect(d.origem).not.toBe("fixo_do_produto");
+    expect(d.origem).not.toBe("padrao_do_ponto");
     expect(d.modelId).not.toBe("whisper-1");
   });
 });

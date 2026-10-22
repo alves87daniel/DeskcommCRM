@@ -190,33 +190,20 @@ export async function deriveMessageMedia(row: EventRow): Promise<HandlerResult> 
       llm = await resolveOrgLlmConfig(derivePool(), llmCfg, row.organization_id);
     }
 
-    // A transcrição é SEMPRE do Whisper (api.openai.com), então precisa de uma
-    // chave OpenAI — não da chave do provedor de chat da org. O comentário
-    // antigo já dizia isso ("senão exige credencial openai dedicada"), mas o
-    // código passava `llm.apiKey` direto: numa org com Anthropic, a chave da
-    // Anthropic era enviada para a OpenAI e voltava 401 em toda tentativa
-    // (visto nesta VPS: media.derive_requested preso com transcription_401,
-    // e o cliente ouvindo "não consigo ouvir áudio" com a chave certa no .env).
-    let openaiKey: string | null = null;
-    if (llm.provider === "openai") {
-      openaiKey = llm.apiKey;
-    } else {
-      try {
-        const oa = await resolveOrgLlmConfig(derivePool(), llmCfg, row.organization_id, {
-          provider: "openai",
-        });
-        openaiKey = oa.apiKey;
-      } catch {
-        openaiKey = null; // sem credencial OpenAI da organização: o áudio fica sem transcrição, com aviso
-      }
-    }
+    // A transcrição NÃO usa a chave do provedor de conversa: o ponto "Ouvir o
+    // áudio do cliente" tem serviço padrão próprio (a API de transcrição da
+    // OpenAI, com a credencial OpenAI da organização) e aceita o binding do
+    // painel — credencial `custom` com endereço (Groq, gateway, máquina própria)
+    // e o modelo de lá (ADR-0005, item 18 da #33). Numa org com Anthropic, a
+    // chave da Anthropic mandada para a OpenAI voltava 401 em toda tentativa.
+    const transcricao = await resolverTranscricao(admin, llmCfg, row.organization_id);
 
     // O 5º argumento é a `base_url` do binding: o factory precisa dela para não
     // cair no endpoint padrão do provedor (ver o comentário lá em cima). A chave
     // que vai com ela é SEMPRE da organização (ADR-0005), então a recusa antiga
     // "endereço da empresa com chave da instalação" (decisão 22-a) não tem mais
     // caso: não há chave alheia que possa sair para o endereço escolhido por ela.
-    const deps = buildDeriveDeps(llm, openaiKey, row.organization_id, admin, baseUrlDaVisao);
+    const deps = buildDeriveDeps(llm, transcricao, row.organization_id, admin, baseUrlDaVisao);
 
     const text = await deriveMediaText(msg.type, buffer, msg.media_mime ?? "application/octet-stream", deps);
     await admin.from("messages")
@@ -314,9 +301,55 @@ async function lerBindingDoPonto(
   );
 }
 
+/** Chave, endereço e modelo com que o áudio desta organização é transcrito. */
+interface ServicoDeTranscricao {
+  apiKey: string;
+  baseUrl: string | null;
+  model: string;
+}
+
+/**
+ * O serviço de transcrição da organização: o binding do ponto
+ * `transcricao_de_audio` quando existe e a credencial dele resolve (endereço
+ * do binding, ou o da credencial `custom`; modelo do binding); senão o padrão
+ * do ponto — a credencial OpenAI mais recente da organização, no endpoint da
+ * OpenAI, com `TRANSCRIPTION_MODEL` ou `whisper-1`. `null` quando não há
+ * credencial nenhuma: o áudio fica sem transcrição, com aviso.
+ */
+async function resolverTranscricao(
+  admin: ReturnType<typeof createAdminClient>,
+  llmCfg: LlmEdgeConfig,
+  organizationId: string,
+): Promise<ServicoDeTranscricao | null> {
+  const binding = await lerBindingDoPonto(admin, organizationId, "transcricao_de_audio");
+  if (binding) {
+    try {
+      const cfg = await resolveOrgLlmConfig(derivePool(), llmCfg, organizationId, {
+        provider: binding.provider,
+        credentialId: binding.credential_id,
+      });
+      return { apiKey: cfg.apiKey, baseUrl: binding.base_url ?? cfg.baseUrl ?? null, model: binding.model_id };
+    } catch (err) {
+      // Binding apontando para credencial que não resolve não pode calar o
+      // áudio: cai no padrão do ponto e AVISA — rastro em vez de silêncio.
+      logger.warn("[media-derive] binding de transcrição sem credencial utilizável; usando o padrão do ponto", {
+        organization_id: organizationId,
+        provider: binding.provider,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+  try {
+    const oa = await resolveOrgLlmConfig(derivePool(), llmCfg, organizationId, { provider: "openai" });
+    return { apiKey: oa.apiKey, baseUrl: null, model: modeloDeTranscricaoEmVigor({ model: env.TRANSCRIPTION_MODEL }) };
+  } catch {
+    return null;
+  }
+}
+
 function buildDeriveDeps(
   llm: { provider: string; apiKey: string; defaultModel: string | null },
-  openaiKey: string | null,
+  transcricao: ServicoDeTranscricao | null,
   orgId: string,
   admin: ReturnType<typeof createAdminClient>,
   // Endpoint próprio do binding de visão, quando houver. `null` = usa o padrão
@@ -429,24 +462,29 @@ function buildDeriveDeps(
       // como se ele não existisse. O aviso é o que dá ao operador a chance
       // de cadastrar a chave — sem ele, o sintoma é indistinguível de "o
       // agente é ruim".
-      await avisarMidiaNaoLida(orgId, "áudio", "falta uma chave da OpenAI para transcrever");
+      await avisarMidiaNaoLida(
+        orgId,
+        "áudio",
+        "falta uma credencial para transcrever: a OpenAI da organização, ou um serviço compatível apontado em Ouvir o áudio do cliente",
+      );
       return MARCADOR_NAO_LIDA;
     },
   };
-  // A transcrição é SEMPRE com a chave OpenAI da ORGANIZAÇÃO (ADR-0005). O
-  // "serviço de transcrição compatível" configurado pelo `.env` da instalação
-  // (chave e endereço próprios) saiu junto com a chave da instalação: era a
-  // chave de uma conta transcrevendo o áudio de todas as organizações. Ficam os
-  // dois knobs que não carregam chave — `TRANSCRIPTION_MODEL` e
-  // `TRANSCRIPTION_LANGUAGES` —, aplicados à chave da organização: trocar
-  // `whisper-1` por um modelo melhor da própria OpenAI não pode exigir copiar a
-  // chave para o `.env`.
+  // Chave, endereço e modelo vêm de `resolverTranscricao` — o padrão do ponto
+  // (credencial OpenAI da organização) ou o binding do painel (ADR-0005, item 18
+  // da #33). O "serviço de transcrição do `.env`" (chave e endereço próprios da
+  // instalação) saiu com a chave da instalação: era a chave de uma conta
+  // transcrevendo o áudio de todas as organizações; o `update.sh` migra esse
+  // par para uma credencial `custom` da organização do dono. Ficam no `.env`
+  // só os knobs sem chave — `TRANSCRIPTION_MODEL` (aplicado ao padrão) e
+  // `TRANSCRIPTION_LANGUAGES`.
   const idiomas = idiomasDaTranscricao(env.TRANSCRIPTION_LANGUAGES);
-  const transcriber: DeriveDeps["transcriber"] = openaiKey
+  const transcriber: DeriveDeps["transcriber"] = transcricao
     ? apiTranscriptionProvider({
-        apiKey: openaiKey,
-        model: modeloDeTranscricaoEmVigor({ model: env.TRANSCRIPTION_MODEL }),
+        apiKey: transcricao.apiKey,
+        model: transcricao.model,
         languages: idiomas,
+        ...(transcricao.baseUrl ? { baseUrl: transcricao.baseUrl } : {}),
       })
     : semTranscricao;
   return {

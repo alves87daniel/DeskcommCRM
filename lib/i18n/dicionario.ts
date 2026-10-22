@@ -3941,6 +3941,9 @@ export const DICIONARIO: Traducoes = {
   "Usando o padrão da organização.": {
     es: "Usando el valor predeterminado de la organización.",
   },
+  "Usando o serviço padrão do produto para este ponto; escolha outro no painel se quiser.": {
+    es: "Usando el servicio predeterminado del producto para este punto; elige otro en el panel si quieres.",
+  },
   "O produto resolve este ponto sozinho — não há modelo a escolher.": {
     es: "El producto resuelve este punto por sí solo; no hay modelo que elegir.",
   },

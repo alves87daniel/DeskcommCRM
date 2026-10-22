@@ -29,6 +29,7 @@ import { expect, test, type Page } from "./helpers/test";
 
 import { credenciaisSupabaseDeTeste } from "../../scripts/lib/env-de-teste";
 import { seedPlatformPlaybook } from "../../lib/agent-engine/agent/playbook-seed";
+import { clonarCredencialDoDuble } from "./helpers/credencial-do-duble";
 
 const credenciais = credenciaisSupabaseDeTeste();
 const db = createClient(credenciais.url, credenciais.serviceRole, {
@@ -65,6 +66,9 @@ async function fixture(pool: pg.Pool) {
     onboarded_at: new Date().toISOString(),
   });
   orgs.push(org);
+  // A sugestão passa por um ponto de IA, e o resolvedor só aceita a credencial
+  // DA organização (ADR-0005) — o dublê substitui a chamada, não a credencial.
+  await clonarCredencialDoDuble(db, org);
   await inserir("user_organizations", {
     organization_id: org,
     user_id: user,

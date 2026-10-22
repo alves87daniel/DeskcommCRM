@@ -299,9 +299,12 @@ async function ensureCredenciaisDeIa(orgId: string, ownerId: string): Promise<vo
   if (provedorDeConversa !== "openai" && (env.OPENAI_API_KEY ?? "").trim() !== "") {
     pares.push(["openai", env.OPENAI_API_KEY!.trim()]);
   }
-  if (pares.length === 0 && (env.INTERNAL_AGENT_RUN_STUB ?? "").trim() === "true") {
-    pares.push([provedorDeConversa, "duble-do-provedor-controlado-nunca-enviada"]);
-  }
+  // Sem chave colhida NÃO se inventa credencial — nem sob o dublê do provedor
+  // (`INTERNAL_AGENT_RUN_STUB`): uma instalação fresca sem chave é uma
+  // organização sem credencial, e é esse o estado que o onboarding e a jornada
+  // J1 do e2e medem ("setup IA sem chave: cria o agente como rascunho"). Quem
+  // precisa de IA no e2e usa a organização semeada por
+  // `scripts/seed-e2e-credentials.ts`, que cadastra a credencial do dublê.
   if (pares.length === 0) {
     console.info("[bootstrap] nenhuma chave de IA colhida — a IA fica desligada até alguém cadastrar em IA › Credenciais");
     return;

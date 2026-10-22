@@ -19,8 +19,8 @@
  * A régua de QUAL motivo bloqueia é `lib/ai/agents/bloqueio-de-publicacao.ts`
  * (com teste puro próprio). Aqui só se prova que a frase chega à tela e que o
  * botão aponta para ela — a lista de motivos possíveis aceita qualquer um dos
- * oito, porque qual deles vale depende do ambiente do job (chave de instalação
- * presente ou não), e fixar um só faria o teste mentir sobre o ambiente.
+ * oito, porque qual deles vale depende do ambiente do job (qual credencial a
+ * organização semeada tem), e fixar um só faria o teste mentir sobre o ambiente.
  *
  * Locale pt-BR fixado no arquivo, como as specs vizinhas: sem isso o navegador
  * de teste roda en-US e o que se lê na tela não é o português do produto.
@@ -36,7 +36,7 @@ const EVIDENCIA = path.join(process.cwd(), "evidence", "motivo-do-publicar-951")
 
 /** Os oito motivos de `bloqueioDePublicacao`, como a tela escreve cada um. */
 const MOTIVOS_DE_BLOQUEIO =
-  /sem rascunho para publicar|resolva os erros do formulário|salve o rascunho antes de publicar|esta instalação não tem chave de|escolha a chave de acesso|credencial \w+|escolha por qual número de whatsapp|número whatsapp não está conectado/i;
+  /sem rascunho para publicar|resolva os erros do formulário|salve o rascunho antes de publicar|escolha a chave de acesso|credencial \w+|escolha por qual número de whatsapp|número whatsapp não está conectado/i;
 
 let creds: CredsE2E = lerCreds();
 
@@ -56,12 +56,21 @@ test.beforeEach(async ({ page }) => {
  * Cria um agente BLOQUEADO para publicar, pela API — a precondição é semeada
  * aqui, não pressuposta de outra spec nem do seed.
  *
- * Sem chave escolhida e sem número, o botão nasce desabilitado em qualquer
- * ambiente: `credential_id: null` é "usar a chave da instalação" (pode estar no
- * `.env` do job, pode não estar) e `channel_session_id: null` é rascunho
- * legítimo — a publicação é que não passa sem número.
+ * A versão aponta para uma credencial da organização (desde a ADR-0005 o
+ * contrato recusa `credential_id: null`: não existe "chave da instalação"), e
+ * fica sem número: `channel_session_id: null` é rascunho legítimo — a
+ * publicação é que não passa sem número, e é esse o bloqueio que a tela precisa
+ * explicar.
  */
 async function criarAgenteBloqueado(page: Page): Promise<string> {
+  const credenciais = await page.request.get("/api/v1/ai/credentials");
+  expect(credenciais.status(), "não consegui listar as credenciais da organização").toBe(200);
+  const { data: lista } = (await credenciais.json()) as {
+    data: Array<{ id: string; provider: string; is_active: boolean; validated_at: string | null }>;
+  };
+  const credencial = lista.find((c) => c.provider === "anthropic" && c.is_active && c.validated_at !== null);
+  expect(credencial, "a organização semeada precisa de uma credencial anthropic validada (seed)").toBeDefined();
+
   const criado = await page.request.post("/api/v1/ai/agents", {
     data: {
       name: `E2E Motivo do Publicar ${Date.now()}`,
@@ -69,7 +78,7 @@ async function criarAgenteBloqueado(page: Page): Promise<string> {
         system_prompt: "Você é um atendente de teste E2E. Responda de forma clara, em pt-BR.",
         provider: "anthropic",
         model: "claude-sonnet-4-6",
-        credential_id: null,
+        credential_id: credencial!.id,
         channel_session_id: null,
       },
     },

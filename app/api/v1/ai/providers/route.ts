@@ -167,11 +167,12 @@ export async function GET(): Promise<Response> {
       mandadoPeloAgente: agentePublicado !== null && PONTOS_DO_AGENTE_PUBLICADO.has(ponto.id),
       efetivo: {
         provider: decisao.provider,
-        // O ponto fixo de transcrição declara `whisper-1`, mas `TRANSCRIPTION_MODEL`
+        // O padrão do ponto de transcrição declara `whisper-1`, mas `TRANSCRIPTION_MODEL`
         // (o mesmo `.env` do worker) troca o modelo que roda: a tela anuncia o que
-        // roda, pela mesma função que o worker usa.
+        // roda, pela mesma função que o worker usa. Com BINDING (item 18 da #33),
+        // o que roda é o modelo do binding — e é ele que a tela anuncia.
         modelId:
-          ponto.id === "transcricao_de_audio"
+          ponto.id === "transcricao_de_audio" && decisao.origem === "padrao_do_ponto"
             ? modeloDeTranscricaoEmVigor({ model: process.env.TRANSCRIPTION_MODEL })
             : decisao.modelId,
         credentialId: decisao.credentialId,

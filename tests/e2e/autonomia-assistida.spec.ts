@@ -7,6 +7,7 @@ import { test, expect, type Page, type TestInfo, type Locator } from "./helpers/
 import { credenciaisSupabaseDeTeste } from "../../scripts/lib/env-de-teste";
 import { createApprovedReplyHandler } from "../../lib/agent-engine/agent/approved-reply";
 import { seedPlatformPlaybook } from "../../lib/agent-engine/agent/playbook-seed";
+import { clonarCredencialDoDuble } from "./helpers/credencial-do-duble";
 
 const credentials = credenciaisSupabaseDeTeste();
 const db = createClient(credentials.url, credentials.serviceRole, {
@@ -39,6 +40,10 @@ async function fixture(pool: pg.Pool) {
     onboarded_at: new Date().toISOString(),
   });
   orgs.push(org);
+  // A única chave que o resolvedor aceita é a credencial DA organização
+  // (ADR-0005): sem ela, "Testar" responde 422 "sem chave de IA" — correto, e
+  // não o que esta spec mede.
+  await clonarCredencialDoDuble(db, org);
   await insert("user_organizations", {
     organization_id: org,
     user_id: user,
