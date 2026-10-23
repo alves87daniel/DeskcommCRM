@@ -1,19 +1,27 @@
+import { randomUUID } from "node:crypto";
 import { loadOnboardingChannel } from "@/lib/channels/onboarding-session";
 import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
-import { loadAuthUser, resolveActiveOrg } from "@/lib/auth/server";
+import { requireRole } from "@/lib/auth/require-role";
 
 /**
  * Proxy WAHA's QR endpoint so the browser can <img src="..." /> without
  * exposing the API key.
  *
  * WAHA exposes: GET /api/{session}/auth/qr?format=image → image/png bytes.
+ *
+ * ⚠️ ADMIN, como o `POST` irmão (`../session`) — CG-IAM-01. Quem escaneia este
+ * QR liga o próprio WhatsApp ao canal da empresa; servi-lo a qualquer membro
+ * deixava um `viewer` parear o número dele enquanto o dono configurava.
  */
 export async function GET() {
-  const user = await loadAuthUser();
-  if (!user) return new NextResponse(null, { status: 401 });
-  const activeOrg = await resolveActiveOrg(user);
-  if (!activeOrg) return new NextResponse(null, { status: 404 });
+  const authz = await requireRole("admin", {
+    requestId: randomUUID(),
+    resource: "channel_sessions",
+    allowPlatformAdmin: true,
+  });
+  if (!authz.ok) return authz.response;
+  const activeOrg = authz.org;
 
   const baseUrl = process.env.WAHA_API_BASE_URL;
   const apiKey = process.env.WAHA_API_KEY;

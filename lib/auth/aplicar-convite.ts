@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 
 import { audit } from "@/lib/audit";
+import { logger } from "@/lib/logger";
 import { cookieSecure } from "@/lib/supabase/cookie-secure";
 import { createAdminClient } from "@/lib/supabase/admin";
 import type { InvitePayload } from "@/lib/auth/invite-token";
@@ -53,15 +54,83 @@ export async function aplicarConvite(params: {
   const { userId, payload, requestId } = params;
 
   const admin = createAdminClient();
+  const recusa = { ok: false, motivo: "invalid_or_expired" } as const;
+  const falha = { ok: false, motivo: "internal_error" } as const;
+  /** O que o log precisa para alguém consertar à mão. Nunca o token. */
+  const identidade = {
+    invite_id: payload.invite_id,
+    organization_id: payload.organization_id,
+    user_id: userId,
+    request_id: requestId ?? null,
+  };
+
+  type Linha = {
+    revoked_at: string | null;
+    accepted_at: string | null;
+    accepted_by: string | null;
+  };
+  // `error` é falha de banco, e falha de banco NÃO é "convite sem linha".
+  // Tratar as duas igual mandava um convite revogado pelo fluxo legado, que
+  // não consulta a linha, bastando a leitura falhar.
+  const lerLinha = async (): Promise<{ linha: Linha | null; erro: boolean }> => {
+    const { data, error } = await admin
+      .from("team_invites")
+      .select("revoked_at, accepted_at, accepted_by")
+      .eq("id", payload.invite_id)
+      .eq("organization_id", payload.organization_id)
+      .maybeSingle();
+    if (error) {
+      logger.error("convite: falha ao ler a linha do convite", { ...identidade, code: error.code });
+      return { linha: null, erro: true };
+    }
+    return { linha: (data as Linha | null) ?? null, erro: false };
+  };
+  /** Revogado, ou aceito por outra pessoa: o convite não serve a quem chegou agora. */
+  const naoServe = (l: Linha) =>
+    Boolean(l.revoked_at) || (Boolean(l.accepted_at) && l.accepted_by !== userId);
 
   // Convite REVOGADO na tela de Equipe. Sem linha, segue — ver o cabeçalho.
-  const { data: linhaDoConvite } = await admin
-    .from("team_invites")
-    .select("revoked_at")
-    .eq("id", payload.invite_id)
-    .eq("organization_id", payload.organization_id)
-    .maybeSingle();
-  if (linhaDoConvite?.revoked_at) return { ok: false, motivo: "invalid_or_expired" };
+  const leitura = await lerLinha();
+  if (leitura.erro) return falha;
+  const linhaDoConvite = leitura.linha;
+  if (linhaDoConvite && naoServe(linhaDoConvite)) return recusa;
+
+  // POSSE ANTES DO VÍNCULO (CG-IAM-01). Ler, vincular e só depois fechar a linha
+  // deixava uma revogação gravada no meio virar acesso — com a tela de Equipe
+  // dizendo "revogado". Agora o aceite marca a linha primeiro, e só onde ela
+  // ainda está em aberto; a revogação, do lado dela, só escreve onde
+  // `accepted_at` é nulo. Uma das duas ganha, nunca as duas.
+  //
+  // O vínculo só nasce com a posse CONFIRMADA (linha devolvida pelo UPDATE) ou
+  // com a posse já desta pessoa (replay). Erro de banco aqui não é "perdeu a
+  // linha": é não saber — e não saber não vira acesso.
+  let reivindicou = false;
+  if (linhaDoConvite && !linhaDoConvite.accepted_at) {
+    const { data: ganhou, error: erroDaPosse } = await admin
+      .from("team_invites")
+      .update({ accepted_at: new Date().toISOString(), accepted_by: userId })
+      .eq("id", payload.invite_id)
+      .eq("organization_id", payload.organization_id)
+      .is("accepted_at", null)
+      .is("revoked_at", null)
+      .select("id")
+      .maybeSingle();
+    if (erroDaPosse) {
+      logger.error("convite: falha ao reivindicar a posse do convite", {
+        ...identidade,
+        code: erroDaPosse.code,
+      });
+      return falha;
+    }
+    if (ganhou) reivindicou = true;
+    else {
+      // Perdeu a linha: revogada no meio, ou o mesmo aceite chegou duas vezes
+      // (clique duplo). Só o segundo caso segue — e segue como replay.
+      const agora = await lerLinha();
+      if (agora.erro) return falha;
+      if (!agora.linha || naoServe(agora.linha)) return recusa;
+    }
+  }
 
   // Org, papel e convidador vêm EXCLUSIVAMENTE do token assinado; o usuário,
   // de quem chamou. Nada aqui vem de body de requisição.
@@ -76,6 +145,34 @@ export async function aplicarConvite(params: {
   });
 
   if (error) {
+    // O vínculo não nasceu: a posse volta, senão a linha diria "aceito" para
+    // quem não entrou — e o administrador não teria mais como revogar nem
+    // reenviar. Só desfaz o que este aceite marcou.
+    //
+    // A devolução não é atômica com a posse (duas escritas, sem transação), então
+    // ela só vale se o banco DEVOLVER a linha desfeita. Erro, ou nenhuma linha
+    // casando, é estado incerto: a linha pode seguir "aceita" por quem não
+    // entrou. Isso não pode virar a recusa mansa de 42501 — é falha, com log do
+    // que o operador precisa para consertar.
+    if (reivindicou) {
+      const { data: devolvida, error: erroDaDevolucao } = await admin
+        .from("team_invites")
+        .update({ accepted_at: null, accepted_by: null })
+        .eq("id", payload.invite_id)
+        .eq("organization_id", payload.organization_id)
+        .eq("accepted_by", userId)
+        .select("id")
+        .maybeSingle();
+      if (erroDaDevolucao || !devolvida) {
+        logger.error("convite: posse reivindicada sem vínculo e a devolução não se confirmou", {
+          ...identidade,
+          vinculo_code: error.code,
+          devolucao_code: erroDaDevolucao?.code ?? null,
+          devolucao_casou: Boolean(devolvida),
+        });
+        return falha;
+      }
+    }
     return {
       ok: false,
       // 42501 é a recusa da própria função (convite revogado ou posterior à
@@ -96,16 +193,8 @@ export async function aplicarConvite(params: {
     });
   }
 
-  // Fecha o convite na aba Membros. Idempotente: `is("accepted_at", null)` faz
-  // o replay do mesmo token não mexer em nada, e `is("revoked_at", null)` impede
-  // que uma corrida marque como aceito um convite cancelado no mesmo instante.
-  await admin
-    .from("team_invites")
-    .update({ accepted_at: new Date().toISOString(), accepted_by: userId })
-    .eq("id", payload.invite_id)
-    .eq("organization_id", payload.organization_id)
-    .is("accepted_at", null)
-    .is("revoked_at", null);
+  // O convite já foi fechado na aba Membros ANTES do vínculo (a posse, acima);
+  // o replay do mesmo token não mexe na linha.
 
   // Sem isto a pessoa entra sem organização escolhida e o app não sabe qual
   // mostrar — o mesmo motivo pelo qual o botão de aceite sempre gravou aqui.

@@ -56,6 +56,13 @@ export function InviteTeamForm() {
         toast.error(`${t("Falha:")} ${res.error}`);
         return;
       }
+      if (res && res.ok && res.already_member?.length) {
+        // Quem já tem vínculo não é reconvidado (CG-IAM-01): o admin precisa
+        // saber que aquele e-mail não recebeu nada — e que o papel dele não mudou.
+        toast.info(
+          `${t("Já faz(em) parte da equipe e não recebeu(ram) convite:")} ${res.already_member.join(", ")}`,
+        );
+      }
       if (res && res.ok && res.undelivered?.length) {
         // Sem serviço de email configurado: mostra os links de aceite pro
         // admin mandar por conta própria — nunca fingir que o email saiu.
@@ -63,6 +70,9 @@ export function InviteTeamForm() {
         toast.warning(
           `${res.failed} ${t("convite(s) não puderam ser enviados por email. Copie os links abaixo e envie você mesmo.")}`,
         );
+      } else if (res && res.ok) {
+        // Só sobrou o aviso de quem já era membro: o passo está feito.
+        window.location.href = "/onboarding";
       }
       // sucesso total redireciona no server action
     });

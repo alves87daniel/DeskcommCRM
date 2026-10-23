@@ -6,7 +6,15 @@ const h = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/auth/requirePlatformAdmin", () => ({ requirePlatformAdmin: h.guard }));
 vi.mock("@/lib/auth/server", () => ({ mfaEmDivida: h.mfa, loadAuthUser: h.user }));
-vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({ rpc: h.rpc }) }));
+// `from`: a linha do convite do titular em `team_invites` (CG-IAM-01) — ainda não existe, e grava.
+const linhaDoConvite = () => {
+  const c: Record<string, unknown> = {};
+  for (const m of ["select", "eq", "insert"]) c[m] = () => c;
+  c.maybeSingle = async () => ({ data: null, error: null });
+  c.single = async () => ({ data: { id: actor, email: "guest@example.test" }, error: null });
+  return c;
+};
+vi.mock("@/lib/supabase/admin", () => ({ createAdminClient: () => ({ rpc: h.rpc, from: linhaDoConvite }) }));
 vi.mock("@/lib/supabase/server", () => ({ createClient: async () => ({ from: h.query }) }));
 vi.mock("@/lib/audit", () => ({ audit: h.audit }));
 vi.mock("@/lib/auth/issue-invite", () => ({ issueInvite: h.invite }));

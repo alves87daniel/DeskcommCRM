@@ -100,7 +100,13 @@ export type CreateAgentResult =
     }
   | {
       ok: false;
-      error: "auth_required" | "no_active_org" | "invalid_input" | "db_error";
+      error:
+        | "auth_required"
+        | "no_active_org"
+        | "forbidden"
+        | "mfa_required"
+        | "invalid_input"
+        | "db_error";
       details?: unknown;
     };
 

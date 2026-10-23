@@ -15,23 +15,23 @@ usa e o nome que o projeto passa a usar.
 
 Fonte do "próximo número" de cada área: o maior listado + 1. Áreas sem linha ainda não emitiram ID (próximo: `01`).
 
-| ID          | Nome humano                                          | Tipo  | Estado    | Observação                                                                                                     |
-| ----------- | ---------------------------------------------------- | ----- | --------- | -------------------------------------------------------------------------------------------------------------- |
-| `CG-FND-01` | Fundação — Fronteira de mutação                      | SPIKE | CONCLUÍDO | Contrato selado MUTATION BOUNDARY. Migrations 0501 e 0502                                                      |
-| `CG-FND-02` | Fundação — Ciclo de vida da oportunidade             | SPIKE | CONCLUÍDO | Contrato selado LEAD LIFECYCLE. Migrations 0503, 0504 e 0505                                                   |
-| `CG-FND-03` | Fundação — Origem de automação                       | SPIKE | CONCLUÍDO | Contrato selado GREEN AUTOMATION ORIGIN. Migration 0506                                                        |
-| `CG-FND-04` | Fundação — Fronteira estrutural                      | SPIKE | CONCLUÍDO | Contrato selado STRUCTURAL BOUNDARY. Migration 0507                                                            |
-| `CG-FND-05` | Fundação — Corte de eventos canônicos                | SPIKE | CONCLUÍDO | Contrato selado CANONICAL EVENT CUTOVER. Migration 0508                                                        |
-| `CG-FND-06` | Fundação — Baseline 1.0 do ConectorGreen             | DOC   | CONCLUÍDO | Agrupamento histórico da adoção e selagem (`CG-FND-01` a `CG-FND-05`). Ver nota abaixo                         |
-| `CG-FND-07` | Fundação — Modelo de produto do ConectorGreen        | DOC   | CONCLUÍDO | Agrupamento histórico: GREEN-CRM-01 e sua revisão 01.1. Ver nota abaixo                                        |
-| `CG-FND-08` | Fundação — Vocabulário e nomenclatura                | DOC   | CONCLUÍDO | Este conjunto. Ratificado (`GOV-01` a `GOV-05`). Integrado à `main` pelo PR #2 (merge `6cbe207f7`, 2026-10-08) |
-| `CG-PRD-01` | Produtos — Catálogo e produto da oportunidade        | FEAT  | CONCLUÍDO | GREEN-CRM-02. Migration 0509. Integrado e validado na `main` pelo PR #3 (merge `98049367f`, 2026-10-08)        |
-| `CG-COM-01` | Comercial — Expansão pós-ganho                       | FEAT  | CONCLUÍDO | Vínculo de origem. Migration 0510. Integrado e validado na `main` pelo PR #7 (merge `da92cb175`, 2026-10-13)   |
-| `CG-SEC-01` | Segurança — Proteção das credenciais nos logs locais | FIX   | CONCLUÍDO | Sem migration. Integrado e validado na `main` pelo PR #5 (merge `8cfb6016f`, 2026-10-12)                       |
+| ID          | Nome humano                                          | Tipo  | Estado       | Observação                                                                                                     |
+| ----------- | ---------------------------------------------------- | ----- | ------------ | -------------------------------------------------------------------------------------------------------------- |
+| `CG-FND-01` | Fundação — Fronteira de mutação                      | SPIKE | CONCLUÍDO    | Contrato selado MUTATION BOUNDARY. Migrations 0501 e 0502                                                      |
+| `CG-FND-02` | Fundação — Ciclo de vida da oportunidade             | SPIKE | CONCLUÍDO    | Contrato selado LEAD LIFECYCLE. Migrations 0503, 0504 e 0505                                                   |
+| `CG-FND-03` | Fundação — Origem de automação                       | SPIKE | CONCLUÍDO    | Contrato selado GREEN AUTOMATION ORIGIN. Migration 0506                                                        |
+| `CG-FND-04` | Fundação — Fronteira estrutural                      | SPIKE | CONCLUÍDO    | Contrato selado STRUCTURAL BOUNDARY. Migration 0507                                                            |
+| `CG-FND-05` | Fundação — Corte de eventos canônicos                | SPIKE | CONCLUÍDO    | Contrato selado CANONICAL EVENT CUTOVER. Migration 0508                                                        |
+| `CG-FND-06` | Fundação — Baseline 1.0 do ConectorGreen             | DOC   | CONCLUÍDO    | Agrupamento histórico da adoção e selagem (`CG-FND-01` a `CG-FND-05`). Ver nota abaixo                         |
+| `CG-FND-07` | Fundação — Modelo de produto do ConectorGreen        | DOC   | CONCLUÍDO    | Agrupamento histórico: GREEN-CRM-01 e sua revisão 01.1. Ver nota abaixo                                        |
+| `CG-FND-08` | Fundação — Vocabulário e nomenclatura                | DOC   | CONCLUÍDO    | Este conjunto. Ratificado (`GOV-01` a `GOV-05`). Integrado à `main` pelo PR #2 (merge `6cbe207f7`, 2026-10-08) |
+| `CG-PRD-01` | Produtos — Catálogo e produto da oportunidade        | FEAT  | CONCLUÍDO    | GREEN-CRM-02. Migration 0509. Integrado e validado na `main` pelo PR #3 (merge `98049367f`, 2026-10-08)        |
+| `CG-COM-01` | Comercial — Expansão pós-ganho                       | FEAT  | CONCLUÍDO    | Vínculo de origem. Migration 0510. Integrado e validado na `main` pelo PR #7 (merge `da92cb175`, 2026-10-13)   |
+| `CG-IAM-01` | Acesso — Primeiro acesso do licenciado               | FEAT  | EM ANDAMENTO | Assistente só de admin, convites revogáveis, convite no Google, modo simplificado. Sem migration. PR #9 (#64)  |
+| `CG-SEC-01` | Segurança — Proteção das credenciais nos logs locais | FIX   | CONCLUÍDO    | Sem migration. Integrado e validado na `main` pelo PR #5 (merge `8cfb6016f`, 2026-10-12)                       |
 
-Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`, `CG-COM-02`, `CG-SEC-02`; demais áreas, `01`.
-Próximo número livre de migration: `0511` (a 0509 é de `CG-PRD-01` e a 0510 é de `CG-COM-01`; ver nota
-abaixo).
+Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`, `CG-COM-02`, `CG-IAM-02`, `CG-SEC-02`; demais áreas,
+`01`. Próximo número livre de migration: `0511` (a 0509 é de `CG-PRD-01` e a 0510 é de `CG-COM-01`; ver nota abaixo).
 
 **Integração à `main`.** Este registro foi preparado para integração à `main` (branch `docs/cg-fnd-08-vocabulary-naming`,
 sobre `b5962666`). `CG-FND-07` (GREEN-CRM-01 e 01.1, commit `a2d202168` da branch `green/crm-01-product-foundation`)

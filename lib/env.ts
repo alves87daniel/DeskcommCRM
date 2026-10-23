@@ -561,6 +561,20 @@ const schema = z.object({
   SIGNUP_MODE: z.string().optional().default(""),
 
   /**
+   * Qual assistente de configuração inicial esta instalação oferece ao
+   * administrador de uma organização nova (CG-IAM-01): `herdado` (padrão — boas-
+   * vindas, WhatsApp, IA, funil, ensaio e equipe) ou `simplificado` (só o
+   * negócio, com a equipe como passo opcional; WhatsApp, IA e funis ficam nas
+   * Configurações). Vazio = `herdado`, que é como o produto sempre funcionou.
+   *
+   * Vale para organizações AINDA NÃO CONFIGURADAS; nenhuma organização que já
+   * concluiu a configuração é tocada. `z.string()` e não `z.enum`, pelo motivo
+   * escrito em `SIGNUP_MODE`: valor irreconhecível degrada para `herdado` em
+   * `lib/onboarding/modo.ts`, com aviso no log, em vez de derrubar o app.
+   */
+  ONBOARDING_MODE: z.string().optional().default(""),
+
+  /**
    * Par VAPID do Web Push. Opcionais: sem elas a bandeja só funciona com a aba
    * viva (Notification API + SW local). Gerar: `npx web-push generate-vapid-keys`.
    */

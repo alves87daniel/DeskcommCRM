@@ -8,11 +8,13 @@ import { Button } from "@/components/ui/button";
 import { finishOnboarding } from "@/app/actions/onboarding/finishOnboarding";
 import type { ItemDoResumo } from "@/lib/onboarding/passos";
 import type { PecaDoSistema } from "@/lib/onboarding/o-que-mais-existe";
+import type { ModoDoOnboarding } from "@/lib/onboarding/modo";
 
 export function DoneClient({
   itens,
   pecas,
   noAr,
+  modo = "herdado",
 }: {
   itens: ItemDoResumo[];
   pecas: PecaDoSistema[];
@@ -22,6 +24,8 @@ export function DoneClient({
    * é cliente e não tem como perguntar sem um fetch que faria a tela piscar.
    */
   noAr: boolean;
+  /** O assistente da instalação (`lib/onboarding/modo.ts`, CG-IAM-01). */
+  modo?: ModoDoOnboarding;
 }) {
   const t = useT();
   const [pending, startTransition] = useTransition();
@@ -44,14 +48,25 @@ export function DoneClient({
    * o que coloca o atendente no ar, e pular um passo que não depende da IA
    * (telefone, equipe) não tira ninguém do ar.
    */
-  const titulo = noAr ? t("Tudo pronto!") : t("Quase lá!");
-  const resumo = !noAr
-    ? semIa
-      ? t("O passo da IA ficou para depois: ele ainda não foi treinado nem colocado no ar.")
-      : t("Ele já foi treinado, mas o atendimento ainda não foi publicado — ele segue em rascunho.")
-    : pendentes.length === 0
-      ? t("Seu funcionário está montado. Daqui em diante é só acompanhar.")
-      : t("Seu funcionário já está de pé. O que ficou para depois continua te esperando.");
+  //
+  // No assistente SIMPLIFICADO não houve passo de IA para pular nem agente para
+  // publicar: falar de "treinado" ou "rascunho" seria a mesma promessa falsa
+  // com outra roupa. A frase diz o que a pessoa tem (o CRM) e onde está o resto.
+  const simplificado = modo === "simplificado";
+  const titulo = simplificado || noAr ? t("Tudo pronto!") : t("Quase lá!");
+  const resumo = simplificado
+    ? t(
+        "O CRM já está pronto para usar. WhatsApp, inteligência artificial e funis ficam para quando você quiser, em Configurações.",
+      )
+    : !noAr
+      ? semIa
+        ? t("O passo da IA ficou para depois: ele ainda não foi treinado nem colocado no ar.")
+        : t(
+            "Ele já foi treinado, mas o atendimento ainda não foi publicado — ele segue em rascunho.",
+          )
+      : pendentes.length === 0
+        ? t("Seu funcionário está montado. Daqui em diante é só acompanhar.")
+        : t("Seu funcionário já está de pé. O que ficou para depois continua te esperando.");
 
   return (
     <div className="space-y-6 rounded-lg border bg-background p-6">
