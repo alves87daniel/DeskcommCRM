@@ -28,6 +28,8 @@ Na primeira resposta de toda sessão, antes de qualquer trabalho:
    renomear.
 4. O relatório final repete o título formal na primeira linha.
 
+Não vale para revisão automática de PR (Codex, `claude-review`) nem para saída cujo formato é fixado por máquina (JSON exigido pela ferramenta, comentário gerado pelo CI): nelas, o formato da ferramenta manda.
+
 > Instruções pra futuras sessões Claude trabalhando neste repo. Leitura obrigatória antes de qualquer task de código.
 
 **Este arquivo é a doutrina — a autoridade final sobre convenção e anti-pattern.** Complementos, na ordem em que ajudam:

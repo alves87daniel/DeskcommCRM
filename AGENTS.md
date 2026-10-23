@@ -36,6 +36,8 @@ Na primeira resposta de toda sessão, antes de qualquer trabalho:
    renomear.
 4. O relatório final repete o título formal na primeira linha.
 
+Não vale para revisão automática de PR (Codex, `claude-review`) nem para saída cujo formato é fixado por máquina (JSON exigido pela ferramenta, comentário gerado pelo CI): nelas, o formato da ferramenta manda.
+
 ## Project Overview
 
 Sistema operacional de vendas open source com agentes de IA nativos, multi-nicho (e-commerce,
