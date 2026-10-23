@@ -79,13 +79,15 @@ describe("0512 — fn_resolve_inbound_number é só do servidor", () => {
   });
 
   it("authenticated não tem EXECUTE", () => {
-    expect(booleano(`select has_function_privilege('authenticated', '${ASSINATURA}', 'EXECUTE')::text`)).toBe(
-      false,
-    );
+    expect(
+      booleano(`select has_function_privilege('authenticated', '${ASSINATURA}', 'EXECUTE')::text`),
+    ).toBe(false);
   });
 
   it("anon não tem EXECUTE", () => {
-    expect(booleano(`select has_function_privilege('anon', '${ASSINATURA}', 'EXECUTE')::text`)).toBe(false);
+    expect(
+      booleano(`select has_function_privilege('anon', '${ASSINATURA}', 'EXECUTE')::text`),
+    ).toBe(false);
   });
 
   it("CONTROLE POSITIVO: o service_role (worker de voz) resolve o número", () => {
@@ -126,14 +128,18 @@ describe("0512 — rls_auto_enable criada pelo Supabase perde o EXECUTE de authe
       grant execute on function public.rls_auto_enable() to authenticated;
     `);
     try {
-      expect(booleano(`select has_function_privilege('authenticated', 'public.rls_auto_enable()', 'EXECUTE')::text`)).toBe(
-        true,
-      );
+      expect(
+        booleano(
+          `select has_function_privilege('authenticated', 'public.rls_auto_enable()', 'EXECUTE')::text`,
+        ),
+      ).toBe(true);
       // reaplicar a migration também prova que ela é idempotente sobre o baseline
       sql(readFileSync(MIGRATION, "utf8"));
-      expect(booleano(`select has_function_privilege('authenticated', 'public.rls_auto_enable()', 'EXECUTE')::text`)).toBe(
-        false,
-      );
+      expect(
+        booleano(
+          `select has_function_privilege('authenticated', 'public.rls_auto_enable()', 'EXECUTE')::text`,
+        ),
+      ).toBe(false);
     } finally {
       sql(`drop function if exists public.rls_auto_enable();`);
     }
