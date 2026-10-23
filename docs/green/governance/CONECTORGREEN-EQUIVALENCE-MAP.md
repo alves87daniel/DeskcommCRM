@@ -27,7 +27,7 @@ Fonte do "próximo número" de cada área: o maior listado + 1. Áreas sem linha
 | `CG-FND-08` | Fundação — Vocabulário e nomenclatura                | DOC   | CONCLUÍDO    | Este conjunto. Ratificado (`GOV-01` a `GOV-05`). Integrado à `main` pelo PR #2 (merge `6cbe207f7`, 2026-10-08) |
 | `CG-PRD-01` | Produtos — Catálogo e produto da oportunidade        | FEAT  | CONCLUÍDO    | GREEN-CRM-02. Migration 0509. Integrado e validado na `main` pelo PR #3 (merge `98049367f`, 2026-10-08)        |
 | `CG-COM-01` | Comercial — Expansão pós-ganho                       | FEAT  | CONCLUÍDO    | Vínculo de origem. Migration 0510. Integrado e validado na `main` pelo PR #7 (merge `da92cb175`, 2026-10-13)   |
-| `CG-IAM-01` | Acesso — Primeiro acesso do licenciado               | FEAT  | EM ANDAMENTO | Assistente só de admin, convites revogáveis, convite no Google, modo simplificado. Sem migration. Sem PR       |
+| `CG-IAM-01` | Acesso — Primeiro acesso do licenciado               | FEAT  | EM ANDAMENTO | Assistente só de admin, convites revogáveis, convite no Google, modo simplificado. Sem migration. PR #9 (#64)  |
 | `CG-SEC-01` | Segurança — Proteção das credenciais nos logs locais | FIX   | CONCLUÍDO    | Sem migration. Integrado e validado na `main` pelo PR #5 (merge `8cfb6016f`, 2026-10-12)                       |
 
 Próximos livres na data deste registro: `CG-FND-09`, `CG-PRD-02`, `CG-COM-02`, `CG-IAM-02`, `CG-SEC-02`; demais áreas,
