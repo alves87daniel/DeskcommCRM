@@ -159,7 +159,10 @@ describe("a volta do Google com convite", () => {
 
     expect(vi.mocked(ensureTenantForUser)).not.toHaveBeenCalled();
     expect(await destino(res)).toBe(aceite(t));
-    expect(res.headers.get("location"), "302 na cadeia do Google não leva o cookie Strict").toBeNull();
+    expect(
+      res.headers.get("location"),
+      "302 na cadeia do Google não leva o cookie Strict",
+    ).toBeNull();
   });
 
   it("conta nova, convite com assinatura inválida: recusa, sem empresa", async () => {
@@ -202,7 +205,11 @@ describe("a volta do Google com convite", () => {
   // same-origin entrega a sessão (a mesma razão da #1646).
   it("usuário já existente com convite: o aceite chega pela ponte, não por 302", async () => {
     vi.mocked(vinculoAtivo).mockResolvedValue("99999999-9999-4999-8999-999999999999");
-    for (const params of [{ convite: convite() }, { next: aceite(convite()) }]) {
+    const entradas: Record<string, string>[] = [
+      { convite: convite() },
+      { next: aceite(convite()) },
+    ];
+    for (const params of entradas) {
       const res = await volta(params);
       expect(res.headers.get("location"), JSON.stringify(params)).toBeNull();
       expect(await destino(res)).toMatch(/^\/team\/accept-invite\//);
