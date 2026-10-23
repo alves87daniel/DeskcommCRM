@@ -101,7 +101,10 @@ describe("0513 — edita e apaga nota só o autor ou manager+", () => {
 
   it("o AUTOR apaga a própria nota", () => {
     expect(
-      writeCountAs(GOV_AGENT_B, `delete from public.conversation_notes where id = '${SONDA_DELETE}'`),
+      writeCountAs(
+        GOV_AGENT_B,
+        `delete from public.conversation_notes where id = '${SONDA_DELETE}'`,
+      ),
     ).toBe(1);
   });
 
