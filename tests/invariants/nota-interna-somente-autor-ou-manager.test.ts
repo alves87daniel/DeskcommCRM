@@ -33,6 +33,9 @@
  * os casos "agent que vê a conversa NÃO edita/apaga nota de colega" ficam
  * VERMELHOS: devolvem 1 em vez de 0.
  */
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { beforeAll, describe, expect, it } from "vitest";
 
 import {
@@ -123,5 +126,55 @@ describe("0513 — edita e apaga nota só o autor ou manager+", () => {
     expect(
       writeCountAs(GOV_MANAGER, `delete from public.conversation_notes where id = '${NOTA_DE_B}'`),
     ).toBe(1);
+  });
+});
+
+/**
+ * Os casos acima medem o baseline. Este mede o OUTRO caminho de atualização: um
+ * banco que ainda tem a `conversation_notes_write` (`for all`) da 0478 e recebe a
+ * migration 0513 pelo Supabase CLI. Policies permissivas são OR: se a migration
+ * criar as três por operação sem derrubar a antiga, a `for all` segue deixando o
+ * colega editar e apagar (revisão do PR #69, P1).
+ */
+describe("0513 — a migration derruba a policy for all da 0478", () => {
+  const MIGRATION = join(
+    process.cwd(),
+    "supabase/migrations/20261022130000_0513_nota_interna_somente_autor_ou_manager.sql",
+  );
+  const NOTA_MIGRATION = "d0d0d0d0-0513-4000-8000-000000000004";
+
+  it("banco com a policy antiga, depois da migration, não deixa o colega editar", () => {
+    sql(`
+      delete from public.conversation_notes where id = '${NOTA_MIGRATION}';
+      insert into public.conversation_notes
+        (id, organization_id, conversation_id, body, created_by_user_id, created_by_name)
+        values ('${NOTA_MIGRATION}', '${GOV_ORG}', '${GOV_CONV_UNASSIGNED}', 'nota do B', '${GOV_AGENT_B}', 'B');
+      drop policy if exists "conversation_notes_write" on public.conversation_notes;
+      create policy "conversation_notes_write" on public.conversation_notes
+        for all using (
+          organization_id in (select public.fn_user_org_ids())
+          and public.fn_role_at_least(organization_id, 'agent')
+        )
+        with check (
+          organization_id in (select public.fn_user_org_ids())
+          and public.fn_role_at_least(organization_id, 'agent')
+        );
+    `);
+    try {
+      sql(readFileSync(MIGRATION, "utf8"));
+      expect(
+        sql(
+          `select count(*) from pg_policies where schemaname = 'public' and tablename = 'conversation_notes' and policyname = 'conversation_notes_write';`,
+        ),
+      ).toBe("0");
+      expect(
+        writeCountAs(
+          GOV_AGENT_A,
+          `update public.conversation_notes set body = 'hackeada' where id = '${NOTA_MIGRATION}'`,
+        ),
+      ).toBe(0);
+    } finally {
+      sql(`drop policy if exists "conversation_notes_write" on public.conversation_notes;`);
+    }
   });
 });
