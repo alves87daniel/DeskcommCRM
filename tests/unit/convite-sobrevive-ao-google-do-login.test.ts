@@ -159,6 +159,7 @@ describe("a volta do Google com convite", () => {
 
     expect(vi.mocked(ensureTenantForUser)).not.toHaveBeenCalled();
     expect(await destino(res)).toBe(aceite(t));
+    expect(res.headers.get("location"), "302 na cadeia do Google não leva o cookie Strict").toBeNull();
   });
 
   it("conta nova, convite com assinatura inválida: recusa, sem empresa", async () => {
@@ -192,6 +193,20 @@ describe("a volta do Google com convite", () => {
     vi.mocked(vinculoAtivo).mockResolvedValue("99999999-9999-4999-8999-999999999999");
     const t = convite();
     expect(await destino(await volta({ next: aceite(t) }))).toBe(aceite(t));
+  });
+
+  // A tela de aceite é pública, mas lê a sessão (`getUser()`) para decidir entre
+  // "Fazer login" e "Aceitar". Um 302 dentro da cadeia que começou no Google é
+  // navegação entre sites: o cookie `SameSite=Strict` recém-emitido não vai, a
+  // tela mostra "Fazer login" e o Google de novo fecha o laço. Só a ponte
+  // same-origin entrega a sessão (a mesma razão da #1646).
+  it("usuário já existente com convite: o aceite chega pela ponte, não por 302", async () => {
+    vi.mocked(vinculoAtivo).mockResolvedValue("99999999-9999-4999-8999-999999999999");
+    for (const params of [{ convite: convite() }, { next: aceite(convite()) }]) {
+      const res = await volta(params);
+      expect(res.headers.get("location"), JSON.stringify(params)).toBeNull();
+      expect(await destino(res)).toMatch(/^\/team\/accept-invite\//);
+    }
   });
 
   it("usuário já existente com convite ilegível: o convite é ignorado e ele entra", async () => {

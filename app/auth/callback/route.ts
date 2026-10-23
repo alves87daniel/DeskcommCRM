@@ -89,8 +89,9 @@ export async function GET(request: NextRequest) {
     NextResponse.redirect(new URL(path, env.NEXT_PUBLIC_APP_URL));
 
   // A volta para uma tela que EXIGE sessão. Toda saída de sucesso desta rota
-  // passa por aqui; o 302 fica reservado para as telas públicas (`/login` e a de
-  // aceite de convite), onde ele funciona. Trocar uma destas chamadas de volta
+  // passa por aqui; o 302 fica reservado para as telas públicas que não leem a
+  // sessão (`/login`). A de aceite de convite é pública mas LÊ a sessão, então
+  // também vem por aqui. Trocar uma destas chamadas de volta
   // para `redirectTo` reintroduz a #1646 inteira — e não apareceria em teste que
   // só olhasse o destino final, porque o destino não muda: muda quem o inicia.
   const paraTelaAutenticada = async (path: string) => {
@@ -200,9 +201,11 @@ export async function GET(request: NextRequest) {
       metadata: { provider: "google" },
       requestId,
     });
-    // Com convite: a tela de aceite é PÚBLICA, então o 302 funciona — e é lá
-    // que a pessoa confirma entrar na outra organização.
-    if (conviteDeQuemEntra) return redirectTo(`/team/accept-invite/${conviteDeQuemEntra}`);
+    // Com convite: é na tela de aceite que a pessoa confirma entrar na outra
+    // organização. A tela é pública, mas lê a sessão para mostrar "Aceitar" em
+    // vez de "Fazer login" — por isso a ponte, e não o 302: o cookie Strict não
+    // viaja num 302 da cadeia do Google, e a pessoa voltaria ao login em laço.
+    if (telaDeAceite) return await paraTelaAutenticada(telaDeAceite);
     // ENTRADA: o destino é `/app` (ou o `next` pedido) — tela COM sessão, logo
     // ponte e não 302 (issue #1646).
     return await paraTelaAutenticada(safeNext(next, "/app"));
@@ -256,8 +259,8 @@ export async function GET(request: NextRequest) {
     if (aceite.ok) return await paraTelaAutenticada("/app");
 
     // Convite revogado, ou banco fora: a tela de aceite continua existindo e
-    // sabe explicar cada caso.
-    return redirectTo(`/team/accept-invite/${decisao.token}`);
+    // sabe explicar cada caso — com a sessão, então pela ponte (ver acima).
+    return await paraTelaAutenticada(`/team/accept-invite/${decisao.token}`);
   }
 
   // A trava da política de cadastro, depois de `decidirConviteDoSignup` de
