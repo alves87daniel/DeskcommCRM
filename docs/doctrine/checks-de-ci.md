@@ -54,6 +54,23 @@ régua errada.
   nenhuma.
 - **`imagens-ok`** (`publish-image.yml`) — reprova quando qualquer uma das três imagens Docker não
   constrói.
+- **`vigia-de-revisao`** (`vigia-de-revisao.yml`) — reprova o PR que tem conversa de revisão **não
+  resolvida** com selo P0 ou P1 no começo do primeiro comentário (o selo `![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)` do
+  Codex, ou `**P1**`, `[P1]`, `P1:` em texto puro). P2 e P3 só aparecem listados. Com P0/P1
+  aberto, mantém **um** comentário no PR mencionando `@alves87daniel`; quando surge P0/P1 novo, o
+  comentário é recriado para a menção notificar (edição não notifica). Roda na abertura, no push,
+  em revisão nova e em comentário de revisão novo, editado ou apagado. **Resolver uma conversa não
+  dispara workflow nenhum** — o Actions não tem esse evento. Depois de resolver, comente `/vigia`
+  no PR (`vigia-de-revisao-de-novo.yml`, só quem tem escrita) ou use "Re-run" no check. Regra e
+  formato do selo em `scripts/vigia-de-revisao.mjs`.
+
+  O `/vigia` responde no próprio comentário com uma reação: 🚀 rodou de novo, 👀 já estava
+  rodando, 😕 não havia o que rodar (o motivo fica no resumo do job). O 😕 mais comum é branch
+  anterior ao vigia: um evento de PR usa os workflows da branch do PR, então traga a `main` e faça
+  push. Sessão no Git Bash do Windows que posta `/vigia` com o `gh` tem o texto reescrito como
+  caminho (`C:/Program Files/Git/vigia`). O atalho aceita essa forma, mas prefira
+  `MSYS_NO_PATHCONV=1 gh pr comment <n> --body /vigia`. Regra do comando em
+  `scripts/vigia-de-novo.mjs`.
 
 ## As specs do `e2e`: pergunte ao workflow
 

@@ -15,7 +15,7 @@ set -euo pipefail
 # de qualquer 'cd' (step 2 pode entrar num repo clonado à parte).
 KIT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
-REPO_URL="${REPO_URL:-https://github.com/melgarafael/DeskcommCRM.git}"
+REPO_URL="${REPO_URL:-https://github.com/alves87daniel/DeskcommCRM.git}"
 # Uma constante, dois usos (o fim feliz e o fim travado) — e o comecar.sh tem a
 # gêmea. Link repetido à mão vira link divergente na primeira troca.
 COMUNIDADE_URL="https://lp-comunidade.automatiklabs.com.br"
@@ -1403,6 +1403,10 @@ gen_b64() { openssl rand -base64 32; }
 # O container WAHA espera o HASH SHA512 hex; o app envia o plaintext no X-Api-Key.
 WAHA_API_KEY_SHA512="$(printf '%s' "$WAHA_API_KEY" | openssl dgst -sha512 -hex | awk '{print $NF}')"
 UPSTASH_REDIS_REST_TOKEN="$SRH_TOKEN"
+# Um .env de antes pode trazer um WAHA_HMAC_SECRET curto, que o `:=` acima
+# preserva. O WAHA assinaria com ele e o CRM recusaria toda mensagem recebida:
+# para aqui, antes de o .env ser escrito e de o WAHA subir (_common.sh).
+recusar_segredo_hmac_do_waha || die "$(t "Instalação interrompida: o WAHA_HMAC_SECRET do .env não serve (motivo acima).")"
 c_grn "$(t "✓ segredos prontos")"
 
 # ── 5. Escreve .env (600) ───────────────────────────────────────────────────
@@ -1773,9 +1777,10 @@ esac
   envq WACALLS_ADMIN_USER "$WACALLS_ADMIN_USER"
   envq WACALLS_ADMIN_PASSWORD "$WACALLS_ADMIN_PASSWORD"
   envq WACALLS_API_TOKEN "$WACALLS_API_TOKEN"
-  printf '# "true" exige assinatura em todo webhook do WAHA. O WAHA Core NÃO assina,\n'
-  printf '# então ligar isto sem um WAHA Plus (ou proxy que assine) para a ingestão\n'
-  printf '# de mensagens. A rota global já não é publicada na internet (ver Caddyfile).\n'
+  printf '# "true" exige assinatura em todo webhook do WAHA. O WAHA assina com o\n'
+  printf '# WAHA_HMAC_SECRET (issue #40); ligue depois de ver no log que as entregas\n'
+  printf '# chegam com valid_signature = true. A rota global já não é publicada na\n'
+  printf '# internet (ver Caddyfile).\n'
   envq WAHA_WEBHOOK_REQUIRE_SIGNATURE "${WAHA_WEBHOOK_REQUIRE_SIGNATURE:-false}"
   printf '# Retoma as sessões já pareadas quando o contêiner do transporte reinicia.\n'
   printf '# Sem isto o número segue pareado no volume e MUDO até alguém abrir a tela\n'

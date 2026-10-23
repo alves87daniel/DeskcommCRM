@@ -826,6 +826,54 @@ recusar_projeto_de_outra_arvore() {  # recusar_projeto_de_outra_arvore <como rep
   return 1
 }
 
+# O segredo com que o WAHA ASSINA os webhooks tem de ser um que o CRM aceita para
+# CONFERIR. O compose entrega `WAHA_HMAC_SECRET` ao WAHA em
+# `WHATSAPP_HOOK_HMAC_KEY` (issue #40), e `lib/waha/webhook-auth.ts` descarta
+# segredo com menos de 16 caracteres (`MIN_SECRET_LEN`, depois de `trim()`) —
+# e aí toda entrega ASSINADA vira `bad_signature`, mesmo com a exigência de
+# assinatura desligada. Um segredo curto ou vazio no .env pararia, em silêncio,
+# toda mensagem recebida no WhatsApp. Espaço nas pontas dá o mesmo: o WAHA assina
+# com o valor cru e o CRM confere com o aparado.
+#
+# Falha FECHADA antes de o WAHA receber o valor, e diz como consertar. Quem
+# chama é o install.sh, DEPOIS de gerar o segredo que falta (vazio ali vira 64
+# hex). O update.sh não recusa: conserta, em `consertar_segredo_hmac_do_waha`.
+recusar_segredo_hmac_do_waha() {  # recusar_segredo_hmac_do_waha  (lê $WAHA_HMAC_SECRET)
+  local segredo="${WAHA_HMAC_SECRET:-}" aparado
+  # Um \r no fim é o fim de linha de um .env com CRLF, que o `load_env` não tira
+  # e o compose não entrega como parte do valor — não é espaço do segredo.
+  segredo="${segredo%$'\r'}"
+  aparado="$(printf '%s' "$segredo" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+  if [ "${#aparado}" -ge 16 ] && [ "$aparado" = "$segredo" ]; then
+    return 0
+  fi
+  printf '%s\n' "WAHA_HMAC_SECRET no .env tem ${#segredo} caractere(s)$([ "$aparado" != "$segredo" ] && printf ' com espaço nas pontas'). O WAHA assina as mensagens recebidas com ele, e o CRM só confere assinatura com segredo de 16 caracteres ou mais, sem espaço nas pontas: com este valor, toda mensagem do WhatsApp seria recusada. Gere um segredo novo com 'openssl rand -hex 32', ponha o resultado na linha WAHA_HMAC_SECRET= do .env e rode de novo. O segredo só existe entre o CRM e o WAHA desta instalação; trocá-lo não afeta mais nada." >&2
+  return 1
+}
+
+# O update.sh CONSERTA o que o install.sh recusa. Quem atualiza não está diante
+# da tela (o agent.sh roda o update.sh a cada 5 minutos), e a doutrina de
+# packaging proíbe atualização que peça edição do .env. Trocar o segredo é
+# seguro: ele só existe entre o CRM e o WAHA desta instalação, e os dois o leem
+# do mesmo .env — basta recriá-los juntos, o que fica a cargo de quem chama.
+#
+# Devolve 0 quando TROCOU (quem chama recria app e WAHA), 1 quando o segredo já
+# servia (nada a fazer; idempotente), 2 quando não conseguiu trocar. Avisa sem
+# mostrar o valor velho nem o novo.
+consertar_segredo_hmac_do_waha() {  # consertar_segredo_hmac_do_waha <envfile>
+  local envfile="${1:-.env}" velho="${WAHA_HMAC_SECRET:-}" novo
+  recusar_segredo_hmac_do_waha 2>/dev/null && return 1
+  [ -f "$envfile" ] || return 2
+  novo="$(openssl rand -hex 32 2>/dev/null)" || return 2
+  [ "${#novo}" -eq 64 ] || return 2
+  set_env_var "$envfile" WAHA_HMAC_SECRET "$novo" || return 2
+  WAHA_HMAC_SECRET="$novo"
+  export WAHA_HMAC_SECRET
+  velho="${velho%$'\r'}"
+  c_ylw "⚠ O WAHA_HMAC_SECRET do .env não servia (${#velho} caractere(s); o CRM só confere assinatura com 16 ou mais, sem espaço nas pontas). Gerei um novo de 64 caracteres e gravei no .env; o CRM e o WAHA vão ser recriados para usar o mesmo. Nada mais muda."
+  return 0
+}
+
 # A bridge que ESTE projeto reserva para o proxy externo. Um `basename` cru
 # diverge numa pasta com maiúscula, ponto ou underscore inicial — e aí o kit
 # cria uma rede e o compose procura outra.
@@ -1301,7 +1349,7 @@ ler_rodada_do_banco() {
 # `publish-image.yml` digam o mesmo. Se você é um fork, é lá que está a lista do
 # que trocar junto — e, desde 18/09/2026, o CI do SEU fork não cobra este valor:
 # a asserção só vale quando o dono do runner é o dono deste repositório.
-IMG_NS="ghcr.io/melgarafael"
+IMG_NS="ghcr.io/alves87daniel"
 IMG_APP="${IMG_NS}/deskcommcrm"
 IMG_WORKER="${IMG_NS}/deskcomm-worker"
 IMG_SCHEDULER="${IMG_NS}/deskcomm-scheduler"
@@ -1321,7 +1369,7 @@ IMG_VOICE_AGENT="${IMG_NS}/deskcomm-voice-agent"
 # alguém porque não deu para resolver um número de versão seria trocar um
 # problema de previsibilidade por um de disponibilidade.
 ultima_versao_publicada() {
-  local url="${1:-https://github.com/melgarafael/DeskcommCRM.git}" ref
+  local url="${1:-https://github.com/alves87daniel/DeskcommCRM.git}" ref
   command -v git >/dev/null 2>&1 || return 0
   # `grep -v -- -` descarta PRERELEASE (v1.11.0-rc1, v1.1.1-jmpo.1 — esta última
   # existe de verdade neste repo). O `--sort=-v:refname` do git põe o prerelease
@@ -1342,15 +1390,15 @@ ultima_versao_publicada() {
 # com `image:` falha a operação inteira, a instalação morre no passo de subir.
 #
 # ⚠️ O DONO E O REGISTRO SAEM DO `IMG_NS`, NUNCA DE UM LITERAL. Achado por
-# @galeonel no PR #605: as duas URLs abaixo tinham `melgarafael` cravado. Num
+# @galeonel no PR #605: as duas URLs abaixo tinham o dono do upstream cravado. Num
 # fork que troca o `IMG_NS`, isso faz o pré-voo conferir os pacotes do UPSTREAM
 # enquanto `gravar_imagens` escreve no `.env` do cliente as referências do FORK
 # — a sonda mede um caminho e o usuário usa outro, que é a falha-em-verde do
 # passe 5 da triagem.
 #
 # E o literal escapava da catraca por acidente: `namespace-das-imagens.test.ts`
-# procura a string contígua `ghcr.io/melgarafael`, e a URL do token a parte em
-# `ghcr.io/token?scope=repository:melgarafael/`.
+# procura a string contígua `<registry>/<dono>` de IMG_NS, e a URL do token a
+# parte em `<registry>/token?scope=repository:<dono>/`.
 ghcr_status() {
   local img="$1" tag="$2" tok registry owner
   registry="${IMG_NS%%/*}"

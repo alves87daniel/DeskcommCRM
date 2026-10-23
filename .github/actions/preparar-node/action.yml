@@ -88,9 +88,9 @@ runs:
 
     - uses: actions/setup-node@v7
       with:
-        # 22 como o `.nvmrc` e o `engines` (>=22). Verificar numa versão que o
+        # O mesmo patch do `.nvmrc`, do `engines` e dos Dockerfiles. Verificar numa versão que o
         # produto não suporta esconde quebra ou inventa falha.
-        node-version: 22
+        node-version: 22.23.4
         cache: pnpm
 
     - shell: bash

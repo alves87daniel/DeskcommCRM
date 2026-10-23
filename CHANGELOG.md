@@ -8,6 +8,49 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [3.0.2] — 2026-10-22
+
+### Corrigido
+
+- **As imagens do CRM sobem no Node 22.23.4, com o conserto do Brotli (CVE-2026-111497)** O app, o worker e o agente de voz passam a ser construídos sobre o Node 22.23.4, a versão que corrige a rodada de segurança de 21/10/2026 — entre elas a CVE-2026-111497, uma escrita fora dos limites no decodificador Brotli que permitia execução remota de código. A versão fica fixada no patch, e não mais na linha 22 inteira, para que uma imagem nova nunca volte a sair com um Node anterior ao conserto. Quem opera a VPS não faz nada: a próxima atualização puxa as imagens novas. Crédito: @alves87daniel.
+
+## [3.0.1] — 2026-10-21
+
+### Corrigido
+
+- **No atendimento, o agente de IA só lê e altera dados do contato da conversa** Durante uma conversa de atendimento, as ferramentas do agente de IA alcançavam a organização inteira. A busca de contatos devolvia telefone e e-mail de qualquer cliente, a ficha abria qualquer contato, e escritas por identificador aceitavam negócios, compromissos, conversas e casos de outras pessoas. Um cliente no WhatsApp podia pedir ao agente dados de terceiros. Agora, no turno, leituras e escritas ficam presas ao contato da conversa, e o pedido fora dele recebe uma recusa em texto. Fora do atendimento, pela tela, pela API com token ou pelo MCP externo, nada muda. Não é preciso fazer nada na instalação. Porte da correção do projeto original.
+
+## [3.0.0] — 2026-10-21
+
+### ⚠️ Requer atenção
+
+- **A fonte de captação com assinatura recusa o envio quando não consegue ler o próprio segredo** Se você tem alguma fonte de captação com assinatura (HMAC) criada antes desta versão, faça uma destas duas coisas para cada uma delas, logo depois de atualizar:
+
+  1. Envie um teste assinado pela ferramenta que manda os leads, como um formulário de teste, e confira em Webhooks › Leads recebidos que ele chegou como lead criado.
+  2. Ou recrie a fonte: crie uma fonte nova em Webhooks › Receber dados, troque o endereço no formulário que envia os leads e exclua a fonte antiga. A fonte nova nasce sem assinatura, porque a tela ainda não grava o segredo.
+
+  Não espere uma recusa aparecer para agir: a fonte afetada só registra a recusa quando chega um envio, e esse envio já é um lead perdido. Fontes sem assinatura não são afetadas.
+
+### Corrigido
+
+- **A fonte de captação com assinatura recusa o envio quando não consegue ler o próprio segredo** Uma fonte de captação com assinatura (HMAC) aceitava qualquer envio, sem conferir, quando a instalação não conseguia ler o segredo dela, por exemplo depois de trocar a chave mestra. Agora ela recusa com 401 e registra em "Leads recebidos" o motivo "O segredo de assinatura desta fonte não pôde ser lido nesta instalação". Fonte sem assinatura e fonte com segredo legível continuam como antes. Porte da correção do projeto original.
+
+- **O Next.js sobe para 16.3.8 e as dependências deixam de ter aviso de segurança crítico** O Next.js passa de 16.3.6 para 16.3.8, versão que fecha os avisos de segurança publicados para ele em 07/10/2026: uma falha de requisição forjada no servidor (SSRF) no otimizador de imagens, duas de envenenamento de cache em páginas estáticas e três de exposição de informação. Duas bibliotecas usadas por dentro também sobem para fechar os dois avisos críticos que a verificação de dependências apontava: `solid-js`, que traz `seroval` 1.6, e `proxy-addr` 2.0.8. Nenhuma das duas roda no atendimento em produção, mas saem da lista. A atualização não exige nenhuma ação de quem opera a instalação.
+
+- **O teto de escrita por token passa a valer também no envio de mídia e na abertura de conversa** Duas rotas que aceitam token de servidor (Bearer `dsk_`) não contavam as escritas no teto: enviar mídia na conversa e abrir conversa pelo contato compartilhado. Uma integração em laço por ali não encontrava limite nenhum. Agora elas seguem o mesmo teto por token e por organização das outras rotas e respondem 429 quando a cota da janela acaba. Quem usa a tela não tem teto e não percebe diferença. Não é preciso fazer nada na instalação. Porte da correção do projeto original, contribuição de @webtecnica.
+
+- **O WAHA passa a assinar as entregas de webhook e a exigência de assinatura volta a funcionar** O compose entregava o segredo ao contêiner do WAHA numa variável que não existe na documentação dele (`WHATSAPP_HOOK_HMAC` em vez de `WHATSAPP_HOOK_HMAC_KEY`). O WAHA ignorava a variável e nunca assinava nada, e ligar "Exigir assinatura nas entregas do canal" cortava a entrada de mensagens com `401 signature_required`. Agora o nome é o da documentação, nos três composes e no runbook. Na atualização o contêiner do WAHA é recriado e passa a mandar `X-Webhook-Hmac` em toda entrega, assinada com o mesmo `WAHA_HMAC_SECRET` que o CRM já usa para conferir. Nenhuma ação do operador: o segredo é o mesmo, só o nome da variável mudou. Se o `WAHA_HMAC_SECRET` do `.env` tiver menos de 16 caracteres (ou espaço nas pontas), o CRM o descartaria ao conferir e toda mensagem recebida seria recusada: a atualização gera sozinha um segredo novo de 64 caracteres, grava no `.env`, recria o CRM e o WAHA juntos e avisa no log, sem mostrar o valor. O segredo que o instalador gera já tem 64 caracteres e não é tocado. Quem reexecutar o `install.sh` com um segredo curto no `.env` recebe a explicação e o comando para gerar outro. A exigência de assinatura continua desligada por padrão; ligue-a depois de ver no log que as entregas chegam com `valid_signature = true`.
+
+## [2.0.0] — 2026-10-20
+
+### ⚠️ Requer atenção
+
+- **O compose e o kit de instalação passam a puxar as imagens deste repositório** O canal `stable` e os números de versão ainda não existem no registro deste repositório: só `main` e `latest`. Antes de instalar ou atualizar uma VPS pelo kit, publique a primeira versão (tag `vX.Y.Z` contida na `main`), que é o que faz o CI apontar `stable` para ela. Até lá, `install.sh` e `update.sh` cairiam em `stable` e o `docker compose pull` falharia com imagem não encontrada. Uma instalação que já tenha `APP_IMAGE`, `WORKER_IMAGE`, `SCHEDULER_IMAGE` ou `VOICE_AGENT_IMAGE` no `.env` apontando para o registro de origem é regravada pelo `update.sh` para as imagens deste repositório.
+
+### Alterado
+
+- **O compose e o kit de instalação passam a puxar as imagens deste repositório** O `docker-compose.prod.yml`, o `.env.hostgator.example` e o kit de instalação (`install.sh`, `comecar.sh`, `_common.sh`) deixam de apontar para as imagens e para o repositório do projeto de origem e passam a apontar para `ghcr.io/alves87daniel/*` e `alves87daniel/DeskcommCRM`. As quatro imagens (`deskcommcrm`, `deskcomm-worker`, `deskcomm-scheduler`, `deskcomm-voice-agent`) já são publicadas aqui a cada merge na `main`, nas tags `main` e `latest`, e o `update.sh` passa a gravar no `.env` da instalação as referências deste repositório. Crédito: @alves87daniel.
+
 ## [1.69.0] — 2026-09-30
 
 ### Adicionado
@@ -9734,7 +9777,11 @@ Primeira versão marcada do DeskcommCRM. O projeto vinha sendo desenvolvido publ
 
 - **Node 22 é obrigatório para desenvolvimento.** A suíte de invariantes instancia o cliente do Supabase, que exige o `WebSocket` global — nativo apenas a partir do Node 22. Isso não afeta quem apenas hospeda: a VPS roda a imagem pronta.
 
-[Não lançado]: https://github.com/melgarafael/DeskcommCRM/compare/v1.69.0...HEAD
+[Não lançado]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.2...HEAD
+[3.0.2]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.1...v3.0.2
+[3.0.1]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.0...v3.0.1
+[3.0.0]: https://github.com/alves87daniel/DeskcommCRM/compare/v2.0.0...v3.0.0
+[2.0.0]: https://github.com/alves87daniel/DeskcommCRM/compare/v1.69.0...v2.0.0
 [1.69.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.68.0...v1.69.0
 [1.68.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.67.0...v1.68.0
 [1.67.0]: https://github.com/melgarafael/DeskcommCRM/compare/v1.66.1...v1.67.0

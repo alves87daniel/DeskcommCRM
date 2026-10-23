@@ -71,6 +71,17 @@ const ESCRITA_JUSTIFICADA: Record<string, string> = {
     "GitHub: o job emite um token OIDC que a action troca pelo token do app. O GITHUB_TOKEN do " +
     "job segue só leitura (`contents`, `pull-requests` e `issues` em `read`); o que a action " +
     "escreve é limitado pelas permissões de instalação do app, configuradas fora deste repositório",
+  "vigia-de-revisao.yml::pull-requests: write":
+    "lê as conversas de revisão do PR e mantém UM comentário que avisa do P0/P1 aberto; o job " +
+    "faz checkout só do script, sem dependência nem código do PR — ver scripts/vigia-de-revisao.mjs " +
+    "e tests/unit/vigia-de-revisao.test.ts",
+  "vigia-de-revisao-de-novo.yml::actions: write":
+    "pede uma nova execução do vigia-de-revisao quando quem tem escrita comenta `/vigia` (resolver " +
+    "conversa não dispara workflow); o job faz checkout esparso só do script, da branch padrão, " +
+    "sem código do PR — ver scripts/vigia-de-novo.mjs",
+  "vigia-de-revisao-de-novo.yml::pull-requests: write":
+    "põe a reação (🚀/👀/😕) no comentário `/vigia`, para quem comentou saber se o vigia rodou " +
+    "de novo — sem ela, um `/vigia` sem efeito ficava só no log (issue #55)",
 };
 
 interface Workflow {

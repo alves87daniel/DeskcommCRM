@@ -302,8 +302,10 @@ server; segredo em query string; `throw` cru na borda da API.
 
 ## Runtime/Tooling Preferences
 
-- **Node ≥ 22** (`engines`, `.nvmrc` = 22; os workflows fixam `node-version: 22`). Gerenciador:
-  **pnpm 9.15.9** (`packageManager`). Não use npm/yarn.
+- **Node da linha 22, no patch fixado em `.nvmrc`** — `engines`, os Dockerfiles com Node e o
+  `node-version` de `.github/actions/preparar-node/action.yml` levam o mesmo número; confira com
+  `grep -rn 'node-version\|FROM node' .github Dockerfile*`. Gerenciador: **pnpm 9.15.9**
+  (`packageManager`). Não use npm/yarn.
 - **TypeScript estrito** via `tsconfig.typecheck.json`; `strict`, `noUncheckedIndexedAccess`,
   `isolatedModules`, alias `@/*` → raiz. `pnpm typecheck` é a régua.
 - **ESLint flat config** (`eslint.config.mjs`, ESLint 10): `next/core-web-vitals`,
@@ -516,6 +518,89 @@ isto, a operação comum continua inteira?** O não-negociável:
 - **Módulo oficial com dados não põe tabela no baseline para todos**
   ([ADR-0002](docs/adr/0002-tabelas-de-modulo-num-banco-so.md)): um banco só, `public`, tabelas criadas
   por função provisionadora fixa quando o módulo é instalado na instância.
+
+## Code Review Rules
+
+Regras para quem revisa um PR deste repositório, humano ou automático. Cada uma se confere no diff
+e diz o que apontar e qual é o caminho seguro. Violação de qualquer uma é bloqueadora (P1). Fonte:
+[`docs/doctrine/nao-negociaveis.md`](docs/doctrine/nao-negociaveis.md). O que o CI já reprova
+sozinho (lint, prettier, typecheck) fica fora desta lista.
+
+1. **Service role sem filtro de organização.** Aponte handler ou worker que usa `createAdminClient`
+   (`lib/supabase/admin.ts`) e consulta ou escreve tabela tenant-aware sem `.eq("organization_id", …)`,
+   ou que tira o `organization_id` do body, da query string ou de outro campo que o cliente controla.
+   Caminho seguro: resolver a organização de fonte confiável (sessão via `getUser()`, JWT, segredo de
+   webhook, token no path) e filtrar `organization_id` explicitamente em toda query, inclusive nas
+   que cruzam tabelas. Tabela tenant-aware nova tem
+   `organization_id uuid not null references organizations(id) on delete cascade` e policy
+   `tenant_isolation_<tabela>_all` via `fn_user_org_ids()`.
+2. **`getSession()` no backend.** Aponte qualquer `getSession()` em Route Handler, Server Component,
+   Server Action, `proxy.ts` ou worker. Caminho seguro: `supabase.auth.getUser()`, que valida o JWT
+   no servidor.
+3. **Segredo em query string ou em log.** Aponte API key, token ou bearer lido de `searchParams` ou
+   montado em URL, e segredo, token, CPF, telefone ou e-mail passado a `logger`, Sentry ou mensagem
+   de erro. Aponte também bearer gravado em texto claro no banco. Caminho seguro: credencial só em
+   header (`Authorization`, `X-Api-Key`), log com o identificador e não com o valor, e no banco só o
+   hash SHA256 do token.
+4. **Trigger Postgres que faz HTTP.** Aponte função de trigger que chama `net.http_*`, `pg_net`,
+   `http()` ou qualquer extensão de rede. Caminho seguro: o trigger insere uma linha em `event_log`,
+   e um worker ou cron consome a linha e dispara o efeito fora da transação.
+5. **Migration sem a tripla.** Aponte arquivo novo em `supabase/migrations/` sem, no mesmo PR, o
+   bloco correspondente no apêndice de `supabase/baseline.sql` (rotulado
+   `-- ---- <coisa> (migration NNNN) ----`) e a linha em `supabase/migrations/MANIFEST.md`. Aponte
+   também migration não idempotente (`create` sem `if not exists`, `add column` sem `if not exists`),
+   `BEGIN`/`COMMIT` explícito, edição de migration já aplicada, e `create function` em `public` sem
+   `revoke execute ... from public, anon`. Caminho seguro: migration idempotente, apêndice
+   idempotente e auto-curativo no baseline, linha no MANIFEST, e correção de migration antiga por
+   forward-fix nova.
+6. **Mutação sem audit log.** Aponte handler POST, PATCH ou DELETE de `app/api/v1` que conclui a
+   mutação sem chamar `audit()` de `lib/audit`, ou que bloqueia a resposta esperando o audit (ou
+   falha a mutação quando o audit falha). Aponte também handler mutante sem `requireSupportWrite(`
+   de `lib/impersonate/support.ts` antes do efeito. Caminho seguro: uma entrada em `api_audit_log`
+   por mutação bem-sucedida, fire-and-forget, com falha indo para o Sentry.
+7. **Input externo sem Zod.** Aponte `await req.json()`, `formData()`, `searchParams` ou payload de
+   webhook usado sem passar por um schema Zod (`.parse`/`.safeParse`), e env lida direto de
+   `process.env` fora de `lib/env.ts`. Caminho seguro: schema Zod na borda, erro devolvido por
+   `fail()` de `lib/api/wrappers.ts`, e env nova declarada em `lib/env.ts` e `.env.example`.
+8. **`console.log` em código que vai para a `main`.** Aponte `console.log`, `console.debug` ou
+   `console.info` novo em `app/`, `lib/`, `components/`, `workers/` ou `hooks/`; o lint só avisa,
+   não reprova. Caminho seguro: `logger` de `lib/logger.ts` ou breadcrumb do Sentry, sem dado
+   pessoal.
+9. **Tela nova sem porta.** Aponte `page.tsx` novo em `app/` sem entrada correspondente no
+   `NAV_CATALOG` de `lib/navigation/catalogo.ts`. Caminho seguro: declarar a tela no catálogo, no
+   grupo certo, ou incluí-la na allowlist de `tests/unit/navegacao-completude.test.ts` com
+   justificativa escrita.
+10. **Título do PR fora do padrão.** Aponte título que não segue `Área - Ação - #N - Tipo SIGLA`,
+    que usa travessão, meia-risca ou colchetes como separador, que não traz o número da issue, ou
+    que começa pelo nome do projeto. Caminho seguro: hífen simples com espaços e o número da issue
+    no terceiro bloco, como em
+    `Fundação - Gabarito de regras não negociáveis do CLAUDE.md - #15 - Tipo DOC`; o corpo traz
+    `Closes #N`. Régua em
+    [`docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md`](docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md).
+11. **IA paga pela plataforma.** Aponte código em `app/`, `lib/`, `workers/`, `hooks/` ou
+    `components/` que lê `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`,
+    `AI_GATEWAY_API_KEY` ou qualquer outra chave de IA do ambiente para atender uma organização, ou
+    que trata "sem credencial da organização" como caso em que outra chave responde. Caminho seguro:
+    a chave sai só de `ai_provider_credentials` da organização, ativa e validada; sem ela o ponto de
+    IA fica desligado para aquela organização, com aviso na tela. As envs ficam declaradas em
+    `lib/env.ts` apenas para scripts locais. Fonte:
+    [`docs/adr/0005-ia-paga-por-cada-organizacao.md`](docs/adr/0005-ia-paga-por-cada-organizacao.md).
+
+**Prioridade e merge.** Todo apontamento abre a conversa com a prioridade no começo do primeiro
+comentário: o selo do Codex (`![P1 Badge](https://img.shields.io/badge/P1-orange?style=flat)`) ou,
+para quem revisa sem gerar o selo, `**P1**`, `[P1]` ou `P1:`. Selo no meio do texto não conta.
+P0 e P1 bloqueiam o merge: o check `vigia-de-revisao` reprova enquanto houver conversa **não
+resolvida** com P0 ou P1, e avisa no PR. P2 e P3 nunca reprovam. Quem corrige resolve a conversa e
+comenta `/vigia` no PR, porque resolver uma conversa não dispara o check sozinho. Detalhe em
+[`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
+
+**No máximo 2 rodadas de correção por PR.** Na terceira, P1 que só afeta instalações já
+existentes vira item de issue e o merge segue; P1 que afeta instalação nova sempre corrige.
+
+**Quem corrige responde e resolve.** A sessão que corrige um P0/P1 responde na conversa dizendo o
+commit que corrigiu e resolve a conversa ela mesma. P1 levado para issue também é respondido com o
+link da issue e resolvido pela sessão. O `vigia-de-revisao` só lê se a conversa está resolvida:
+conversa aberta segue reprovando, mesmo marcada como Outdated.
 
 ## Critério de conclusão
 

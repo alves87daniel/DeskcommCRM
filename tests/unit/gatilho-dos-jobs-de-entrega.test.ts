@@ -235,6 +235,16 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
     efeito: "Este é o check obrigatório `build-and-size` (`pnpm build` em Node 22).",
   },
 
+  // A isenção (bots e o PR de release) mora no script, não num `if:`: pulado,
+  // o job viraria `skipped`, e um título fora do padrão entraria verde.
+  "titulo-do-pr.yml::titulo": {
+    condicao: null,
+    efeito:
+      "Este job confere o título de PR e de issue contra a Emenda de 18/10/2026 do vocabulário " +
+      "(scripts/titulo-do-pr.mjs). Desligá-lo deixa entrar PR sem o número da issue, com área " +
+      "ou tipo fora das listas aprovadas e sem `Closes #N`, sem erro em lugar nenhum.",
+  },
+
   // --- e o que legitimamente tem interruptor -----------------------------------
   "acolhida.yml::acolher": {
     condicao:
@@ -277,6 +287,28 @@ const GATILHO_ESPERADO: Record<string, { condicao: string | null; efeito: string
       "Este job pede ao Claude a revisão de código de todo PR aberto, sincronizado, reaberto ou " +
       "marcado como pronto. Desligá-lo faz os PRs entrarem sem a revisão automática, sem erro " +
       "em lugar nenhum.",
+  },
+  // Sem `if:` pelo mesmo motivo do `titulo`: quem decide o veredito é o script.
+  "vigia-de-revisao.yml::vigia-de-revisao": {
+    condicao: null,
+    efeito:
+      "Este job reprova o PR com apontamento P0 ou P1 aberto da revisão automática e avisa no PR " +
+      "(scripts/vigia-de-revisao.mjs). Desligá-lo deixa entrar PR com apontamento grave sem " +
+      "resposta, sem erro em lugar nenhum.",
+  },
+  // O `/vigia` é interruptor de propósito: o job não é check, só pede uma nova
+  // execução do `vigia-de-revisao` no commit do PR. O filtro de texto é largo
+  // (`contains`, não `startsWith`) porque o `startsWith` pulava o `/vigia` que o
+  // Git Bash deforma (issue #55); quem decide se é o comando é o script.
+  "vigia-de-revisao-de-novo.yml::de-novo": {
+    condicao:
+      "github.event.issue.pull_request && contains(github.event.comment.body, 'vigia') && " +
+      'contains(fromJSON(\'["OWNER", "MEMBER", "COLLABORATOR"]\'), github.event.comment.author_association)',
+    efeito:
+      "Este job roda de novo o vigia-de-revisao quando quem tem escrita comenta `/vigia` no PR, " +
+      "porque resolver uma conversa não dispara workflow nenhum. Sem a condição ele rodaria a " +
+      "cada comentário de qualquer pessoa; desligado, o check fica vermelho depois de tudo " +
+      "resolvido até o próximo push.",
   },
 };
 

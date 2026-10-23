@@ -149,6 +149,7 @@ DeskcommCRM é um sistema operacional de vendas open source com agentes de IA na
 12. API key em query string
 13. Bearer plaintext armazenado no DB (deve ser hash SHA256)
 14. `console.log` deixado em código merged (use logger estruturado ou Sentry breadcrumb)
+15. **Chave de IA do ambiente atendendo organização** — a plataforma não custeia IA: a chave sai só de `ai_provider_credentials` da organização, e sem ela o recurso fica desligado com aviso na tela. Lei em [`docs/adr/0005-ia-paga-por-cada-organizacao.md`](docs/adr/0005-ia-paga-por-cada-organizacao.md)
 
 ---
 
@@ -266,6 +267,11 @@ dizem nada sobre o arquivo que quebrou.
 A lista de checks obrigatórios vem do comando do bloco do fork, no topo, nunca desta prosa. O
 que cada job mede e o que `FORA_DO_CI` exclui:
 [`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
+
+**Apontamento P0 ou P1 aberto da revisão automática barra o merge.** O check `vigia-de-revisao`
+reprova enquanto houver conversa de revisão não resolvida com esse selo no começo. Corrija, resolva
+a conversa e comente `/vigia` no PR: resolver não dispara o check sozinho. Regra em `AGENTS.md`
+(Code Review Rules) e em [`docs/doctrine/checks-de-ci.md`](docs/doctrine/checks-de-ci.md).
 
 Ao mexer em schema, RLS, RBAC, atribuição, escopo, roteamento, follow-up, webhooks ou automações: rode `pnpm test:db` **localmente** antes de abrir PR. É o único caminho que exercita o `baseline.sql` que o self-hoster realmente aplica.
 

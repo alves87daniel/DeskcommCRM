@@ -3,7 +3,11 @@
 # Build: docker build --build-arg NEXT_PUBLIC_SUPABASE_URL=... -t deskcomm-app .
 
 # ---- deps: instala dependências (layer cacheável) ----
-FROM node:22-alpine AS deps
+# Node PINADO no patch (22.23.4), não em `22-alpine`: a tag móvel entrega o que o
+# Docker Hub tiver na hora do build, e o conserto da CVE-2026-111497 (Brotli, RCE)
+# só existe a partir deste patch. Subir a linha é editar o número aqui, no
+# `.nvmrc`, no `engines` e em `.github/actions/preparar-node/action.yml` — juntos.
+FROM node:22.23.4-alpine AS deps
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 COPY package.json pnpm-lock.yaml ./
@@ -11,7 +15,7 @@ COPY patches ./patches
 RUN pnpm install --frozen-lockfile
 
 # ---- build: gera .next/standalone ----
-FROM node:22-alpine AS build
+FROM node:22.23.4-alpine AS build
 WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 COPY --from=deps /app/node_modules ./node_modules
@@ -79,14 +83,14 @@ RUN PDFJS_DIR=$(basename node_modules/.pnpm/pdfjs-dist@*) && \
        ".next/standalone/.next/server/chunks/pdf.worker.mjs"
 
 # ---- runner: imagem slim de produção ----
-FROM node:22-alpine AS runner
+FROM node:22.23.4-alpine AS runner
 WORKDIR /app
 
 # Procedência (doutrina de packaging, invariante 2). O CI já injeta os labels
 # OCI via docker/metadata-action; estes aqui são defesa em profundidade — valem
 # para qualquer build, inclusive o local de docker-compose.build.yml, que não
 # passa pelo metadata-action e sem isto sairia sem origem nenhuma.
-LABEL org.opencontainers.image.source="https://github.com/melgarafael/DeskcommCRM" \
+LABEL org.opencontainers.image.source="https://github.com/alves87daniel/DeskcommCRM" \
       org.opencontainers.image.licenses="MIT" \
       org.opencontainers.image.title="DeskcommCRM"
 

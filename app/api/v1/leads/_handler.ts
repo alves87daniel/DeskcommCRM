@@ -261,6 +261,8 @@ export interface ListLeadsQuery {
   lost_reason?: string;
   /** Categoria do motivo de perda (issue #1537), resolvida no funil. */
   lost_reason_category?: string;
+  /** Só os negócios deste contato — o escopo do turno do agente, no WHERE, antes do limite. */
+  contact_id?: string;
   limit?: number;
   cursor?: string | null;
 }
@@ -314,6 +316,7 @@ export async function listLeadsHandler(
   if (q.stage_id) query = query.eq("stage_id", q.stage_id);
   if (q.status) query = query.eq("status", q.status);
   if (q.owner_user_id) query = query.eq("owner_user_id", q.owner_user_id);
+  if (q.contact_id) query = query.eq("contact_id", q.contact_id);
   // #1537 — perda por motivo e por categoria. A categoria NÃO é coluna: ela
   // sai do `settings.lost_reasons` do funil, então o caminho é achar os rótulos
   // da categoria e filtrar por eles. Só os PERDIDOS têm motivo que valha; um
