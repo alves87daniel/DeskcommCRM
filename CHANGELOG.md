@@ -8,6 +8,12 @@ Se você roda o DeskcommCRM numa VPS, **leia a seção da versão para a qual es
 
 ## [Não lançado]
 
+## [3.0.2] — 2026-10-22
+
+### Corrigido
+
+- **As imagens do CRM sobem no Node 22.23.4, com o conserto do Brotli (CVE-2026-111497)** O app, o worker e o agente de voz passam a ser construídos sobre o Node 22.23.4, a versão que corrige a rodada de segurança de 21/10/2026 — entre elas a CVE-2026-111497, uma escrita fora dos limites no decodificador Brotli que permitia execução remota de código. A versão fica fixada no patch, e não mais na linha 22 inteira, para que uma imagem nova nunca volte a sair com um Node anterior ao conserto. Quem opera a VPS não faz nada: a próxima atualização puxa as imagens novas. Crédito: @alves87daniel.
+
 ## [3.0.1] — 2026-10-21
 
 ### Corrigido
@@ -9771,7 +9777,8 @@ Primeira versão marcada do DeskcommCRM. O projeto vinha sendo desenvolvido publ
 
 - **Node 22 é obrigatório para desenvolvimento.** A suíte de invariantes instancia o cliente do Supabase, que exige o `WebSocket` global — nativo apenas a partir do Node 22. Isso não afeta quem apenas hospeda: a VPS roda a imagem pronta.
 
-[Não lançado]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.1...HEAD
+[Não lançado]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.2...HEAD
+[3.0.2]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.1...v3.0.2
 [3.0.1]: https://github.com/alves87daniel/DeskcommCRM/compare/v3.0.0...v3.0.1
 [3.0.0]: https://github.com/alves87daniel/DeskcommCRM/compare/v2.0.0...v3.0.0
 [2.0.0]: https://github.com/alves87daniel/DeskcommCRM/compare/v1.69.0...v2.0.0
