@@ -14,6 +14,18 @@ vitrine externa.
 Em execução autônoma, quando uma regra exigir recurso do upstream, registre a dúvida no PR e
 siga pelo caminho conservador. Fora de execução autônoma, pare e pergunte.
 
+## Abertura de sessão
+Na primeira resposta de toda sessão, antes de qualquer trabalho:
+1. Declare o título formal da ação no padrão `## Área - Ação - #N - Tipo SIGLA` de
+   [`docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md`](docs/green/governance/CONECTORGREEN-VOCABULARY-AND-NAMING.md)
+   (Emenda de 18/10/2026). Se o prompt não trouxe o título, proponha um. Se ainda não existe
+   issue, o `#N` é o da issue que a sessão criar antes de qualquer PR. Nunca "ID A DEFINIR".
+2. Logo abaixo do título, declare a Dificuldade (Baixa, Média ou Alta) e o modelo e o esforço
+   adequados. Se o modelo em uso for diferente do adequado, avise antes de começar.
+3. Se o nome da sessão no app estiver fora do padrão, diga ao dono qual nome usar, para ele
+   renomear.
+4. O relatório final repete o título formal na primeira linha.
+
 > Instruções pra futuras sessões Claude trabalhando neste repo. Leitura obrigatória antes de qualquer task de código.
 
 **Este arquivo é a doutrina — a autoridade final sobre convenção e anti-pattern.** Complementos, na ordem em que ajudam:
