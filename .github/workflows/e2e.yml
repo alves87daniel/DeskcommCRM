@@ -184,7 +184,7 @@ jobs:
       # uma rodada por parte.
       fail-fast: false
       matrix:
-        parte: [1, 2, 3, 4, 5, 6]
+        parte: [1, 2, 3, 4, 5, 6, 7]
     # ─────────────────────────────────────────────────────────────────────────
     # A COBERTURA DEIXA DE SER PROSA DIGITADA À MÃO.
     #
@@ -631,7 +631,6 @@ jobs:
         confirmar-dado-do-contato.spec.ts
         credenciais-de-ia.spec.ts
         risk-radar.spec.ts invite-lifecycle.spec.ts system-update.spec.ts
-        agente-novo-e-uso.spec.ts
         agente-papeis-operador.spec.ts
         followup-linguagem.spec.ts followup-ramos.spec.ts
         wizard-do-funcionario.spec.ts mfa-opcional.spec.ts inbox-responder-citando.spec.ts
@@ -732,14 +731,9 @@ jobs:
         central-de-avisos-capacidades.spec.ts
         escalacao-ciclo.spec.ts
         distribuicao-atendimento.spec.ts
-        capacidades-do-agente.spec.ts
-        escopo-de-funil-do-agente.spec.ts
         followup-tempo-adaptativo.spec.ts
         gatilho-de-etapa.spec.ts
         etapa-avisa-na-central.spec.ts
-        gatilho-de-caso.spec.ts
-        conversa-do-caso.spec.ts
-        aviso-de-caso-no-whatsapp.spec.ts
         agenda-ocupacao-do-google-na-grade.spec.ts
         agenda-ocupacao-do-google-no-historico.spec.ts
         followup-publicado-abre-no-construtor.spec.ts
@@ -946,7 +940,6 @@ jobs:
         autonomia-assistida.spec.ts
         roteamento-por-canal.spec.ts
         whatsapp-pareamento-por-codigo.spec.ts
-        central-avisos-destino.spec.ts
         agenda-google-sync.spec.ts
         encerramento-atendimento.spec.ts
         passagem-com-contexto.spec.ts
@@ -968,17 +961,11 @@ jobs:
         moeda-da-organizacao.spec.ts
         zona-de-perigo-apaga-dados-de-teste.spec.ts
         email-da-instalacao-pela-tela.spec.ts
-        central-avisos-resolver-em-lote.spec.ts
-        central-por-gravidade.spec.ts
-        voz-desligada-por-padrao.spec.ts
-        voz-primeiro-pareamento.spec.ts
         qa-titulos-das-telas.spec.ts
         qa-equipe-pinta-na-hora.spec.ts
         qa-sugestao-rejeitada-e-motivo.spec.ts
         qa-l12-agenda-contatos.spec.ts
         qa-l12-tags-radar.spec.ts
-        extensoes-recuperacao.spec.ts
-        extensoes-portas-novas.spec.ts
         motivo-do-publicar-na-tela.spec.ts
         followup-cartoes.spec.ts
         followup-modelos-de-clinica.spec.ts
@@ -1116,7 +1103,6 @@ jobs:
       # ela rodou em 39º de 77, e a parte inteira passou (77 passed). Medido:
       # 16,1 s de caso.
       SPECS_PARTE_5: >-
-        extensoes-da-instalacao.spec.ts
         admin-credencial-google.spec.ts
         agenda-primeira-pintura-no-fuso.spec.ts
         agenda-portao-de-hidratacao.spec.ts
@@ -1129,15 +1115,9 @@ jobs:
         fluxo-de-atendimento.spec.ts
         qa-l12-funil.spec.ts
         i18n-espanhol-na-tela.spec.ts
-        extensoes-declarativas.spec.ts
-        extensoes-versao.spec.ts
         marca-logo.spec.ts
         suporte-temporario.spec.ts
         olhar-telas-do-epico.spec.ts
-        jev-decisoes-rapidas.spec.ts
-        jev-roteador.spec.ts
-        jev-pedidos.spec.ts
-        jev-followup.spec.ts
         buffer-ssr-caixa-orfa.spec.ts
         contadores-do-menu.spec.ts
         honorarios-instalar-e-pagar.spec.ts
@@ -1193,7 +1173,92 @@ jobs:
         qa-l12-inbox.spec.ts
         recursos-opcionais.spec.ts
         redes-sociais-volta-nao-desloga.spec.ts
+
+      # ─── PARTE 7 — nasceu em 2026-10-23 (issue #61), e o orçamento a pediu ───
+      #
+      # O sintoma da issue foi corte por relógio SEM caso vermelho, e a causa
+      # principal não era a partição: era o preparo (ver o passo "Instalar o
+      # browser"). Mas a medição mostrou que, mesmo com o preparo normal, a
+      # folga já tinha acabado. Medido em 124 jobs de 20/10 a 23/10 (28 runs)
+      # em que o browser instalou em menos de 60s; preparo = primeiro passo →
+      # "Running N tests":
+      #
+      #     preparo normal → mediana 365s · p90 391s · máx 526s
+      #     suíte nos jobs verdes, mediana / máx:
+      #       parte 1 → 826 / 944s    parte 2 → 932 / 1001s   parte 3 → 881 / 926s
+      #       parte 5 → 975 / 1073s   parte 6 → 868 / 900s
+      #
+      # A parte 5 fechava em 365 + 1073 = 1438s contra o orçamento de 1440s: zero
+      # de folga com o runner SAUDÁVEL. 4482s de casos comuns ÷ 5 partes = 896s,
+      # e redistribuir entre cinco já não cabe — o mesmo raciocínio do bloco da
+      # parte 6.
+      #
+      # O instrumento é o do bloco de 2026-09-04: custo de um arquivo = término
+      # do último caso dele − término do último caso do arquivo anterior
+      # (inclui `beforeAll` e seeds), mediana por spec sobre 19 a 22 jobs.
+      # Saem de cada parte FAMÍLIAS inteiras, para a vizinhança seguir junta:
+      #
+      #   da 1 → agente-novo-e-uso (137s)                                    −137s
+      #   da 2 → capacidades-do-agente (90), escopo-de-funil-do-agente (10),
+      #          gatilho-de-caso (18), conversa-do-caso (26),
+      #          aviso-de-caso-no-whatsapp (13)                              −157s
+      #   da 3 → extensoes-recuperacao (29), extensoes-portas-novas (17),
+      #          central-avisos-destino (34), central-avisos-resolver-em-lote (9),
+      #          central-por-gravidade (5), voz-desligada-por-padrao (15),
+      #          voz-primeiro-pareamento (18)                                −128s
+      #   da 5 → extensoes-da-instalacao (10), extensoes-declarativas (83),
+      #          extensoes-versao (53), jev-* (106 as quatro)                −252s
+      #   da 6 → sons-dos-avisos (76)                                         −76s
+      #
+      # As `extensoes-*`, partidas entre a 3 e a 5 desde 2026-09-19, voltam a
+      # morar juntas. Cada movida semeia o próprio dado ou lê só os seeds de
+      # passo, que rodam em toda parte `!= 4` (`escopo-de-funil-do-agente`
+      # semeia o próprio `mcp_agent` e diz por quê). `relogio-http-cron-externo`
+      # fica na parte 1 e nenhuma spec com enrollment entra depois dela. A
+      # `zona-de-perigo-…`, destrutiva, fica onde estava.
+      #
+      # ⚠️ `navegacao` NÃO se move (bloco de 2026-09-18), mas ela é a ÚLTIMA
+      # da parte 2 por ordem de arquivo: as cinco que saem de lá eram vizinhas
+      # ANTERIORES dela. O vermelho medido em 2026-09-18 era o menu ALTO demais
+      # por estado de vizinha; tirar vizinha tira o dado que ela criava, e
+      # nenhuma das cinco toca menu, módulo ou funil da organização (`grep -cE
+      # "crm_pipelines|pipeline"` dá 1 só em `capacidades-do-agente`, num
+      # comentário). É argumento, não medida — está no NÃO MEDIDO abaixo.
+      #
+      # Soma das medianas por parte, depois (antes entre parênteses):
+      #
+      #     1 → 720 (858) · 2 → 763 (919) · 3 → 751 (879) · 5 → 720 (972)
+      #     6 → 788 (864) · 7 → 749 (—)
+      #
+      # PREVISÃO (é previsão; o e2e do PR que criou esta parte mede): jobs de
+      # ~1085 a ~1155s com o preparo mediano, ~290 a ~355s abaixo do orçamento.
+      # Somando o MÁXIMO de cada spec com o pior preparo normal (526s), a pior
+      # parte dá 1413s — ainda dentro dos 1440s.
+      #
+      # NÃO MEDIDO até aquele run: se as 21 specs movidas passam na vizinhança
+      # nova, e se `navegacao` segue verde sem as cinco vizinhas anteriores.
+      SPECS_PARTE_7: >-
+        agente-novo-e-uso.spec.ts
+        aviso-de-caso-no-whatsapp.spec.ts
+        capacidades-do-agente.spec.ts
+        central-avisos-destino.spec.ts
+        central-avisos-resolver-em-lote.spec.ts
+        central-por-gravidade.spec.ts
+        conversa-do-caso.spec.ts
+        escopo-de-funil-do-agente.spec.ts
+        extensoes-da-instalacao.spec.ts
+        extensoes-declarativas.spec.ts
+        extensoes-portas-novas.spec.ts
+        extensoes-recuperacao.spec.ts
+        extensoes-versao.spec.ts
+        gatilho-de-caso.spec.ts
+        jev-decisoes-rapidas.spec.ts
+        jev-followup.spec.ts
+        jev-pedidos.spec.ts
+        jev-roteador.spec.ts
         sons-dos-avisos.spec.ts
+        voz-desligada-por-padrao.spec.ts
+        voz-primeiro-pareamento.spec.ts
 
       # ─── FORA_DO_CI — as que ficaram fora, e o motivo de cada uma ───
       #
@@ -1302,6 +1367,13 @@ jobs:
             # Piso para a suíte sequer começar: com menos que isto, rodar a
             # suíte é gastar o que resta para ver um cancelamento no meio.
             echo "PISO_SEGUNDOS=120"
+            # Acima disto, quem comeu o relógio foi o PREPARO, não a parte — e o
+            # diagnóstico do corte e do aviso de orçamento muda de nome (issue
+            # #61). Medido em 124 jobs de 20/10 a 23/10 com o browser instalando
+            # em menos de 60s: preparo mediano 365s, p90 391s, máx 526s. Nos 18
+            # jobs de 22-23/10 com o espelho do apt lento, o preparo foi de 604s
+            # a 1292s. 600s separa os dois grupos sem tocar em nenhum.
+            echo "PREPARO_NORMAL_SEGUNDOS=600"
           } >> "$GITHUB_ENV"
           echo "parte ${{ matrix.parte }}: relógio do job iniciado em $(date -u +%H:%M:%S) UTC"
 
@@ -1669,8 +1741,74 @@ jobs:
           # que é o org id do DEFAULT_SENTRY_DSN (lib/sentry/dsn.ts:17).
           SENTRY_DSN: "off"
 
+      # ─── Os pacotes de sistema do Chromium saem do cache, não do espelho ───
+      #
+      # A causa da issue #61. O `--with-deps` faz `apt-get install` de ~25 MB
+      # (as fontes `fonts-*`, `libnss3`, `xfonts-*`) direto do espelho
+      # `azure.archive.ubuntu.com`, e em 22-23/10 o espelho serviu a ~50 KB/s:
+      #
+      #   job 120187635563 (main, parte 4) "Fetched 24.9 MB in 8min 31s (48.8 kB/s)"
+      #   o mesmo passo, num dia normal   "Fetched 25.9 MB in 1s (23.8 MB/s)"
+      #
+      # Medido nos 144 registros de job de 20/10 a 23/10: o passo custa 14-48s
+      # em 124 deles e 261-906s nos outros 20; build (107-202s) e `supabase
+      # start` (68-254s) não acompanharam. Todo corte "sem caso vermelho" da tabela da issue caiu num
+      # job do segundo grupo. Não é a imagem: aconteceu tanto em `noble` (24.04)
+      # quanto em `resolute` (26.04, a primeira rodada da main já nela).
+      #
+      # O cache guarda os `.deb` que o apt baixou e os devolve a
+      # `/var/cache/apt/archives` antes do install: o apt confere o hash de cada
+      # arquivo ali e só baixa o que não bate. Por isso uma chave "velha" é
+      # inofensiva — `.deb` de versão superada só não é usado — e a chave
+      # restaurada pode ser a de outra versão da imagem (`restore-keys`). O
+      # `autoclean` tira o que o espelho já não serve, para o cache não crescer.
+      #
+      # Só em máquina do GitHub: no executor próprio o apt e o `sudo` são
+      # outra conversa, e o passo segue como era.
+      - name: Chave do cache dos pacotes do browser
+        id: pacotes-do-browser
+        if: runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          . /etc/os-release
+          PW=$(pnpm exec playwright --version | awk '{print $2}')
+          PREFIXO="e2e-apt-browser-${VERSION_CODENAME}-${RUNNER_ARCH}-pw${PW}-"
+          echo "prefixo=${PREFIXO}" >> "$GITHUB_OUTPUT"
+          echo "chave=${PREFIXO}${ImageVersion:-sem-imagem}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        if: runner.environment == 'github-hosted'
+        with:
+          path: ~/.cache/e2e-apt-browser
+          key: ${{ steps.pacotes-do-browser.outputs.chave }}
+          restore-keys: ${{ steps.pacotes-do-browser.outputs.prefixo }}
+
+      # O passo se cronometra: `BROWSER_SEGUNDOS` é o número que o corte e o
+      # resumo usam para dizer "o preparo estourou" em vez de "a parte cresceu".
       - name: Instalar o browser
-        run: pnpm exec playwright install --with-deps chromium
+        run: |
+          set -euo pipefail
+          INICIO=$(date -u +%s)
+          DEBS="$HOME/.cache/e2e-apt-browser"
+          if [ "${{ runner.environment }}" = "github-hosted" ]; then
+            mkdir -p "$DEBS"
+            # `apt-get` guarda o que baixa por padrão; a linha abaixo só impede
+            # que uma configuração da imagem (`docker-clean`) apague antes da cópia.
+            echo 'APT::Keep-Downloaded-Packages "true"; Binary::apt-get::APT::Keep-Downloaded-Packages "true";' \
+              | sudo tee /etc/apt/apt.conf.d/99-e2e-guardar-pacotes >/dev/null
+            sudo rm -f /etc/apt/apt.conf.d/docker-clean
+            DO_CACHE=$(find "$DEBS" -maxdepth 1 -name '*.deb' | wc -l | tr -d " ")
+            if [ "$DO_CACHE" -gt 0 ]; then sudo cp "$DEBS"/*.deb /var/cache/apt/archives/; fi
+            echo "pacotes do browser vindos do cache: ${DO_CACHE}"
+          fi
+          pnpm exec playwright install --with-deps chromium
+          if [ "${{ runner.environment }}" = "github-hosted" ]; then
+            sudo apt-get autoclean -qq || true
+            find "$DEBS" -maxdepth 1 -name '*.deb' -delete
+            find /var/cache/apt/archives -maxdepth 1 -name '*.deb' -exec cp {} "$DEBS"/ \;
+            echo "pacotes do browser guardados para a próxima rodada: $(find "$DEBS" -maxdepth 1 -name '*.deb' | wc -l | tr -d " ")"
+          fi
+          echo "BROWSER_SEGUNDOS=$(( $(date -u +%s) - INICIO ))" >> "$GITHUB_ENV"
 
       # `.env.local` é CÓPIA do `.env.e2e`, não uma terceira redação dele.
       #
@@ -1927,6 +2065,7 @@ jobs:
             4) LISTA="$SPECS_PARTE_4" ;;
             5) LISTA="$SPECS_PARTE_5" ;;
             6) LISTA="$SPECS_PARTE_6" ;;
+            7) LISTA="$SPECS_PARTE_7" ;;
             *) echo "::error::parte ${{ matrix.parte }} sem lista"; exit 1 ;;
           esac
           # Falha alto se a variável vier vazia: sem isto, um typo no nome faria
@@ -1966,8 +2105,22 @@ jobs:
           AGORA=$(date -u +%s)
           DECORRIDO=$(( AGORA - T0_JOB ))
           FOLGA=$(( TETO_SEGUNDOS - MARGEM_SEGUNDOS - (AGORA - T0_JOB) ))
+          # ── QUEM COMEU O RELÓGIO: O PREPARO OU A PARTE? (issue #61) ────────
+          #
+          # O diagnóstico dizia "a parte cresceu" sempre que nenhum caso estava
+          # vermelho — e em 22/10 seis cortes assim tinham preparo de 837 a
+          # 1195s, contra ~365s do normal. A parte não tinha crescido; o espelho
+          # do apt tinha parado. Agora o diagnóstico lê o preparo primeiro, e só
+          # culpa o tamanho da parte quando o preparo foi o de sempre.
+          BROWSER="${BROWSER_SEGUNDOS:-não medido}"
+          PREPARO_LENTO=nao
+          [ "$DECORRIDO" -gt "$PREPARO_NORMAL_SEGUNDOS" ] && PREPARO_LENTO=sim
           if [ "$FOLGA" -lt "$PISO_SEGUNDOS" ]; then
-            echo "::error title=A parte ${PARTE} chegou à suíte sem folga até o teto::o preparo custou ${DECORRIDO}s e sobravam ${FOLGA}s para uma suíte de centenas de casos, num teto de $(( TETO_SEGUNDOS / 60 )) min. Não é infraestrutura: a parte cresceu além do orçamento de $(( ORCAMENTO_SEGUNDOS / 60 )) min — rebalanceie as listas ou reparta em mais uma parte."
+            if [ "$PREPARO_LENTO" = sim ]; then
+              echo "::error title=A parte ${PARTE} chegou à suíte sem folga: o PREPARO estourou, não a parte::o preparo custou ${DECORRIDO}s (o normal é ~6 min; acima de ${PREPARO_NORMAL_SEGUNDOS}s o runner está lento) e sobravam ${FOLGA}s, num teto de $(( TETO_SEGUNDOS / 60 )) min. Instalar o browser levou ${BROWSER}s. Não rebalanceie as listas por isto: rerode a parte."
+            else
+              echo "::error title=A parte ${PARTE} chegou à suíte sem folga até o teto::o preparo custou ${DECORRIDO}s e sobravam ${FOLGA}s para uma suíte de centenas de casos, num teto de $(( TETO_SEGUNDOS / 60 )) min. Não é infraestrutura: a parte cresceu além do orçamento de $(( ORCAMENTO_SEGUNDOS / 60 )) min — rebalanceie as listas ou reparta em mais uma parte."
+            fi
             exit 1
           fi
           echo "::notice title=A parte ${PARTE} entrou na suíte com ${FOLGA}s de folga::preparo de ${DECORRIDO}s; teto do job de $(( TETO_SEGUNDOS / 60 )) min"
@@ -2024,6 +2177,8 @@ jobs:
             if [ "${VERMELHOS:-0}" -gt 0 ]; then
               echo "::error title=A parte ${PARTE} foi cortada pelo relógio, e já havia ${VERMELHOS} caso(s) VERMELHO(s) antes do corte::o corte veio aos ${SUITE}s (preparo de ${DECORRIDO}s, teto de $(( TETO_SEGUNDOS / 60 )) min), mas a suíte NÃO estava só grande: conserte o vermelho abaixo antes de concluir qualquer coisa sobre a partição. Caso que falha por tempo esgotado queima o timeout declarado no próprio spec (há specs com 420–600 s)."
               grep -aE "$PADRAO_VERMELHO" "$SAIDA" | grep -avE "$SEM_ESPERADAS" | head -10
+            elif [ "$PREPARO_LENTO" = sim ]; then
+              echo "::error title=A parte ${PARTE} foi cortada pelo relógio porque o PREPARO estourou::o preparo levou ${DECORRIDO}s (o normal é ~6 min; acima de ${PREPARO_NORMAL_SEGUNDOS}s o runner está lento), instalar o browser levou ${BROWSER}s, e a suíte teve só ${FOLGA}s — rodou ${SUITE}s até o corte. Nenhum caso vermelho até o corte, e a parte não cresceu: rerode, não rebalanceie."
             else
               echo "::error title=A parte ${PARTE} estourou o relógio do e2e::a suíte rodou ${SUITE}s e foi interrompida ${FOLGA}s depois de entrar, o job já tinha ${DECORRIDO}s de preparo e o teto é de $(( TETO_SEGUNDOS / 60 )) min (orçamento: $(( ORCAMENTO_SEGUNDOS / 60 )) min). Nenhum caso vermelho até o corte: a parte cresceu."
             fi
@@ -2073,15 +2228,21 @@ jobs:
           # estourou o teto. É esta a linha que evita o próximo "cancelado com
           # 141 de 156 verde" — o orçamento estourado aparece numa rodada ainda
           # verde, não na rodada em que o teto já cortou tudo.
+          BROWSER="${BROWSER_SEGUNDOS:-não medido}"
           if [ "$TOTAL" -gt "$ORCAMENTO_SEGUNDOS" ]; then
-            echo "::warning title=A parte ${PARTE} passou do orçamento do e2e::${TOTAL}s de relógio do job contra o orçamento de $(( ORCAMENTO_SEGUNDOS / 60 )) min (teto de $(( TETO_SEGUNDOS / 60 )) min). Ainda não estourou, mas a partição está desbalanceada: o bloco de partição das listas, no cabeçalho deste workflow, diz onde mexer."
+            if [ "${CUSTO_FIXO_SEGUNDOS:-0}" -gt "$PREPARO_NORMAL_SEGUNDOS" ]; then
+              echo "::warning title=A parte ${PARTE} passou do orçamento do e2e pelo PREPARO::${TOTAL}s de relógio do job contra o orçamento de $(( ORCAMENTO_SEGUNDOS / 60 )) min, com ${FIXO}s de preparo (o normal é ~6 min; acima de ${PREPARO_NORMAL_SEGUNDOS}s o runner está lento) e ${BROWSER}s instalando o browser. A partição não é a causa desta rodada."
+            else
+              echo "::warning title=A parte ${PARTE} passou do orçamento do e2e::${TOTAL}s de relógio do job contra o orçamento de $(( ORCAMENTO_SEGUNDOS / 60 )) min (teto de $(( TETO_SEGUNDOS / 60 )) min). Ainda não estourou, mas a partição está desbalanceada: o bloco de partição das listas, no cabeçalho deste workflow, diz onde mexer."
+            fi
           fi
           {
             echo "## E2E parte ${PARTE} — o relógio da rodada"
             echo ""
             echo "| relógio | medido | referência |"
             echo "| --- | --- | --- |"
-            echo "| preparo (primeiro passo → suíte) | ${FIXO}s | — |"
+            echo "| preparo (primeiro passo → suíte) | ${FIXO}s | normal ~6 min · lento acima de ${PREPARO_NORMAL_SEGUNDOS}s |"
+            echo "| ↳ instalar o browser (apt + Chromium) | ${BROWSER}s | normal 14–48s |"
             echo "| suíte (Playwright) | ${SUITE}s | — |"
             echo "| **total da parte** | **${TOTAL}s** | orçamento $(( ORCAMENTO_SEGUNDOS / 60 )) min · teto $(( TETO_SEGUNDOS / 60 )) min |"
             echo ""
@@ -2218,7 +2379,7 @@ jobs:
                       dentro { exit }
                     ' .github/workflows/e2e.yml | grep -oE "[a-z0-9-]+\.spec\.ts" | sort -u; }
           NO_DISCO=$(ls tests/e2e/*.spec.ts | wc -l | tr -d " ")
-          RODOU=$( { bloco SPECS_PARTE_1; bloco SPECS_PARTE_2; bloco SPECS_PARTE_3; bloco SPECS_PARTE_4; bloco SPECS_PARTE_5; bloco SPECS_PARTE_6; } | sort -u | wc -l | tr -d " ")
+          RODOU=$( { bloco SPECS_PARTE_1; bloco SPECS_PARTE_2; bloco SPECS_PARTE_3; bloco SPECS_PARTE_4; bloco SPECS_PARTE_5; bloco SPECS_PARTE_6; bloco SPECS_PARTE_7; } | sort -u | wc -l | tr -d " ")
           FORA_LISTA=$(bloco FORA_DO_CI)
           FORA=$(echo "$FORA_LISTA" | grep -c . || true)
           # E o recorte passa a ter CONTROLE, não só um piso.
