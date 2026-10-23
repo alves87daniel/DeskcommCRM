@@ -41,6 +41,15 @@
 -- "definição intermediária". O `drop policy if exists` do apêndice cuida do
 -- clone antigo.
 
+-- ─── A policy antiga sai PRIMEIRO ─────────────────────────────────────────
+-- Policies permissivas são OR: se a `for all` da 0478 ficasse ao lado das três
+-- por operação, ela seguiria deixando qualquer agent que vê a conversa editar e
+-- apagar a nota de um colega, e as regras novas não valeriam nada. O baseline já
+-- a derrubava; a migration (o caminho do Supabase CLI) não, e o upstream também
+-- não. Revisão do PR #69 (P1), medido em
+-- `tests/invariants/nota-interna-somente-autor-ou-manager.test.ts`.
+drop policy if exists "conversation_notes_write" on public.conversation_notes;
+
 -- ─── INSERT: autor = a própria sessão ──────────────────────────────────────
 -- O autor da nota nasce = quem está criando; ninguém cria nota em nome de
 -- outro. Mantém o piso `agent` e a visibilidade da conversa herdados da 0478.
